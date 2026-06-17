@@ -1,0 +1,277 @@
+/**
+ * Promotion Derived Summary — read models derived from existing stores.
+ *
+ * These are pure functions and type definitions for admin / service-user
+ * read models. They aggregate data from:
+ *   - `Promotion` (promotionStore) for configuration
+ *   - `ExecutionLedger` read models (`getEntitlement`, `getClaimedCount`,
+ *     `getBudgetSummary`, `listClaimedUsers`) for per-user and promotion-level
+ *     execution state
+ *   - `computeTotalRequiredBudgetMist()` (domain) for budget derivation
+ *
+ * No new store is introduced. This module only computes derived values.
+ *
+ * @module promotionDerivedSummary
+ */
+
+import type { Entitlement, Promotion } from './domain.js';
+import { computeTotalRequiredBudgetMist } from './domain.js';
+import { checkPromotionTemporalGate } from './validation.js';
+
+// ─────────────────────────────────────────────
+// Admin Summary (promotion-level)
+// ─────────────────────────────────────────────
+
+/**
+ * Promotion-level admin summary, derived from stores.
+ */
+export interface PromotionAdminSummary {
+  /** Number of users who have claimed this promotion. */
+  claimedUsers: number;
+  /** Remaining participant slots. null if no cap. */
+  remainingParticipantSlots: number | null;
+  /** Total budget consumed so far in MIST. */
+  totalConsumedBudgetMist: string;
+  /** Total budget currently reserved (in-flight) in MIST. */
+  totalReservedBudgetMist: string;
+  /** Total remaining available budget in MIST. */
+  totalRemainingBudgetMist: string;
+  /**
+   * Total required budget (maxParticipants × perUserGasAllowanceMist).
+   * Display/read-model value only; draft products that exceed the ledger
+   * numeric bound are still shown exactly and are rejected on activation.
+   */
+  totalRequiredBudgetMist: string;
+}
+
+/**
+ * Budget state snapshot for admin summary computation.
+ *
+ * Caller obtains these fields from `PromotionExecutionLedger.getBudgetSummary()`,
+ * which returns `{ availableMist, reservedMist, consumedMist }` as bigint.
+ */
+export interface BudgetSnapshot {
+  availableMist: bigint;
+  reservedMist: bigint;
+  consumedMist: bigint;
+}
+
+/**
+ * Compute admin summary from promotion config and ExecutionLedger read models.
+ *
+ * @param promotion - Promotion record.
+ * @param claimedCount - Number of claimed users (from `ExecutionLedger.getClaimedCount()`).
+ * @param budget - Budget snapshot from `ExecutionLedger.getBudgetSummary()`.
+ */
+export function computePromotionAdminSummary(
+  promotion: Pick<Promotion, 'maxParticipants' | 'perUserGasAllowanceMist'>,
+  claimedCount: number,
+  budget: BudgetSnapshot,
+): PromotionAdminSummary {
+  const totalRequired = BigInt(computeTotalRequiredBudgetMist(promotion));
+
+  const remainingSlots =
+    promotion.maxParticipants > 0 ? promotion.maxParticipants - claimedCount : null;
+
+  return {
+    claimedUsers: claimedCount,
+    remainingParticipantSlots: remainingSlots,
+    totalConsumedBudgetMist: budget.consumedMist.toString(),
+    totalReservedBudgetMist: budget.reservedMist.toString(),
+    totalRemainingBudgetMist: budget.availableMist.toString(),
+    totalRequiredBudgetMist: totalRequired.toString(),
+  };
+}
+
+// ─────────────────────────────────────────────
+// Service User Detail (user-level read model)
+// ─────────────────────────────────────────────
+
+export type UnavailableReason =
+  | 'not_claimed'
+  | 'promotion_unavailable'
+  | 'promotion_not_started'
+  | 'claim_deadline_passed'
+  | 'use_window_expired'
+  | 'allowance_exhausted'
+  | 'action_in_flight';
+
+/**
+ * User-level read model for a specific promotion.
+ */
+export interface UserPromotionDetail {
+  /** Has the user claimed this promotion? */
+  claimStatus: 'claimed' | 'not_claimed';
+  /** User's remaining gas allowance in MIST. null if not claimed. */
+  userRemainingGasAllowanceMist: string | null;
+  /** Promotion claim deadline. */
+  claimDeadlineAt: string | null;
+  /** Post-claim use window end. null = unlimited. */
+  useUntilAt: string | null;
+  /** Can the user claim this promotion now? */
+  canClaim: boolean;
+  /** Can the user use a sponsored action now? */
+  canUseSponsoredAction: boolean;
+  /** Reason why sponsored action is unavailable. null if available. */
+  unavailableReason: UnavailableReason | null;
+}
+
+/**
+ * Compute user promotion detail from stored data.
+ *
+ * @param promotion - Promotion record.
+ * @param entitlement - User's entitlement record (null if not claimed).
+ * @param claimedCount - Current count of claimed users.
+ * @param now - Current timestamp for deadline checks.
+ */
+export function computeUserPromotionDetail(
+  promotion: Pick<Promotion, 'maxParticipants' | 'claimDeadlineAt' | 'status' | 'startAt'>,
+  entitlement: Entitlement | null,
+  claimedCount: number,
+  now = new Date(),
+): UserPromotionDetail {
+  // Shared temporal gate (status + startAt). Promotion-not-found path is not
+  // relevant to the read model (caller has already loaded the record).
+  const temporal = checkPromotionTemporalGate(promotion, now);
+  const claimDeadlinePassed = promotion.claimDeadlineAt
+    ? new Date(promotion.claimDeadlineAt).getTime() <= now.getTime()
+    : false;
+
+  // Not claimed — precedence must match the shared temporal gate so
+  // paused/archived (PROMOTION_NOT_ACTIVE) and not-yet-started
+  // (PROMOTION_NOT_STARTED) records keep distinct reasons instead of
+  // falling through to `not_claimed`.
+  if (!entitlement) {
+    const slotsAvailable =
+      promotion.maxParticipants === 0 || claimedCount < promotion.maxParticipants;
+    const temporalOk = temporal === null;
+    const canClaim = temporalOk && !claimDeadlinePassed && slotsAvailable;
+
+    let unavailableReason: UnavailableReason;
+    if (temporal) {
+      unavailableReason =
+        temporal.code === 'PROMOTION_NOT_STARTED'
+          ? 'promotion_not_started'
+          : 'promotion_unavailable';
+    } else if (claimDeadlinePassed) {
+      unavailableReason = 'claim_deadline_passed';
+    } else {
+      unavailableReason = 'not_claimed';
+    }
+
+    return {
+      claimStatus: 'not_claimed',
+      userRemainingGasAllowanceMist: null,
+      claimDeadlineAt: promotion.claimDeadlineAt ?? null,
+      useUntilAt: null,
+      canClaim,
+      canUseSponsoredAction: false,
+      unavailableReason,
+    };
+  }
+
+  // Claimed — check promotion-level gate then per-user state.
+  const useWindowExpired = entitlement.useUntilAt
+    ? new Date(entitlement.useUntilAt).getTime() <= now.getTime()
+    : false;
+
+  let canUseSponsoredAction = true;
+  let unavailableReason: UnavailableReason | null = null;
+
+  // Promotion-level gate: non-active promotion OR not-yet-started window
+  // blocks sponsored actions for claimed users. Consistent with prepare/
+  // sponsor route paths via `checkPromotionTemporalGate`.
+  if (temporal) {
+    canUseSponsoredAction = false;
+    unavailableReason =
+      temporal.code === 'PROMOTION_NOT_STARTED' ? 'promotion_not_started' : 'promotion_unavailable';
+  } else if (useWindowExpired) {
+    canUseSponsoredAction = false;
+    unavailableReason = 'use_window_expired';
+  } else if (entitlement.status === 'exhausted') {
+    canUseSponsoredAction = false;
+    unavailableReason = 'allowance_exhausted';
+  } else if (entitlement.activeReservationReceiptId !== null) {
+    canUseSponsoredAction = false;
+    unavailableReason = 'action_in_flight';
+  }
+
+  return {
+    claimStatus: 'claimed',
+    userRemainingGasAllowanceMist: entitlement.remainingGasAllowanceMist,
+    claimDeadlineAt: promotion.claimDeadlineAt ?? null,
+    useUntilAt: entitlement.useUntilAt,
+    canClaim: false, // Already claimed
+    canUseSponsoredAction,
+    unavailableReason,
+  };
+}
+
+// ─────────────────────────────────────────────
+// Service User Promotion List Item
+// ─────────────────────────────────────────────
+
+/**
+ * List item for service-user promotion discovery.
+ *
+ * List minimum fields:
+ *   promotionId, displayName, canClaim, canUseSponsoredAction,
+ *   promotionRemainingBudgetMist, remainingParticipantSlots,
+ *   userRemainingGasAllowanceMist, unavailableReason
+ */
+export interface PromotionListItem {
+  promotionId: string;
+  displayName: string;
+  type: Promotion['type'];
+  status: Promotion['status'];
+  /** Can the user claim this promotion now? */
+  canClaim: boolean;
+  /** Can the user use a sponsored action now? */
+  canUseSponsoredAction: boolean;
+  /** Remaining promotion budget in MIST. */
+  promotionRemainingBudgetMist: string;
+  /** Remaining participant slots. null if unlimited. */
+  remainingParticipantSlots: number | null;
+  /** User's remaining gas allowance. null if not claimed. */
+  userRemainingGasAllowanceMist: string | null;
+  /** Why the user cannot use sponsored actions. null if available. */
+  unavailableReason: UnavailableReason | null;
+}
+
+/**
+ * Compute a promotion list item for a specific user.
+ *
+ * Reuses computeUserPromotionDetail() for user-state derivation,
+ * then enriches with promotion-level metadata.
+ *
+ * @param promotion - Full promotion record.
+ * @param entitlement - User's entitlement record (null if not claimed).
+ * @param claimedCount - Current count of claimed users (from `ExecutionLedger.getClaimedCount()`).
+ * @param availableBudgetMist - Available budget from `ExecutionLedger.getBudgetSummary().availableMist`.
+ * @param now - Current timestamp for deadline checks.
+ */
+export function computePromotionListItem(
+  promotion: Promotion,
+  entitlement: Entitlement | null,
+  claimedCount: number,
+  availableBudgetMist: bigint,
+  now = new Date(),
+): PromotionListItem {
+  const userDetail = computeUserPromotionDetail(promotion, entitlement, claimedCount, now);
+
+  const remainingParticipantSlots =
+    promotion.maxParticipants === 0 ? null : Math.max(0, promotion.maxParticipants - claimedCount);
+
+  return {
+    promotionId: promotion.promotionId,
+    displayName: promotion.displayName,
+    type: promotion.type,
+    status: promotion.status,
+    canClaim: userDetail.canClaim,
+    canUseSponsoredAction: userDetail.canUseSponsoredAction,
+    promotionRemainingBudgetMist: availableBudgetMist.toString(),
+    remainingParticipantSlots,
+    userRemainingGasAllowanceMist: userDetail.userRemainingGasAllowanceMist,
+    unavailableReason: userDetail.unavailableReason,
+  };
+}

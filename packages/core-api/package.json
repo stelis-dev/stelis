@@ -1,0 +1,61 @@
+{
+    "name": "@stelis/core-api",
+    "version": "0.1.0",
+    "private": true,
+    "description": "Stelis core API — framework-agnostic domain logic, handlers, and store adapters",
+    "type": "module",
+    "main": "dist/index.js",
+    "types": "dist/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "import": "./dist/index.js"
+        },
+        "./prepareConfig": {
+            "types": "./dist/prepareConfig.d.ts",
+            "import": "./dist/prepareConfig.js"
+        },
+        "./admin": {
+            "types": "./dist/admin/index.d.ts",
+            "import": "./dist/admin/index.js"
+        },
+        "./studio": {
+            "types": "./dist/studio/index.d.ts",
+            "import": "./dist/studio/index.js"
+        },
+        "./testing/studio": {
+            "types": "./dist/testing/studio.d.ts",
+            "import": "./dist/testing/studio.js"
+        },
+        "./observability": {
+            "types": "./dist/observability/index.d.ts",
+            "import": "./dist/observability/index.js"
+        }
+    },
+    "scripts": {
+        "build": "tsc",
+        "test": "vitest run",
+        "test:watch": "vitest",
+        "typecheck": "tsc --noEmit"
+    },
+    "dependencies": {
+        "@stelis/contracts": "*",
+        "@stelis/core-relay": "*",
+        "jose": "^6.0.11",
+        "redis": "^4.7.0"
+    },
+    "peerDependencies": {
+        "@mysten/sui": "^2.4.0"
+    },
+    "devDependencies": {
+        "@mysten/sui": "^2.4.0",
+        "@types/node": "^22.0.0",
+        "redis-memory-server": "^0.16.1",
+        "typescript": "^5.4.0",
+        "vitest": "^4.1.8"
+    },
+    "files": [
+        "dist"
+    ],
+    "license": "MIT"
+}

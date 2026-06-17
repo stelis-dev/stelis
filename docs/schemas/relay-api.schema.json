@@ -1,0 +1,834 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Stelis API Schema File",
+  "description": "Machine-readable schema file for the Stelis relay and studio promotion routes. Use the objects under $defs for GET /relay/config, POST /relay/prepare, POST /relay/sponsor, GET /studio/promotions, GET /studio/promotions/:id, POST /studio/promotions/:id/claim, POST /studio/promotions/:id/prepare, POST /studio/promotions/:id/sponsor, and common error payloads.",
+  "$defs": {
+    "suiNetwork": {
+      "type": "string",
+      "enum": ["mainnet", "testnet"]
+    },
+    "hexString": {
+      "type": "string",
+      "pattern": "^0x[0-9a-fA-F]+$"
+    },
+    "mistString": {
+      "type": "string",
+      "pattern": "^(?:0|[1-9][0-9]*)$"
+    },
+    "deepBookPoolHop": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["poolId", "baseType", "quoteType", "swapDirection", "feeBps"],
+      "properties": {
+        "poolId": {
+          "$ref": "#/$defs/hexString",
+          "description": "DeepBook pool object ID."
+        },
+        "baseType": {
+          "type": "string",
+          "description": "Pool base coin type."
+        },
+        "quoteType": {
+          "type": "string",
+          "description": "Pool quote coin type."
+        },
+        "swapDirection": {
+          "type": "string",
+          "enum": ["baseForQuote", "quoteForBase"],
+          "description": "DeepBook swap direction for this hop. baseForQuote for Pool<Token, SUI>-style orientation; quoteForBase for Pool<SUI, Token>-style orientation. Per-hop direction is encoded in the settlement swap path's settlementSwapDirection."
+        },
+        "feeBps": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000,
+          "description": "Stelis execution fee in basis points for this hop. 0 means a whitelisted pool. Fee-bearing DeepBook pools are reported on the input-fee basis used by settle.move, not the lower DEEP-fee baseline."
+        }
+      }
+    },
+    "singleHopSettlementSwapPath": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "hops",
+        "paymentTokenType",
+        "paymentTokenSymbol",
+        "paymentTokenDecimals",
+        "lotSize",
+        "minSize",
+        "effectiveFeeRateBps",
+        "settlementSwapDirection"
+      ],
+      "properties": {
+        "hops": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "$ref": "#/$defs/deepBookPoolHop"
+          }
+        },
+        "paymentTokenType": {
+          "type": "string",
+          "description": "Payment token coin type. Each paymentTokenType appears once in supportedSettlementSwapPaths and selects the host's single active settlement swap path for that token."
+        },
+        "paymentTokenSymbol": {
+          "type": "string"
+        },
+        "paymentTokenDecimals": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "lotSize": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "minSize": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "effectiveFeeRateBps": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000,
+          "description": "Effective Stelis execution fee rate in basis points. Fee-bearing DeepBook pools use input-fee basis because Stelis passes coin::zero<DEEP>() and does not use a user DEEP fee coin."
+        },
+        "settlementSwapDirection": {
+          "type": "string",
+          "enum": ["baseForQuote", "quoteForBase"],
+          "description": "Explicit settlement swap direction. Must match the per-hop swapDirection vector. Only 1-hop paths are supported."
+        }
+      }
+    },
+    "relayConfigResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "network",
+        "packageId",
+        "relayerRecipient",
+        "supportedSettlementSwapPaths",
+        "quotedRelayerFeeMist",
+        "protocolFlatFeeMist",
+        "integrityPolicyVersion"
+      ],
+      "properties": {
+        "network": {
+          "$ref": "#/$defs/suiNetwork"
+        },
+        "packageId": {
+          "$ref": "#/$defs/hexString"
+        },
+        "relayerRecipient": {
+          "$ref": "#/$defs/hexString",
+          "description": "Settlement payout recipient address for relayerClaim plus quotedRelayerFeeMist."
+        },
+        "supportedSettlementSwapPaths": {
+          "type": "array",
+          "description": "Host-supported payment tokens and their active one-hop settlement swap paths. Each paymentTokenType appears once.",
+          "items": {
+            "$ref": "#/$defs/singleHopSettlementSwapPath"
+          }
+        },
+        "quotedRelayerFeeMist": {
+          "$ref": "#/$defs/mistString"
+        },
+        "protocolFlatFeeMist": {
+          "$ref": "#/$defs/mistString"
+        },
+        "integrityPolicyVersion": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "prepareRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "txKindBytes",
+        "senderAddress",
+        "paymentTokenType",
+        "txKindBytesHash",
+        "prepareAuthorizationTimestampMs",
+        "prepareAuthorizationRequestNonce",
+        "prepareAuthorizationSignature"
+      ],
+      "properties": {
+        "txKindBytes": {
+          "type": "string",
+          "description": "Serialized TransactionKind bytes in base64."
+        },
+        "senderAddress": {
+          "$ref": "#/$defs/hexString"
+        },
+        "paymentTokenType": {
+          "type": "string",
+          "description": "Payment token coin type string from GET /relay/config.supportedSettlementSwapPaths. The host selects the single active settlement swap path for this token."
+        },
+        "txKindBytesHash": {
+          "type": "string",
+          "pattern": "^(?:0x)?[0-9a-fA-F]{64}$",
+          "description": "SHA-256 hash of txKindBytes, encoded as hexadecimal."
+        },
+        "prepareAuthorizationTimestampMs": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Unix timestamp in milliseconds included in the signed prepare authorization message."
+        },
+        "prepareAuthorizationRequestNonce": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "Client-generated nonce included in the signed prepare authorization message."
+        },
+        "prepareAuthorizationSignature": {
+          "type": "string",
+          "description": "User personal-message signature over the canonical prepare authorization message."
+        },
+        "slippageBps": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 500,
+          "description": "Slippage tolerance in basis points. Capped at SLIPPAGE_CAP_BPS (500)."
+        },
+        "gasMarginBps": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000,
+          "description": "Gas margin in basis points. Capped at GAS_MARGIN_CAP_BPS (10000)."
+        },
+        "orderId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "Order identifier. API docs define the limit in UTF-8 bytes; this schema enforces the same numeric limit at the JSON string level."
+        }
+      }
+    },
+    "prepareCost": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "simGas",
+        "gasVarianceFixedMist",
+        "slippageBufferMist",
+        "quotedRelayerFee",
+        "protocolFee",
+        "relayerClaim",
+        "grossGas"
+      ],
+      "properties": {
+        "simGas": {
+          "$ref": "#/$defs/mistString"
+        },
+        "gasVarianceFixedMist": {
+          "$ref": "#/$defs/mistString"
+        },
+        "slippageBufferMist": {
+          "$ref": "#/$defs/mistString"
+        },
+        "quotedRelayerFee": {
+          "$ref": "#/$defs/mistString"
+        },
+        "protocolFee": {
+          "$ref": "#/$defs/mistString"
+        },
+        "relayerClaim": {
+          "$ref": "#/$defs/mistString",
+          "description": "Gas-recovery claim in settlement arguments. The full relayer payout is relayerClaim plus quotedRelayerFeeMist."
+        },
+        "grossGas": {
+          "$ref": "#/$defs/mistString"
+        }
+      }
+    },
+    "prepareResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "txBytes",
+        "receiptId",
+        "nonce",
+        "cost",
+        "profile",
+        "quoteTimestampMs",
+        "policyHash"
+      ],
+      "properties": {
+        "txBytes": {
+          "type": "string",
+          "description": "Prepared transaction bytes in base64."
+        },
+        "receiptId": {
+          "$ref": "#/$defs/hexString"
+        },
+        "nonce": {
+          "type": "string",
+          "pattern": "^(?:0|[1-9][0-9]*)$",
+          "description": "S-14: monotonic nonce assigned for this prepare (decimal string, u64-safe)."
+        },
+        "cost": {
+          "$ref": "#/$defs/prepareCost"
+        },
+        "profile": {
+          "type": "string",
+          "enum": ["new_user", "with_vault", "credit_general"]
+        },
+        "quoteTimestampMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "policyHash": {
+          "$ref": "#/$defs/hexString"
+        },
+        "orderId": {
+          "type": "string"
+        }
+      }
+    },
+    "sponsorRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["txBytes", "userSignature", "receiptId"],
+      "properties": {
+        "txBytes": {
+          "type": "string",
+          "description": "Exact txBytes returned by /relay/prepare, encoded in base64."
+        },
+        "userSignature": {
+          "type": "string",
+          "description": "User signature in base64."
+        },
+        "receiptId": {
+          "$ref": "#/$defs/hexString"
+        }
+      }
+    },
+    "sponsorResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["digest", "effects", "relayerClaim"],
+      "properties": {
+        "digest": {
+          "type": "string"
+        },
+        "effects": {
+          "type": "object"
+        },
+        "relayerClaim": {
+          "$ref": "#/$defs/mistString",
+          "description": "Transaction-derived gas-recovery claim from the settlement arguments."
+        },
+        "orderId": {
+          "type": "string"
+        }
+      }
+    },
+    "relayError": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["error", "code"],
+      "properties": {
+        "error": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string",
+          "description": "Error code string. See knownPrepareErrorCode and knownSponsorErrorCode for documented current enums."
+        },
+        "retryAfterMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "subcode": {
+          "type": "string"
+        },
+        "digest": {
+          "type": "string"
+        },
+        "minSettleMist": {
+          "$ref": "#/$defs/mistString"
+        },
+        "requiredTotalIn": {
+          "$ref": "#/$defs/mistString"
+        },
+        "isEstimate": {
+          "type": "boolean"
+        }
+      }
+    },
+    "knownPrepareErrorCode": {
+      "type": "string",
+      "enum": [
+        "BAD_REQUEST",
+        "REQUEST_BODY_TOO_LARGE",
+        "PREPARE_AUTH_TIMESTAMP_INVALID",
+        "PREPARE_AUTH_NONCE_INVALID",
+        "PREPARE_AUTH_TX_KIND_HASH_INVALID",
+        "PREPARE_AUTH_TX_KIND_HASH_MISMATCH",
+        "PREPARE_AUTH_SIGNATURE_INVALID",
+        "PREPARE_AUTH_EXPIRED",
+        "PREPARE_AUTH_NONCE_REUSED",
+        "PREPARE_SENDER_QUOTA_EXCEEDED",
+        "P0_INVALID_BASE64",
+        "P0_TX_KIND_TOO_LARGE",
+        "P0_INVALID_TX_KIND",
+        "INVALID_SLIPPAGE_BPS",
+        "INVALID_GAS_MARGIN_BPS",
+        "P1_TOO_MANY_COMMANDS",
+        "P1_GASCOIN_FORBIDDEN",
+        "P1_USER_SETTLE_FORBIDDEN",
+        "P1_UNAUTHORIZED_STELIS_CALL",
+        "P1_FORBIDDEN_COMMAND",
+        "P1_SPONSOR_WITHDRAWAL_FORBIDDEN",
+        "UNSUPPORTED_PAYMENT_TOKEN",
+        "INVALID_ORDER_ID",
+        "INSUFFICIENT_BALANCE",
+        "CLAIM_WOULD_EXCEED_MAX",
+        "INSUFFICIENT_SETTLE_INPUT",
+        "SPREAD_EXCEEDED",
+        "NO_COINS_FOUND",
+        "PAYMENT_COIN_CONFLICT",
+        "DRY_RUN_FAILED",
+        "DRY_RUN_NO_GAS",
+        "UNACCOUNTABLE_WITHDRAWAL",
+        "SLIPPAGE_QUERY_FAILED",
+        "SLIPPAGE_EXCEEDED",
+        "SLIPPAGE_CONVERGENCE_FAILED",
+        "L1_TOO_MANY_COMMANDS",
+        "L1_FORBIDDEN_COMMAND",
+        "L1_NO_SETTLE",
+        "L1_MULTIPLE_SETTLE",
+        "L1_PARSE_FAILED",
+        "L2_EXTRACT_FAILED",
+        "L2_WRONG_CONFIG",
+        "L2_WRONG_REGISTRY",
+        "L2_WRONG_RECIPIENT",
+        "L2_EXCESSIVE_CLAIM",
+        "L2_RELAYER_FEE_CAP",
+        "L2_PROTOCOL_FEE_MISMATCH",
+        "L2_CONFIG_VERSION_MISMATCH",
+        "L2_CREDIT_SLIPPAGE_NONZERO",
+        "L2_SETTLEMENT_SWAP_PATH_INTEGRITY",
+        "L2_NO_SETTLEMENT_SWAP_PATHS_CONFIGURED",
+        "L2_UNAUTHORIZED_SETTLEMENT_SWAP_PATH",
+        "L2_POLICY_HASH_MISMATCH",
+        "L2_ORDER_ID_HASH_MISMATCH",
+        "SPONSOR_CAPACITY_UNAVAILABLE",
+        "SPONSOR_REFILL_ACCOUNT_UNHEALTHY",
+        "NO_SPONSOR_SLOT",
+        "PREPARE_OVERLOADED",
+        "SPONSOR_LEASE_COMMIT_FAILED",
+        "ABUSE_BLOCKED",
+        "BLOCK_CHECK_UNAVAILABLE",
+        "VAULT_STATE_INCONSISTENT",
+        "INTERNAL_ERROR"
+      ]
+    },
+    "knownSponsorErrorCode": {
+      "type": "string",
+      "enum": [
+        "BAD_REQUEST",
+        "REQUEST_BODY_TOO_LARGE",
+        "PREPARED_TX_NOT_FOUND",
+        "PREPARED_TX_EXPIRED",
+        "SENDER_SIGNATURE_INVALID",
+        "RECEIPT_SESSION_MISMATCH",
+        "MODE_MISMATCH",
+        "REPREPARE_REQUIRED",
+        "TAMPERING_DETECTED",
+        "L3_NONLOSS_VIOLATION",
+        "L3_GAS_BUDGET_EXCEEDED",
+        "L3_SIM_GAS_OUT_OF_RANGE",
+        "SPONSOR_CAPACITY_UNAVAILABLE",
+        "SPONSOR_REFILL_ACCOUNT_UNHEALTHY",
+        "SPONSOR_PREFLIGHT_FAILED",
+        "SPONSOR_ONCHAIN_FAILED",
+        "SPONSOR_CONGESTION",
+        "LEASE_EXPIRED",
+        "SPONSOR_FAILED",
+        "ABUSE_BLOCKED",
+        "BLOCK_CHECK_UNAVAILABLE"
+      ]
+    },
+    "promotionUnavailableReason": {
+      "type": "string",
+      "enum": [
+        "not_claimed",
+        "promotion_unavailable",
+        "promotion_not_started",
+        "claim_deadline_passed",
+        "use_window_expired",
+        "allowance_exhausted",
+        "action_in_flight"
+      ]
+    },
+    "promotionListItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "promotionId",
+        "displayName",
+        "type",
+        "status",
+        "canClaim",
+        "canUseSponsoredAction",
+        "promotionRemainingBudgetMist",
+        "remainingParticipantSlots",
+        "userRemainingGasAllowanceMist",
+        "unavailableReason"
+      ],
+      "properties": {
+        "promotionId": {
+          "type": "string"
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "canClaim": {
+          "type": "boolean"
+        },
+        "canUseSponsoredAction": {
+          "type": "boolean"
+        },
+        "promotionRemainingBudgetMist": {
+          "$ref": "#/$defs/mistString"
+        },
+        "remainingParticipantSlots": {
+          "type": ["integer", "null"]
+        },
+        "userRemainingGasAllowanceMist": {
+          "type": ["string", "null"],
+          "pattern": "^(?:0|[1-9][0-9]*)$"
+        },
+        "unavailableReason": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/promotionUnavailableReason"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "promotionListResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["promotions"],
+      "description": "GET /studio/promotions success response.",
+      "properties": {
+        "promotions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/promotionListItem"
+          }
+        }
+      }
+    },
+    "userPromotionDetail": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "claimStatus",
+        "userRemainingGasAllowanceMist",
+        "claimDeadlineAt",
+        "useUntilAt",
+        "canClaim",
+        "canUseSponsoredAction",
+        "unavailableReason"
+      ],
+      "properties": {
+        "claimStatus": {
+          "type": "string",
+          "enum": ["claimed", "not_claimed"]
+        },
+        "userRemainingGasAllowanceMist": {
+          "type": ["string", "null"],
+          "pattern": "^(?:0|[1-9][0-9]*)$"
+        },
+        "claimDeadlineAt": {
+          "type": ["string", "null"]
+        },
+        "useUntilAt": {
+          "type": ["string", "null"]
+        },
+        "canClaim": {
+          "type": "boolean"
+        },
+        "canUseSponsoredAction": {
+          "type": "boolean"
+        },
+        "unavailableReason": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/promotionUnavailableReason"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "promotionDetailResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["promotionId", "displayName", "type", "promotionRemainingBudgetMist", "detail"],
+      "description": "GET /studio/promotions/:id success response.",
+      "properties": {
+        "promotionId": {
+          "type": "string"
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "promotionRemainingBudgetMist": {
+          "$ref": "#/$defs/mistString"
+        },
+        "detail": {
+          "$ref": "#/$defs/userPromotionDetail"
+        }
+      }
+    },
+    "promotionClaimRequest": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "POST /studio/promotions/:id/claim request body. No body fields required — ownership is promotionId + userId from verified developer JWT. Header Authorization: Bearer <developerJwt> is required.",
+      "properties": {}
+    },
+    "promotionEntitlementStatus": {
+      "type": "string",
+      "enum": ["active", "exhausted", "expired"]
+    },
+    "promotionEntitlement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "promotionId",
+        "userId",
+        "claimedAt",
+        "useUntilAt",
+        "remainingGasAllowanceMist",
+        "consumedGasAllowanceMist",
+        "status",
+        "activeReservationReceiptId",
+        "activeReservationAmountMist",
+        "lastUsedAt"
+      ],
+      "properties": {
+        "promotionId": {
+          "type": "string"
+        },
+        "userId": {
+          "type": "string"
+        },
+        "claimedAt": {
+          "type": "string"
+        },
+        "useUntilAt": {
+          "type": ["string", "null"]
+        },
+        "remainingGasAllowanceMist": {
+          "$ref": "#/$defs/mistString"
+        },
+        "consumedGasAllowanceMist": {
+          "$ref": "#/$defs/mistString"
+        },
+        "status": {
+          "$ref": "#/$defs/promotionEntitlementStatus"
+        },
+        "activeReservationReceiptId": {
+          "type": ["string", "null"]
+        },
+        "activeReservationAmountMist": {
+          "type": ["string", "null"],
+          "pattern": "^(?:0|[1-9][0-9]*)$"
+        },
+        "lastUsedAt": {
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "promotionClaimResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entitlement"],
+      "description": "POST /studio/promotions/:id/claim success response.",
+      "properties": {
+        "entitlement": {
+          "$ref": "#/$defs/promotionEntitlement"
+        }
+      }
+    },
+    "knownPromotionClaimFailureReason": {
+      "type": "string",
+      "enum": [
+        "promotion_not_found",
+        "promotion_not_active",
+        "promotion_not_started",
+        "claim_deadline_passed",
+        "max_participants_reached",
+        "already_claimed"
+      ]
+    },
+    "promotionPrepareRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["senderAddress", "txKindBytes"],
+      "description": "POST /studio/promotions/:id/prepare request body. Authorization: Bearer <developerJwt> header required.",
+      "properties": {
+        "senderAddress": {
+          "type": "string",
+          "description": "End-user Sui address. Must match JWT senderAddress claim."
+        },
+        "txKindBytes": {
+          "type": "string",
+          "description": "Serialized TransactionKind bytes in base64. Must contain only MoveCall commands."
+        }
+      }
+    },
+    "promotionPrepareResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["txBytes", "receiptId", "estimatedGasMist"],
+      "description": "POST /studio/promotions/:id/prepare success response.",
+      "properties": {
+        "txBytes": {
+          "type": "string",
+          "description": "Full transaction bytes — user-signable (base64)."
+        },
+        "receiptId": {
+          "type": "string",
+          "description": "Single-use receipt ID (TTL-bound)."
+        },
+        "estimatedGasMist": {
+          "$ref": "#/$defs/mistString",
+          "description": "Estimated gas cost in MIST — the amount reserved from promotion budget+entitlement."
+        }
+      }
+    },
+    "promotionSponsorRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["receiptId", "txBytes", "userSignature"],
+      "description": "POST /studio/promotions/:id/sponsor request body. Authorization: Bearer <developerJwt> header required.",
+      "properties": {
+        "receiptId": {
+          "type": "string",
+          "description": "Receipt ID from /prepare response."
+        },
+        "txBytes": {
+          "type": "string",
+          "description": "Signed transaction bytes (base64) — must match /prepare output."
+        },
+        "userSignature": {
+          "type": "string",
+          "description": "User's transaction signature (base64)."
+        }
+      }
+    },
+    "promotionSponsorResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["digest", "effects", "actualGasMist"],
+      "description": "POST /studio/promotions/:id/sponsor success response.",
+      "properties": {
+        "digest": {
+          "type": "string",
+          "description": "Transaction digest (on-chain)."
+        },
+        "effects": {
+          "type": "object",
+          "description": "Transaction effects."
+        },
+        "actualGasMist": {
+          "$ref": "#/$defs/mistString",
+          "description": "Actual gas consumed (MIST)."
+        }
+      }
+    },
+    "knownPromotionPrepareErrorCode": {
+      "type": "string",
+      "enum": [
+        "BAD_REQUEST",
+        "REQUEST_BODY_TOO_LARGE",
+        "AUTH_FAILED",
+        "AUTH_JWT_INVALID",
+        "ABUSE_BLOCKED",
+        "BLOCK_CHECK_UNAVAILABLE",
+        "BAD_TX_KIND",
+        "SENDER_ADDRESS_MISMATCH",
+        "PROMOTION_NOT_FOUND",
+        "PROMOTION_NOT_ACTIVE",
+        "NOT_CLAIMED",
+        "USE_WINDOW_EXPIRED",
+        "FORBIDDEN_COMMAND",
+        "GASCOIN_FORBIDDEN",
+        "SPONSOR_WITHDRAWAL_FORBIDDEN",
+        "DISALLOWED_TARGET",
+        "PREPARE_OVERLOADED",
+        "SPONSOR_CAPACITY_UNAVAILABLE",
+        "SPONSOR_REFILL_ACCOUNT_UNHEALTHY",
+        "NO_SPONSOR_SLOT",
+        "GAS_EXCEEDS_TX_CAP",
+        "DRY_RUN_FAILED",
+        "DRY_RUN_NO_GAS",
+        "BUDGET_INSUFFICIENT",
+        "ENTITLEMENT_NOT_FOUND",
+        "ENTITLEMENT_NOT_ACTIVE",
+        "ENTITLEMENT_INSUFFICIENT",
+        "ENTITLEMENT_CONCURRENT_RESERVATION",
+        "PREPARE_STUDIO_USER_QUOTA_EXCEEDED",
+        "SPONSOR_LEASE_COMMIT_FAILED",
+        "INTERNAL_ERROR"
+      ]
+    },
+    "knownPromotionSponsorErrorCode": {
+      "type": "string",
+      "description": "Promotion sponsor error codes. `FundsWithdrawal(Sponsor)` rejection is a prepare-only companion guard — see `knownPromotionPrepareErrorCode` for `SPONSOR_WITHDRAWAL_FORBIDDEN`. Sponsor preconsume does not emit that code because the hash-bound consume already proves the submitted bytes match the prepare commit.",
+      "enum": [
+        "BAD_REQUEST",
+        "REQUEST_BODY_TOO_LARGE",
+        "AUTH_FAILED",
+        "AUTH_JWT_INVALID",
+        "ABUSE_BLOCKED",
+        "BLOCK_CHECK_UNAVAILABLE",
+        "SPONSOR_CAPACITY_UNAVAILABLE",
+        "SPONSOR_REFILL_ACCOUNT_UNHEALTHY",
+        "PREPARED_TX_NOT_FOUND",
+        "PREPARED_TX_EXPIRED",
+        "SENDER_ADDRESS_MISMATCH",
+        "USER_ID_MISMATCH",
+        "PROMOTION_NOT_ACTIVE",
+        "NOT_CLAIMED",
+        "USE_WINDOW_EXPIRED",
+        "FORBIDDEN_COMMAND",
+        "GASCOIN_FORBIDDEN",
+        "DISALLOWED_TARGET",
+        "MODE_MISMATCH",
+        "PROMOTION_ID_MISMATCH",
+        "SENDER_SIGNATURE_INVALID",
+        "REPREPARE_REQUIRED",
+        "TAMPERING_DETECTED",
+        "PREFLIGHT_FAILED",
+        "ONCHAIN_REVERT",
+        "GAS_EFFECTS_MISSING",
+        "CONSUME_FAILED",
+        "SPONSOR_FAILED"
+      ]
+    }
+  }
+}

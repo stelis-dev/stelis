@@ -1,0 +1,248 @@
+# Stelis Move Smart Contracts
+
+Move smart contracts for sponsored Sui transaction settlement.
+
+- Built for: maintainers, reviewers, and auditors inspecting or changing on-chain settlement behavior.
+- Use for: on-chain modules, contract entry functions, and links into Move implementation details.
+- Not for: host operation runbooks, package integration guidance, or off-chain host policy.
+
+> Users can start with zero SUI. Relayers must not lose money on successful sponsored transactions. Protocol fees are collected during settlement.
+
+> [!NOTE]
+> Codes like `S-2`, `E-4` are invariant IDs defined in [invariants.md](../../../docs/invariants.md)
+
+---
+
+## Purpose
+
+This package contains the on-chain settlement primitives for Stelis.
+External developer companies and agents do not modify or republish this package in the normal product path.
+They consume the deployed contracts through the SDK or the provided host packages.
+Contract changes and package publishing are maintainer-only workflows.
+
+Use it when you need to inspect or modify:
+
+- fee and pause behavior
+- registered vault enforcement
+- settlement entry points
+- on-chain event schema
+
+## When to Use
+
+Open this package when:
+
+- you are auditing the Move implementation
+- you are changing settlement behavior or admin controls
+- you need the authoritative on-chain function set
+
+Prefer the docs first when you only need system-level context:
+
+- formulas → `docs/economics-formal.md`
+- operational values → `docs/parameters.md`
+- architecture map → `docs/architecture.md`
+
+---
+
+## Module Structure
+
+```
+sources/
+├── config.move     Config (Shared Object) — global settings + admin functions
+├── vault.move      UserVault (Owned Object) + VaultRegistry (Shared Object) — per-user credit vault + registered vault enforcement
+├── settle.move     Settlement entry points — 1-hop swap_and_settle_* + settle_with_credit() + spread guard
+└── events.move     All on-chain event definitions
+```
+
+---
+
+## Core Concepts
+
+### Settlement Entry Points
+
+| Function                           | Target                                      | Description                                                                            |
+| ---------------------------------- | ------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `swap_and_settle_new_user_bfq()`   | **New users** (no Vault), 1-hop bfq         | DeepBook 1-hop base-for-quote swap → create vault → settle → transfer vault to sender  |
+| `swap_and_settle_with_vault_bfq()` | **Existing users** (has Vault), 1-hop bfq   | DeepBook 1-hop base-for-quote swap → optionally use credit → settle → surplus to vault |
+| `swap_and_settle_new_user_qfb()`   | **New users** (no Vault), 1-hop qfb         | DeepBook 1-hop quote-for-base swap → create vault → settle → transfer vault to sender  |
+| `swap_and_settle_with_vault_qfb()` | **Existing users** (has Vault), 1-hop qfb   | DeepBook 1-hop quote-for-base swap → optionally use credit → settle → surplus to vault |
+| `settle_with_credit()`             | **Existing users** (has Vault), credit-only | No swap. Uses vault credit only, then settles                                          |
+
+All `swap_and_settle_*` variants atomically swap a payment token (e.g. DEEP) to SUI via DeepBook, then run settlement in a single transaction.
+Before each swap, the on-chain spread guard rejects the transaction (abort 110: `ESpreadTooWide`) when the DeepBook order book is empty, one-sided, crossed, or has bid/ask spread exceeding `max_spread_bps`.
+`settle_with_credit()` skips the swap and settles using vault credit only.
+Leftover payment coin is returned to the sender automatically in swap variants. No separate DEEP coin is returned from settlement. See [`docs/architecture/onchain-settlement.md → DeepBook Fee Model`](../../../docs/architecture/onchain-settlement.md#deepbook-fee-model).
+
+### Owned Object Protection
+
+`UserVault` is a Sui **Owned Object** with `key` ability only (soulbound) — it cannot be transferred externally to another address.
+Only the owner can include it in transactions. No third party (including relayers) can access it. Even during relayer downtime, users can call `withdraw()` directly.
+
+---
+
+## Function Visibility Table
+
+### `public` — Externally Callable (used from SDK-built transactions)
+
+| Function                         | Module   | Signature                                                                                                                                                                                                                                                                                             | Description                                                                                                                   |
+| -------------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `swap_and_settle_new_user_bfq`   | `settle` | `(config, registry, clock, pool, payment_coin, swap_amount, min_sui_out, ...)`                                                                                                                                                                                                                        | New user: 1-hop bfq swap → create vault → settle                                                                              |
+| `swap_and_settle_with_vault_bfq` | `settle` | `(config, registry, clock, vault, pool, payment_coin, swap_amount, min_sui_out, ..., use_credit_amount, ctx)`                                                                                                                                                                                         | Existing user: 1-hop bfq swap → use credit → settle                                                                           |
+| `swap_and_settle_new_user_qfb`   | `settle` | `(config, registry, clock, pool, payment_coin, swap_amount, min_sui_out, ...)`                                                                                                                                                                                                                        | New user: 1-hop qfb swap → create vault → settle                                                                              |
+| `swap_and_settle_with_vault_qfb` | `settle` | `(config, registry, clock, vault, pool, payment_coin, swap_amount, min_sui_out, ..., use_credit_amount, ctx)`                                                                                                                                                                                         | Existing user: 1-hop qfb swap → use credit → settle                                                                           |
+| `settle_with_credit`             | `settle` | `(config, registry, clock, vault, use_credit_amount, relayer_claim, relayer_recipient, receipt_id, nonce, sim_gas, gas_variance_fixed_mist, slippage_buffer_mist, quoted_relayer_fee_mist, expected_protocol_fee_mist, expected_config_version, quote_timestamp_ms, policy_hash, order_id_hash, ctx)` | Existing user: vault credit only, no swap                                                                                     |
+| `withdraw`                       | `vault`  | `(vault, ctx)`                                                                                                                                                                                                                                                                                        | Withdraw entire vault balance                                                                                                 |
+| `balance`                        | `vault`  | `(vault): u64`                                                                                                                                                                                                                                                                                        | Query vault credit balance                                                                                                    |
+| `set_paused`                     | `config` | `(config, paused, ctx)`                                                                                                                                                                                                                                                                               | Toggle pause (admin only)                                                                                                     |
+| `update_config`                  | `config` | `(config, max_relayer_fee_mist, protocol_flat_fee_mist, max_claim, min_settle, max_spread_bps, ctx)`                                                                                                                                                                                                  | Update settings including spread cap (admin only)                                                                             |
+| `propose_admin`                  | `config` | `(config, new_admin, ctx)`                                                                                                                                                                                                                                                                            | S-5: Step 1 — propose new admin (admin only). Aborts if a pending proposal already exists; call `cancel_admin_proposal` first |
+| `cancel_admin_proposal`          | `config` | `(config, ctx)`                                                                                                                                                                                                                                                                                       | S-5: Cancel pending admin proposal (admin only)                                                                               |
+| `accept_admin`                   | `config` | `(config, ctx)`                                                                                                                                                                                                                                                                                       | S-5: Step 2 — accept admin role (pending admin only)                                                                          |
+| `update_protocol_treasury`       | `config` | `(config, new_treasury, ctx)`                                                                                                                                                                                                                                                                         | Change fee recipient (admin only)                                                                                             |
+
+> **Withdrawal policy**: `vault::withdraw_amount()` exists on-chain as an owner-only helper, but it is intentionally not part of the sponsored execution allowlist or SDK API.
+> Supported sponsored PTBs only expose full withdrawal through `withdraw()`.
+
+### `public(package)` — Internal Only (NOT callable from SDK)
+
+| Function                  | Module   | Description                                                                                                                        |
+| ------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `settle_core`             | `settle` | Vault-independent distribution core: validations, fee splits, event, returns surplus `Coin<SUI>`                                   |
+| `create_vault`            | `vault`  | Creates new UserVault (called by all `swap_and_settle_new_user_*` variants)                                                        |
+| `use_credit`              | `vault`  | Withdraws `Coin<SUI>` from vault (called by all `swap_and_settle_with_vault_*` variants / `settle_with_credit()`)                  |
+| `join_surplus`            | `vault`  | Deposits `Balance<SUI>` to vault (called by settle internally)                                                                     |
+| `check_and_advance_nonce` | `vault`  | S-14: Monotonic nonce replay prevention (called by settle internally)                                                              |
+| `create_registry`         | `vault`  | V-1: Creates VaultRegistry (called by `config::init()`)                                                                            |
+| `register_vault`          | `vault`  | V-2: Registers a vault for a user (called by all `swap_and_settle_new_user_*` variants)                                            |
+| `validate_vault`          | `vault`  | V-3: Validates vault matches the registered vault (called by all `swap_and_settle_with_vault_*` variants / `settle_with_credit()`) |
+| `transfer_vault`          | `vault`  | Transfers soulbound vault to owner (called by all `swap_and_settle_new_user_*` variants)                                           |
+
+> **Security implication**: Vault helpers (`create_vault`, `use_credit`, `join_surplus`) can only be called from the `settle` module.
+> Any attempt to call them from external packages or PTBs results in a compile error or runtime rejection.
+
+---
+
+## Package Constants
+
+| Constant          | Value source                         | Unit | Invariant Ref   |
+| ----------------- | ------------------------------------ | ---- | --------------- |
+| `MAX_CLAIM_MIST`  | `docs/parameters.md` package constants | MIST | S-2, E-4        |
+| `MIN_SETTLE_MIST` | `docs/parameters.md` package constants | MIST | dust prevention |
+
+`Config.max_claim_mist` initializes from `INITIAL_MAX_CLAIM_MIST` at package init and remains admin-adjustable up to `MAX_CLAIM_MIST`.
+
+---
+
+## Settlement Math
+
+The core math inside `settle_core()` (called by all settlement paths via `settle_internal()`):
+
+```
+total_in = sui_received_from_swap [+ use_credit_amount]
+
+quoted_relayer_fee = quoted_relayer_fee_mist     // relayer quoted fee, capped by max_relayer_fee_mist
+protocol_fee       = config.protocol_flat_fee_mist
+payout             = relayer_claim + quoted_relayer_fee
+
+assert!(config.config_version == expected_config_version) // drift detection
+assert!(config.protocol_flat_fee_mist == expected_protocol_fee_mist) // exact match
+assert!(quoted_relayer_fee_mist <= config.max_relayer_fee_mist)       // fee cap
+assert!(relayer_claim <= max_claim_mist)         // S-2
+assert!(total_in >= min_settle_mist)             // S-3
+assert!(total_in >= total_deduction)             // S-4/S-5
+assert!(nonce > vault.last_nonce)                // S-14: on-chain monotonic nonce replay prevention
+surplus = total_in − payout − protocol_fee       // S-9: deposited to vault
+```
+
+> `max_relayer_fee_mist` caps the relayer's quoted fee per TX and is mutable by admin only (A-4).
+> `Config` is read only during settlement as `&Config`.
+
+---
+
+## Events
+
+All state changes emit events for full audit traceability.
+
+| Event                         | Trigger                          | Key Fields                                                                                                                                                                                                                                                                                           |
+| ----------------------------- | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SettleEvent`                 | Settlement entry succeeded       | receipt_id, policy_hash, quote_timestamp_ms, exec_timestamp_ms, sim_gas_reported, gas_variance_fixed_mist, slippage_buffer_mist, relayer_claim, quoted_relayer_fee_mist, protocol_fee, protocol_treasury, payout, total_in, surplus_credited, config_version, user, relayer_recipient, order_id_hash |
+| `CreditUsedEvent`             | Credit used from vault           | user, amount, remaining                                                                                                                                                                                                                                                                              |
+| `WithdrawEvent`               | Vault withdrawal                 | user, amount                                                                                                                                                                                                                                                                                         |
+| `ConfigUpdatedEvent`          | Settings changed                 | old/new value pairs (including max_spread_bps), by, epoch                                                                                                                                                                                                                                            |
+| `TreasuryUpdatedEvent`        | Treasury address changed         | old/new treasury, by, epoch                                                                                                                                                                                                                                                                          |
+| `PausedEvent`                 | Pause toggled                    | is_paused, by, epoch                                                                                                                                                                                                                                                                                 |
+| `AdminProposedEvent`          | Admin transfer proposed          | current_admin, proposed_admin, epoch                                                                                                                                                                                                                                                                 |
+| `AdminProposalCancelledEvent` | Pending admin transfer cancelled | admin, cancelled_proposed, epoch                                                                                                                                                                                                                                                                     |
+| `AdminTransferredEvent`       | Admin transferred                | old/new admin, by, epoch                                                                                                                                                                                                                                                                             |
+
+`SettleEvent` records the successful on-chain settlement entry point and its emitted values. Off-chain application fulfillment should compare the event with expected `receiptId`, `user`, `orderIdHash`, and amount values before treating it as payment completion.
+
+---
+
+## Pause Behavior
+
+| Function                         | paused=true             | paused=false |
+| -------------------------------- | ----------------------- | ------------ |
+| All `swap_and_settle_*` variants | ❌ Rejected (P-1)       | ✅           |
+| `settle_with_credit()`           | ❌ Rejected (P-1)       | ✅           |
+| `withdraw()`                     | ✅ Always allowed (P-2) | ✅           |
+| Admin functions                  | ✅ Always allowed       | ✅           |
+
+> **P-2**: User funds must always be withdrawable, even when the protocol is paused.
+
+---
+
+## Build & Test
+
+```bash
+# Requires Sui CLI (https://docs.sui.io/guides/developer/getting-started/sui-install)
+
+# Build
+sui move build --path packages/contracts/move
+
+# Test
+sui move test --path packages/contracts/move
+
+# Run specific tests (positional filter)
+sui move test --path packages/contracts/move settle
+```
+
+---
+
+## Directory Structure
+
+```
+packages/contracts/move/
+├── Move.toml                Package manifest (edition 2024)
+├── sources/
+│   ├── config.move          Config + admin functions + VaultRegistry init
+│   ├── events.move          9 event definitions
+│   ├── settle.move          Settlement logic — 1-hop swap_and_settle_* + settle_with_credit()
+│   └── vault.move           UserVault CRUD + monotonic nonce replay prevention + VaultRegistry
+├── tests/
+│   └── settle_tests.move    Settlement unit tests
+└── README.md                This file
+```
+
+---
+
+## Invariant Reference
+
+Full invariant list: [invariants.md](../../../docs/invariants.md)
+
+| Category           | Count | Description                                                                             |
+| ------------------ | ----- | --------------------------------------------------------------------------------------- |
+| O (Ownership)      | 5     | UserVault ownership + withdrawal                                                        |
+| S (Settlement)     | 17    | Settlement math + limits + read-only Config + replay + spread guard + integrity binding |
+| V (Vault Registry) | 3     | Registered vault enforcement (1 vault per user)                                         |
+| E (Economy)        | 8     | Non-loss economic model                                                                 |
+| P (Pause)          | 3     | Pause security                                                                          |
+| A (Admin)          | 7     | Admin safety rails                                                                      |
+| R (Relay)          | 10    | Off-chain relayer validation                                                            |
+
+## When Not to Start Here
+
+This package is not the best first read if you only need:
+
+- relayer API contract → see `docs/api.md`
+- relayer validation flow → see `packages/core-relay/README.md`
+- architecture overview → see `docs/architecture.md`

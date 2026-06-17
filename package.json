@@ -1,0 +1,39 @@
+{
+  "name": "stelis",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/contracts",
+    "packages/core-relay",
+    "packages/core-api",
+    "packages/sdk",
+    "packages/app-api",
+    "packages/app-web",
+    "packages/app-admin",
+    "packages/mcp-server"
+  ],
+  "scripts": {
+    "build": "npm run build -w @stelis/contracts && npm run build -w @stelis/core-relay && npm run build -w @stelis/core-api && npm run build -w @stelis/sdk && npm run build -w @stelis/app-api && npm run build:app-web && npm run build:app-admin && npm run build -w @stelis/mcp-server",
+    "build:app-web": "VITE_STELIS_RELAYER_URL=http://localhost:3200/relay VITE_SUI_RPC_URL=https://fullnode.testnet.sui.io:443 npm run build -w @stelis/app-web",
+    "build:app-admin": "VITE_STELIS_API_URL=http://localhost:3200 VITE_SUI_RPC_URL=https://fullnode.testnet.sui.io:443 npm run build -w @stelis/app-admin",
+    "lint": "eslint 'packages/*/src/**/*.ts' 'packages/*/tests/**/*.ts' && node scripts/check-prepare-stage-schema.mjs",
+    "lint:fix": "eslint --fix 'packages/*/src/**/*.ts' 'packages/*/tests/**/*.ts'",
+    "format": "prettier --write 'packages/*/src/**/*.{ts,tsx}' 'packages/*/tests/**/*.ts'",
+    "format:check": "prettier --check 'packages/*/src/**/*.{ts,tsx}' 'packages/*/tests/**/*.ts'",
+    "check:prepare-stage-schema": "node scripts/check-prepare-stage-schema.mjs",
+    "release:check": "npm run typecheck && npm run lint && npm test && npm run build",
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "esbuild": "0.28.1",
+    "eslint": "^9.0.0",
+    "prettier": "^3.2.0",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.0.0"
+  },
+  "overrides": {
+    "esbuild": "0.28.1"
+  }
+}

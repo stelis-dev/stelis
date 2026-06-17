@@ -1,0 +1,36 @@
+{
+  "name": "@stelis/app-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Stelis public docs and evaluation app — Vite + React static SPA",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@mysten/dapp-kit-react": "^1.0.2",
+    "@mysten/sui": "^2.4.0",
+    "@stelis/sdk": "*",
+    "dompurify": "^3.3.3",
+    "mermaid": "^11.4.1",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "react-router-dom": "^7.1.0"
+  },
+  "devDependencies": {
+    "@types/dompurify": "^3.0.5",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "jsdom": "^26.1.0",
+    "lightningcss": "^1.32.0",
+    "postcss": "^8.5.8",
+    "rolldown": "1.0.0-rc.10",
+    "typescript": "~5.9.3",
+    "vite": "^8.0.1"
+  }
+}

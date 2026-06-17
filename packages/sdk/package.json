@@ -1,0 +1,55 @@
+{
+  "name": "@stelis/sdk",
+  "version": "0.1.0",
+  "description": "Stelis SDK — sponsored transaction client for Sui dApps",
+  "keywords": [
+    "stelis",
+    "sui",
+    "sponsored",
+    "relayer",
+    "sponsored-transactions",
+    "payments"
+  ],
+  "homepage": "https://github.com/stelis-dev/stelis/tree/main/packages/sdk",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/stelis-dev/stelis.git",
+    "directory": "packages/sdk"
+  },
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./server": {
+      "types": "./dist/server/index.d.ts",
+      "import": "./dist/server/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup --config tsup.main.config.ts && tsup --config tsup.server.config.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@mysten/sui": "^1.0.0 || ^2.0.0"
+  },
+  "devDependencies": {
+    "@mysten/sui": "^2.4.0",
+    "@stelis/contracts": "*",
+    "@stelis/core-relay": "*",
+    "@types/node": "^22.0.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.4.0",
+    "vitest": "^4.1.8"
+  },
+  "files": [
+    "dist",
+    "CHANGELOG.md"
+  ],
+  "license": "MIT"
+}

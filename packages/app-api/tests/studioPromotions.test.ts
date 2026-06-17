@@ -1,0 +1,561 @@
+/**
+ * Studio promotion route contract tests — verifies HTTP contracts
+ * for promotion list, detail, and claim endpoints.
+ *
+ * Uses in-memory store implementations from core-api (no mocks for store logic).
+ * Only mocks clientIp and developer JWT verification.
+ */
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { Hono } from 'hono';
+import {
+  assertResponseKeys,
+  assertNestedObjectKeys,
+  assertArrayItemKeys,
+} from './helpers/schemaAssert.js';
+
+// ── Hoisted mocks ───────────────────────────────────────────────────────
+const { mockVerifyDeveloperJwt } = vi.hoisted(() => ({
+  mockVerifyDeveloperJwt: vi.fn().mockResolvedValue({
+    userId: 'user-1',
+    senderAddress: '0xAddr1',
+  }),
+}));
+
+vi.mock('@stelis/core-api/studio', async () => {
+  const actual = await vi.importActual('@stelis/core-api/studio');
+  return {
+    ...actual,
+    verifyDeveloperJwt: mockVerifyDeveloperJwt,
+    recordPromotionAbuseEvent: vi.fn().mockResolvedValue(undefined),
+  };
+});
+
+vi.mock('../src/clientIp.js', () => ({
+  getClientIp: vi.fn().mockReturnValue('127.0.0.1'),
+}));
+
+vi.mock('../src/developerJwtVerifyCallback.js', () => ({
+  callDeveloperVerifyApi: vi.fn().mockResolvedValue(undefined),
+}));
+
+import { createStudioRoutes } from '../src/routes/studio.js';
+import type { AppApiContext } from '../src/context.js';
+import {
+  MemoryPromotionStore,
+  MemoryPromotionExecutionLedger,
+} from '@stelis/core-api/testing/studio';
+import type { CreatePromotionInput } from '@stelis/core-api/studio';
+
+// ── Helpers ─────────────────────────────────────────────────────────────
+
+const BASE_PROMO: CreatePromotionInput = {
+  type: 'gas_sponsorship',
+  displayName: 'Test Promo',
+  description: 'Test description',
+  maxParticipants: 10,
+  perUserGasAllowanceMist: '5000000',
+  claimDeadlineAt: null,
+  postClaimUseWindowMs: 0,
+  startAt: null,
+};
+
+function createFullCtx(overrides: Partial<AppApiContext> = {}): AppApiContext {
+  const promotionStore = new MemoryPromotionStore();
+
+  return {
+    relay: {
+      rateLimiter: { check: vi.fn().mockResolvedValue({ allowed: true }) },
+      abuseBlocker: {
+        checkIp: vi.fn().mockResolvedValue({ blocked: false }),
+        checkSubject: vi.fn().mockResolvedValue({ blocked: false }),
+      },
+    } as never,
+    prepareConfig: {} as never,
+    studio: {} as never,
+    promotionStore,
+    usageStore: null,
+    executionLedger: new MemoryPromotionExecutionLedger(),
+    developerJwtTrustConfig: {
+      issuer: 'test',
+      audience: 'test',
+      algorithm: 'RS256' as const,
+      publicKeyPem: 'test',
+      claimPaths: { userId: 'sub', senderAddress: 'wallet' },
+    },
+    developerJwtVerifyUrl: null,
+    redis: {} as never,
+    sponsorOperations: {} as never,
+    dispose: vi.fn(),
+    ...overrides,
+  } as AppApiContext;
+}
+
+function mountApp(ctx: AppApiContext): Hono {
+  const routes = createStudioRoutes(async () => ctx);
+  const app = new Hono();
+  app.route('/studio', routes);
+  return app;
+}
+
+// ── Tests ───────────────────────────────────────────────────────────────
+
+describe('studio promotion routes', () => {
+  let ctx: AppApiContext;
+  let app: Hono;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    ctx = createFullCtx();
+    app = mountApp(ctx);
+  });
+
+  // ── GET /studio/promotions (list) ───────────────────────────────
+  describe('GET /studio/promotions', () => {
+    it('returns 401 without Authorization header', async () => {
+      const res = await app.request('/studio/promotions');
+      expect(res.status).toBe(401);
+    });
+
+    it('returns empty list when no active promotions', async () => {
+      const res = await app.request('/studio/promotions', {
+        headers: { Authorization: 'Bearer test-jwt' },
+      });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.promotions).toEqual([]);
+    });
+
+    it('returns active promotions with user state', async () => {
+      const record = await ctx.promotionStore!.create(BASE_PROMO);
+      await ctx.promotionStore!.transitionStatus(record.promotionId, 'active');
+
+      const res = await app.request('/studio/promotions', {
+        headers: { Authorization: 'Bearer test-jwt' },
+      });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.promotions).toHaveLength(1);
+      expect(body.promotions[0].promotionId).toBe(record.promotionId);
+      expect(body.promotions[0].displayName).toBe('Test Promo');
+      expect(body.promotions[0].canClaim).toBe(true);
+      expect(body.promotions[0].canUseSponsoredAction).toBe(false);
+      expect(body.promotions[0].promotionRemainingBudgetMist).toBeTruthy();
+
+      assertResponseKeys(body, 'promotionListResponse');
+      assertArrayItemKeys(body, 'promotions', 'promotionListItem');
+    });
+
+    it('does not invoke block check or rate-limit on success (inline JWT only)', async () => {
+      const record = await ctx.promotionStore!.create(BASE_PROMO);
+      await ctx.promotionStore!.transitionStatus(record.promotionId, 'active');
+
+      const res = await app.request('/studio/promotions', {
+        headers: { Authorization: 'Bearer test-jwt' },
+      });
+      expect(res.status).toBe(200);
+      expect(vi.mocked(ctx.relay.rateLimiter.check)).not.toHaveBeenCalled();
+      expect(vi.mocked(ctx.relay.abuseBlocker.checkIp)).not.toHaveBeenCalled();
+      expect(vi.mocked(ctx.relay.abuseBlocker.checkSubject)).not.toHaveBeenCalled();
+    });
+
+    it('does not include draft/paused promotions', async () => {
+      const draft = await ctx.promotionStore!.create(BASE_PROMO);
+      // Don't activate - stays in draft
+      const active = await ctx.promotionStore!.create({ ...BASE_PROMO, displayName: 'Active One' });
+      await ctx.promotionStore!.transitionStatus(active.promotionId, 'active');
+
+      const res = await app.request('/studio/promotions', {
+        headers: { Authorization: 'Bearer test-jwt' },
+      });
+      const body = await res.json();
+      expect(body.promotions).toHaveLength(1);
+      expect(body.promotions[0].displayName).toBe('Active One');
+      // Draft should not appear
+      expect(
+        body.promotions.find((p: { promotionId: string }) => p.promotionId === draft.promotionId),
+      ).toBeUndefined();
+    });
+
+    it('returns future startAt as canClaim=false + unavailableReason=promotion_not_started', async () => {
+      const future = new Date(Date.now() + 86_400_000).toISOString();
+      const record = await ctx.promotionStore!.create({ ...BASE_PROMO, startAt: future });
+      await ctx.promotionStore!.transitionStatus(record.promotionId, 'active');
+
+      const res = await app.request('/studio/promotions', {
+        headers: { Authorization: 'Bearer test-jwt' },
+      });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.promotions).toHaveLength(1);
+      expect(body.promotions[0].promotionId).toBe(record.promotionId);
+      expect(body.promotions[0].canClaim).toBe(false);
+      expect(body.promotions[0].canUseSponsoredAction).toBe(false);
+      expect(body.promotions[0].unavailableReason).toBe('promotion_not_started');
+    });
+  });
+
+  // ── GET /studio/promotions/:id (detail) ─────────────────────────
+  describe('GET /studio/promotions/:id', () => {
+    it('returns 401 without Authorization header', async () => {
+      const res = await app.request('/studio/promotions/some-id');
+      expect(res.status).toBe(401);
+    });
+
+    it('returns 404 for nonexistent promotion', async () => {
+      const res = await app.request('/studio/promotions/nonexistent', {
+        headers: { Authorization: 'Bearer test-jwt' },
+      });
+      expect(res.status).toBe(404);
+    });
+
+    it('returns detail with promotionRemainingBudgetMist for existing promotion', async () => {
+      const record = await ctx.promotionStore!.create(BASE_PROMO);
+      await ctx.promotionStore!.transitionStatus(record.promotionId, 'active');
+
+      const res = await app.request(`/studio/promotions/${record.promotionId}`, {
+        headers: { Authorization: 'Bearer test-jwt' },
+      });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.promotionId).toBe(record.promotionId);
+      expect(body.displayName).toBe('Test Promo');
+      expect(body.type).toBe('gas_sponsorship');
+      expect(body.promotionRemainingBudgetMist).toBeTruthy();
+      expect(body.detail).toBeDefined();
+      expect(body.detail.claimStatus).toBe('not_claimed');
+      expect(body.detail.canClaim).toBe(true);
+
+      assertResponseKeys(body, 'promotionDetailResponse');
+      assertNestedObjectKeys(body, 'detail', 'userPromotionDetail');
+    });
+
+    it('does not invoke block check or rate-limit on success (inline JWT only)', async () => {
+      const record = await ctx.promotionStore!.create(BASE_PROMO);
+      await ctx.promotionStore!.transitionStatus(record.promotionId, 'active');
+
+      const res = await app.request(`/studio/promotions/${record.promotionId}`, {
+        headers: { Authorization: 'Bearer test-jwt' },
+      });
+      expect(res.status).toBe(200);
+      expect(vi.mocked(ctx.relay.rateLimiter.check)).not.toHaveBeenCalled();
+      expect(vi.mocked(ctx.relay.abuseBlocker.checkIp)).not.toHaveBeenCalled();
+      expect(vi.mocked(ctx.relay.abuseBlocker.checkSubject)).not.toHaveBeenCalled();
+    });
+
+    it('returns future startAt as detail.canClaim=false + unavailableReason=promotion_not_started', async () => {
+      const future = new Date(Date.now() + 86_400_000).toISOString();
+      const record = await ctx.promotionStore!.create({ ...BASE_PROMO, startAt: future });
+      await ctx.promotionStore!.transitionStatus(record.promotionId, 'active');
+
+      const res = await app.request(`/studio/promotions/${record.promotionId}`, {
+        headers: { Authorization: 'Bearer test-jwt' },
+      });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.promotionId).toBe(record.promotionId);
+      expect(body.detail.claimStatus).toBe('not_claimed');
+      expect(body.detail.canClaim).toBe(false);
+      expect(body.detail.unavailableReason).toBe('promotion_not_started');
+    });
+  });
+
+  // ── POST /studio/promotions/:id/claim ───────────────────────────
+  describe('POST /studio/promotions/:id/claim', () => {
+    it('returns 401 without Authorization header', async () => {
+      const res = await app.request('/studio/promotions/some-id/claim', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      expect(res.status).toBe(401);
+    });
+
+    // 503 infrastructure failures outrank 401 auth on this route.
+    it('returns 503 (not 401) when promotion system is unavailable AND Authorization is missing', async () => {
+      const unavailableCtx = createFullCtx({ promotionStore: null, executionLedger: null });
+      const unavailableApp = mountApp(unavailableCtx);
+      const res = await unavailableApp.request('/studio/promotions/some-id/claim', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      expect(res.status).toBe(503);
+    });
+
+    // Claim keeps generic JWT verification failures on the route-outer
+    // 500 path instead of remapping them to 401 AUTH_JWT_INVALID.
+    it('returns 500 on generic JWT verification failure (not 401 AUTH_JWT_INVALID)', async () => {
+      mockVerifyDeveloperJwt.mockRejectedValueOnce(new Error('kid not trusted'));
+      const res = await app.request('/studio/promotions/some-id/claim', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-jwt' },
+        body: JSON.stringify({}),
+      });
+      expect(res.status).toBe(500);
+      const body = await res.json();
+      expect(body.code).toBeUndefined();
+      expect(body.error).toBe('Internal server error');
+    });
+
+    it('returns 404 for nonexistent promotion', async () => {
+      const res = await app.request('/studio/promotions/nonexistent/claim', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-jwt' },
+        body: JSON.stringify({}),
+      });
+      expect(res.status).toBe(404);
+    });
+
+    it('returns 201 on successful claim', async () => {
+      const record = await ctx.promotionStore!.create(BASE_PROMO);
+      await ctx.promotionStore!.transitionStatus(record.promotionId, 'active');
+
+      const res = await app.request(`/studio/promotions/${record.promotionId}/claim`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-jwt' },
+        body: JSON.stringify({}),
+      });
+      expect(res.status).toBe(201);
+      const body = await res.json();
+      expect(body.entitlement).toBeDefined();
+      expect(body.entitlement.userId).toBe('user-1');
+      expect(body.entitlement.remainingGasAllowanceMist).toBe('5000000');
+
+      assertResponseKeys(body, 'promotionClaimResponse');
+      assertNestedObjectKeys(body, 'entitlement', 'promotionEntitlement');
+    });
+
+    it('returns 409 promotion_not_started when startAt is in the future', async () => {
+      const future = new Date(Date.now() + 86_400_000).toISOString();
+      const record = await ctx.promotionStore!.create({ ...BASE_PROMO, startAt: future });
+      await ctx.promotionStore!.transitionStatus(record.promotionId, 'active');
+
+      const res = await app.request(`/studio/promotions/${record.promotionId}/claim`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-jwt' },
+        body: JSON.stringify({}),
+      });
+      expect(res.status).toBe(409);
+      const body = await res.json();
+      expect(body.error).toBe('promotion_not_started');
+    });
+
+    it('returns 503 BLOCK_CHECK_UNAVAILABLE when abuse-block adapter throws during claim', async () => {
+      const record = await ctx.promotionStore!.create(BASE_PROMO);
+      await ctx.promotionStore!.transitionStatus(record.promotionId, 'active');
+
+      vi.mocked(ctx.relay.abuseBlocker.checkIp).mockRejectedValueOnce(new Error('redis down'));
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      const res = await app.request(`/studio/promotions/${record.promotionId}/claim`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-jwt' },
+        body: JSON.stringify({}),
+      });
+      expect(res.status).toBe(503);
+      const body = await res.json();
+      expect(body.code).toBe('BLOCK_CHECK_UNAVAILABLE');
+
+      warnSpy.mockRestore();
+    });
+
+    it('returns 413 REQUEST_BODY_TOO_LARGE when request body exceeds MAX_SMALL cap', async () => {
+      const record = await ctx.promotionStore!.create(BASE_PROMO);
+      await ctx.promotionStore!.transitionStatus(record.promotionId, 'active');
+
+      // MAX_SMALL_REQUEST_BODY_BYTES = 32 * 1024. Build a payload that
+      // exceeds the cap so `readJsonBodyWithLimit` throws
+      // `RequestBodyTooLargeError`, which the shared `mapError` maps to 413.
+      const oversized = { filler: 'x'.repeat(40_000) };
+
+      const res = await app.request(`/studio/promotions/${record.promotionId}/claim`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-jwt' },
+        body: JSON.stringify(oversized),
+      });
+      expect(res.status).toBe(413);
+      const body = await res.json();
+      expect(body.code).toBe('REQUEST_BODY_TOO_LARGE');
+      expect(typeof body.error).toBe('string');
+      expect(body.error.length).toBeGreaterThan(0);
+    });
+
+    it('returns 409 on duplicate claim', async () => {
+      const record = await ctx.promotionStore!.create(BASE_PROMO);
+      await ctx.promotionStore!.transitionStatus(record.promotionId, 'active');
+
+      // First claim
+      await app.request(`/studio/promotions/${record.promotionId}/claim`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-jwt' },
+        body: JSON.stringify({}),
+      });
+
+      // Second claim — duplicate
+      const res = await app.request(`/studio/promotions/${record.promotionId}/claim`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-jwt' },
+        body: JSON.stringify({}),
+      });
+      expect(res.status).toBe(409);
+      const body = await res.json();
+      expect(body.error).toBe('already_claimed');
+    });
+
+    it('returns 409 when max participants reached', async () => {
+      const record = await ctx.promotionStore!.create({ ...BASE_PROMO, maxParticipants: 1 });
+      await ctx.promotionStore!.transitionStatus(record.promotionId, 'active');
+
+      // Fill capacity
+      await app.request(`/studio/promotions/${record.promotionId}/claim`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-jwt' },
+        body: JSON.stringify({}),
+      });
+
+      // Over capacity — use different userId via mock
+      mockVerifyDeveloperJwt.mockResolvedValueOnce({ userId: 'user-2', senderAddress: '0xAddr2' });
+      const res = await app.request(`/studio/promotions/${record.promotionId}/claim`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-jwt-2' },
+        body: JSON.stringify({}),
+      });
+      expect(res.status).toBe(409);
+      const body = await res.json();
+      expect(body.error).toBe('max_participants_reached');
+    });
+
+    it('returns 409 when promotion not active (paused)', async () => {
+      const record = await ctx.promotionStore!.create(BASE_PROMO);
+      // Don't activate — stays in draft
+
+      const res = await app.request(`/studio/promotions/${record.promotionId}/claim`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-jwt' },
+        body: JSON.stringify({}),
+      });
+      expect(res.status).toBe(409);
+      const body = await res.json();
+      expect(body.error).toBe('promotion_not_active');
+    });
+
+    it('returns 429 when IP is blocked', async () => {
+      // Override abuseBlocker to return blocked
+      const blockedCtx = createFullCtx({
+        relay: {
+          rateLimiter: { check: vi.fn().mockResolvedValue({ allowed: true }) },
+          abuseBlocker: {
+            checkIp: vi.fn().mockResolvedValue({ blocked: true, retryAfterMs: 60000 }),
+            checkSubject: vi.fn().mockResolvedValue({ blocked: false }),
+          },
+        } as never,
+      });
+      const blockedApp = mountApp(blockedCtx);
+      const record = await blockedCtx.promotionStore!.create(BASE_PROMO);
+      await blockedCtx.promotionStore!.transitionStatus(record.promotionId, 'active');
+
+      const res = await blockedApp.request(`/studio/promotions/${record.promotionId}/claim`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-jwt' },
+        body: JSON.stringify({}),
+      });
+      expect(res.status).toBe(429);
+      expect(res.headers.get('Retry-After')).toBeTruthy();
+    });
+
+    it('returns 429 when rate limit exceeded', async () => {
+      // Override rateLimiter to return not allowed
+      const rlCtx = createFullCtx({
+        relay: {
+          rateLimiter: { check: vi.fn().mockResolvedValue({ allowed: false, retryAfterMs: 5000 }) },
+          abuseBlocker: {
+            checkIp: vi.fn().mockResolvedValue({ blocked: false }),
+            checkSubject: vi.fn().mockResolvedValue({ blocked: false }),
+          },
+        } as never,
+      });
+      const rlApp = mountApp(rlCtx);
+      const record = await rlCtx.promotionStore!.create(BASE_PROMO);
+      await rlCtx.promotionStore!.transitionStatus(record.promotionId, 'active');
+
+      const res = await rlApp.request(`/studio/promotions/${record.promotionId}/claim`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-jwt' },
+        body: JSON.stringify({}),
+      });
+      expect(res.status).toBe(429);
+      const body = await res.json();
+      expect(body.error).toBe('Rate limit exceeded');
+    });
+
+    it('checks IP, userId, and promotionId rate-limit keys on successful claim', async () => {
+      const record = await ctx.promotionStore!.create(BASE_PROMO);
+      await ctx.promotionStore!.transitionStatus(record.promotionId, 'active');
+
+      await app.request(`/studio/promotions/${record.promotionId}/claim`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-jwt' },
+        body: JSON.stringify({}),
+      });
+      const calls = vi.mocked(ctx.relay.rateLimiter.check).mock.calls.map((c) => c[0]);
+      expect(calls).toContain('promo_claim:127.0.0.1');
+      expect(calls).toContain('promo_claim:uid:user-1');
+      expect(calls).toContain(`promo_claim:pid:${record.promotionId}`);
+    });
+  });
+
+  // ── Cross-route sequence tests ───────────────────────────────────
+  // Verify that claim state is immediately observable across all routes.
+  describe('cross-route claim consistency', () => {
+    it('claimed user appears in GET /studio/promotions list', async () => {
+      const record = await ctx.promotionStore!.create(BASE_PROMO);
+      await ctx.promotionStore!.transitionStatus(record.promotionId, 'active');
+
+      // Claim
+      const claimRes = await app.request(`/studio/promotions/${record.promotionId}/claim`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-jwt' },
+        body: JSON.stringify({}),
+      });
+      expect(claimRes.status).toBe(201);
+
+      // List — claimed user should see canUseSponsoredAction: true
+      const listRes = await app.request('/studio/promotions', {
+        headers: { Authorization: 'Bearer test-jwt' },
+      });
+      expect(listRes.status).toBe(200);
+      const listBody = (await listRes.json()) as {
+        promotions: {
+          canUseSponsoredAction: boolean;
+          userRemainingGasAllowanceMist: string | null;
+        }[];
+      };
+      expect(listBody.promotions).toHaveLength(1);
+      expect(listBody.promotions[0].canUseSponsoredAction).toBe(true);
+      expect(listBody.promotions[0].userRemainingGasAllowanceMist).toBe('5000000');
+    });
+
+    it('claimed user appears in GET /studio/promotions/:id detail', async () => {
+      const record = await ctx.promotionStore!.create(BASE_PROMO);
+      await ctx.promotionStore!.transitionStatus(record.promotionId, 'active');
+
+      // Claim
+      await app.request(`/studio/promotions/${record.promotionId}/claim`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-jwt' },
+        body: JSON.stringify({}),
+      });
+
+      // Detail — should reflect claimed state
+      const detailRes = await app.request(`/studio/promotions/${record.promotionId}`, {
+        headers: { Authorization: 'Bearer test-jwt' },
+      });
+      expect(detailRes.status).toBe(200);
+      const detailBody = (await detailRes.json()) as {
+        detail: { claimStatus: string; canUseSponsoredAction: boolean };
+      };
+      expect(detailBody.detail.claimStatus).toBe('claimed');
+      expect(detailBody.detail.canUseSponsoredAction).toBe(true);
+    });
+  });
+});

@@ -1,0 +1,44 @@
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { afterEach, describe, expect, it } from 'vitest';
+
+const openClients: Client[] = [];
+
+afterEach(async () => {
+  await Promise.allSettled(openClients.splice(0).map((client) => client.close()));
+});
+
+describe('MCP stdio server', () => {
+  it('starts and lists Stelis tools', async () => {
+    const client = new Client({ name: 'stelis-mcp-test-client', version: '0.0.0' });
+    openClients.push(client);
+
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: ['--import', 'tsx', 'src/index.ts'],
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        STELIS_RELAY_URL: 'https://host.example/relay',
+      },
+      stderr: 'pipe',
+    });
+
+    await client.connect(transport);
+    const result = await client.listTools();
+    const names = result.tools.map((tool) => tool.name);
+
+    expect(names).toEqual(
+      expect.arrayContaining([
+        'stelis_get_relay_config',
+        'stelis_prepare_sponsored_transaction',
+        'stelis_submit_signed_transaction',
+        'stelis_list_promotions',
+        'stelis_get_promotion_detail',
+        'stelis_claim_promotion',
+        'stelis_prepare_promotion_sponsored_transaction',
+        'stelis_submit_signed_promotion_sponsored_transaction',
+      ]),
+    );
+  });
+});

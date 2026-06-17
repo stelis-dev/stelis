@@ -1,0 +1,54 @@
+{
+  "name": "@stelis/mcp-server",
+  "version": "0.1.0",
+  "description": "Stelis MCP server for agent-facing sponsored-transaction workflows",
+  "keywords": [
+    "stelis",
+    "mcp",
+    "model-context-protocol",
+    "sui",
+    "sponsored-transactions",
+    "agents"
+  ],
+  "homepage": "https://github.com/stelis-dev/stelis/tree/main/packages/mcp-server",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/stelis-dev/stelis.git",
+    "directory": "packages/mcp-server"
+  },
+  "type": "module",
+  "bin": {
+    "stelis-mcp-server": "dist/index.js"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc && node scripts/mark-bin-executable.mjs",
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.8.1",
+    "typescript": "~5.9.3",
+    "vitest": "^4.1.8"
+  },
+  "license": "MIT"
+}

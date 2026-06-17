@@ -1,0 +1,165 @@
+# Parameters
+
+This document lists current public configuration values that are referenced by package docs and architecture docs.
+
+If a value here conflicts with code, treat the code as current and update this document.
+
+<a id="package-constants"></a>
+
+## Package Constants
+
+| Name | Value | Source |
+| --- | ---: | --- |
+| `MAX_CLAIM_MIST` | `100000000` | `packages/contracts/move/sources/config.move` |
+| `INITIAL_MAX_CLAIM_MIST` | `75000000` | `packages/contracts/move/sources/config.move` |
+| `MIN_SETTLE_MIST` | `1000` | `packages/contracts/move/sources/config.move` |
+| `SLIPPAGE_CAP_BPS` | `500` | `packages/contracts/src/constants.ts` |
+| `GAS_MARGIN_CAP_BPS` | `10000` | `packages/contracts/src/constants.ts` |
+| `GAS_VARIANCE_FIXED_MIST` | `100000` | `packages/core-relay/src/gasEstimate.ts` |
+| `DEFAULT_GAS_MARGIN_BPS` | `1000` | `packages/core-relay/src/gasEstimate.ts` |
+
+## Initial On-Chain Config Values
+
+These values are written by `packages/contracts/move/sources/config.move` at package initialization. The on-chain admin can change selected fields through `update_config`.
+
+| Field | Initial value | Notes |
+| --- | ---: | --- |
+| `max_relayer_fee_mist` | `0` | Admin can update, bounded by fee-cap checks. |
+| `protocol_flat_fee_mist` | `0` | Admin can update. |
+| `max_claim_mist` | `75000000` | Starts from `INITIAL_MAX_CLAIM_MIST`; cannot exceed `MAX_CLAIM_MIST`. |
+| `min_settle_mist` | `100000` | Cannot be set below `MIN_SETTLE_MIST`. |
+| `max_spread_bps` | `500` | Admin can update within `1..10000`. |
+| `config_version` | `0` | Incremented on each `update_config`. |
+
+<a id="off-chain-constants"></a>
+
+## Off-Chain Constants
+
+| Name | Value | Source |
+| --- | ---: | --- |
+| `PREPARE_TTL_MS` | `60000` | `packages/core-api/src/preparePolicy.ts` |
+| `MAX_CONCURRENT_PER_IP` | `2` | `packages/core-api/src/store/memoryPrepareStore.ts` |
+| `MAX_OUTSTANDING_PER_STUDIO_USER` | `3` | `packages/core-api/src/store/memoryPrepareStore.ts` |
+| `MAX_OUTSTANDING_PER_SENDER` | `3` | `packages/core-api/src/store/memoryPrepareStore.ts` |
+| `PREPARE_AUTHORIZATION_TTL_MS` | `300000` | `packages/core-api/src/prepare/prepareAuthorization.ts` |
+| `PREPARE_AUTHORIZATION_CLOCK_SKEW_MS` | `30000` | `packages/core-api/src/prepare/prepareAuthorization.ts` |
+| `MAX_PREPARE_REQUEST_NONCE_BYTES` | `128` | `packages/core-api/src/prepare/prepareAuthorization.ts` |
+| Sponsor balance warning default | `5000000000` | `packages/app-api/src/sponsor-operations/defaults.ts` |
+| Sponsor refill target default | `10000000000` | `packages/app-api/src/sponsor-operations/defaults.ts` |
+
+<a id="ttl-constants"></a>
+
+## TTL Constants
+
+| Name | Value | Source | Meaning |
+| --- | ---: | --- | --- |
+| `PREPARE_TTL_MS` | `60000` | `packages/core-api/src/preparePolicy.ts` | How long a prepare receipt is valid. |
+| `PREPARE_AUTHORIZATION_TTL_MS` | `300000` | `packages/core-api/src/prepare/prepareAuthorization.ts` | Maximum age for a signed prepare authorization message. |
+| `PREPARE_AUTHORIZATION_CLOCK_SKEW_MS` | `30000` | `packages/core-api/src/prepare/prepareAuthorization.ts` | Accepted client clock lead for prepare authorization timestamps. |
+| `PROMOTION_EXECUTION_LEDGER_DEFAULT_RESERVATION_TTL_MS` | `60000` | `packages/core-api/src/studio/executionLedger.ts` | Default Studio promotion reservation TTL. |
+| `PROMOTION_EXECUTION_LEDGER_DEFAULT_REAPER_INTERVAL_MS` | `15000` | `packages/core-api/src/studio/executionLedger.ts` | Default Studio ledger expired-reservation sweep interval. |
+| `DEFAULT_USAGE_RETENTION_MS` | `2592000000` | `packages/core-api/src/studio/promotionUsageStore.ts` | Default promotion usage-event retention window. |
+
+Prepare records are temporary. Clients must prepare again when a receipt expires or when a sponsor returns `LEASE_EXPIRED`.
+
+Prepare authorization request nonces are temporary replay guards for signed prepare requests. They are separate from the on-chain settlement nonce returned in the prepare response.
+
+<a id="runtime-timing-constants"></a>
+
+## Runtime Timing Constants
+
+| Name | Value | Source | Meaning |
+| --- | ---: | --- | --- |
+| `APP_API_RATE_LIMIT_WINDOW_MS` | `60000` | `packages/app-api/src/context.ts` | Fixed-window request rate-limit window for app-api route groups using the shared limiter. |
+| `APP_API_RATE_LIMIT_MAX_REQUESTS` | `20` | `packages/app-api/src/context.ts` | Maximum requests allowed in each app-api fixed window for route groups using the shared limiter. |
+| Admin auth rate limit window | `900000` | `packages/core-api/src/admin/adminRateLimit.ts` | Fixed-window duration for admin auth attempts. |
+| `RATE_LIMIT_MAX` | `5` | `packages/core-api/src/admin/adminRateLimit.ts` | Maximum admin auth attempts per IP in each fixed window. |
+| Admin operation rate limit window | `900000` | `packages/core-api/src/admin/adminOperationsRateLimit.ts` | Fixed-window duration for mutating admin operation attempts. |
+| `ADMIN_OPERATIONS_RATE_LIMIT_MAX` | `5` | `packages/core-api/src/admin/adminOperationsRateLimit.ts` | Maximum mutating admin operation attempts per IP in each fixed window. |
+| `DEVELOPER_VERIFY_TIMEOUT_MS` | `5000` | `packages/app-api/src/developerJwtVerifyCallback.ts` | Timeout for optional developer JWT verification callback. |
+| `DEFAULT_COOLDOWN_MS` | `30000` | `packages/app-api/src/sui/failoverTransport.ts` | Passive cooldown for a failed RPC endpoint. |
+
+## Studio Ledger Limits
+
+| Name | Value | Source | Meaning |
+| --- | ---: | --- | --- |
+| `MAX_PROMOTION_LEDGER_VALUE_MIST` | `9007199254740991` | `packages/core-api/src/studio/executionLedger.ts` | Maximum MIST value accepted by Studio promotion ledger accounting. |
+
+## Required Host Environment
+
+`@stelis/app-api` requires the following baseline configuration:
+
+- `REDIS_URL`
+- `SPONSOR_SECRET_KEY`
+- `SPONSOR_REFILL_ACCOUNT_SECRET_KEY`
+- `NETWORK`
+- `RELAYER_RECIPIENT_ADDRESS`
+- `SPONSOR_LEASE_HMAC_SECRET`
+- `packages/app-api/settlement-swap-paths.json`
+- `packages/app-api/rpc.json`
+
+`SPONSOR_SECRET_KEY` accepts 1..256 comma-separated sponsor keys.
+
+Sponsor operation timeouts are also required:
+
+- `SPONSOR_OPERATIONS_SLOT_BALANCE_TIMEOUT_MS`
+- `SPONSOR_OPERATIONS_SPONSOR_REFILL_ACCOUNT_BALANCE_TIMEOUT_MS`
+- `SPONSOR_OPERATIONS_REFILL_TIMEOUT_MS`
+- `SPONSOR_OPERATIONS_CONFIRMATION_TIMEOUT_MS`
+
+Optional host configuration:
+
+- `PORT`
+- `TRUSTED_PROXY_HOPS`
+- `CORS_ORIGINS`
+- `NODE_ENV`
+- `RELAYER_FEE_MIST`
+- `PREPARE_INFLIGHT_CAPACITY`
+- `SPONSOR_BALANCE_WARN_MIST`
+- `SPONSOR_OPERATIONS_REFILL_ENABLED`
+- `SPONSOR_BALANCE_REFILL_TARGET_MIST`
+
+Admin dashboard routes require these when the dashboard is used:
+
+- `ADMIN_ADDRESS`
+- `ADMIN_JWT_SECRET`
+
+Optional admin configuration:
+
+- `ADMIN_SESSION_EXPIRY`
+- `COOKIE_DOMAIN`
+
+Studio promotion mode is enabled only when all of these are present:
+
+- `ADMIN_JWT_SECRET`
+- `ADMIN_ADDRESS`
+- `STUDIO_ALLOWED_TARGETS`
+- `STUDIO_DEVELOPER_JWT_TRUST_JSON`
+
+Optional Studio configuration:
+
+- `STUDIO_DEVELOPER_JWT_VERIFY_URL`
+
+## Static App Environment
+
+`@stelis/app-web` requires:
+
+- `VITE_STELIS_RELAYER_URL`
+- `VITE_SUI_RPC_URL`
+
+Optional `@stelis/app-web` configuration:
+
+- `VITE_STELIS_UI_MODE`
+- `VITE_REPO_DOCS_BASE_URL`
+
+`@stelis/app-admin` requires:
+
+- `VITE_STELIS_API_URL`
+- `VITE_SUI_RPC_URL`
+
+## MCP Server Environment
+
+`@stelis/mcp-server` accepts optional default configuration:
+
+- `STELIS_RELAY_URL`
+- `STELIS_REQUEST_TIMEOUT_MS`

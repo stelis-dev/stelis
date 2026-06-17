@@ -1,5 +1,31 @@
 # Local working area for plans, scratch files, and external references.
 .WORK/
 
+# Dependencies and package manager outputs.
+node_modules/
+
+# Build and typecheck outputs.
+dist/
+packages/*/dist/
+*.tsbuildinfo
+
+# Local app/runtime outputs.
+.next/
+coverage/
+
+# Local environment files.
+**/.env.local
+packages/app-api/settlement-swap-paths.json
+packages/app-api/rpc.json
+
+# Move build and audit outputs.
+packages/contracts/move/build/
+packages/contracts/move/Move.lock
+packages/contracts/move/build_log.txt
+packages/contracts/move/Upgrade.toml
+packages/contracts/move/bytecode.dump.json
+packages/contracts/move/.coverage_map.mvcov
+packages/contracts/move/.trace
+
 # OS metadata.
 .DS_Store

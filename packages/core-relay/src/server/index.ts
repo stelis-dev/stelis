@@ -1,0 +1,36 @@
+export {
+  PaymentInputContractError,
+  extractSettlePaymentInputContract,
+  validatePaymentInputIntegrity,
+} from '../paymentInputIntegrity.js';
+
+export type {
+  PaymentInputTrace,
+  PaymentInputIntegrityExpectation,
+  PaymentInputIntegrityResult,
+  PaymentInputIntegritySubcode,
+  PaymentInputSource,
+  SettlePaymentInputContract,
+} from '../paymentInputIntegrity.js';
+
+export { base64urlDecode } from './base64url.js';
+
+export type {
+  StaticPoolDescriptor,
+  StaticPoolDescriptorMap,
+  ExecutableSwapQuote,
+} from '../market-policy/types.js';
+export { createStaticPoolDescriptorMap } from '../market-policy/descriptor.js';
+export {
+  createDeepbookQuotePort,
+  wrapQuotePortWithStats,
+  wrapQuotePortWithCacheAndStats,
+  createRequestQuoteCache,
+} from '../market-policy/quotePort.js';
+export type { QuoteRpcStats, QuoteCache } from '../market-policy/quotePort.js';
+export { solveExecutableSwap } from '../market-policy/solver.js';
+export {
+  MarketQuoteUnavailableError,
+  ExecutionGapExceededError,
+  SwapUnviableUnderPolicyError,
+} from '../market-policy/errors.js';

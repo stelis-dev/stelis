@@ -1,0 +1,473 @@
+/**
+ * redisSponsorPathCorruption.test.ts — end-to-end Redis-backed sponsor
+ * recovery proof.
+ *
+ * Covered contract:
+ *   - `redisPrepareStore.test.ts` proves the store unit handles corrupt
+ *     entries (`peek` throws, `evictPreparedEntry` releases the slot).
+ *   - `handleSponsor.test.ts` proves the handler calls `evictPreparedEntry()`
+ *     when peek/consume throw, BUT it does so against a `vi.fn()` mock
+ *     store.
+ *
+ * This file covers the real-store/real-handler contract using:
+ *   - Real `RedisPrepareStore` (backed by `FakeRedisClient`, no real
+ *     daemon needed — runs uniformly in local and isolated test environments).
+ *   - Real `handleSponsor()` (no mock).
+ *   - Real `SponsorPool` from `context.ts` (single in-memory pool).
+ *
+ * The test forges an unsupported `_v` value into a stored entry, then
+ * drives `handleSponsor()` end-to-end and asserts:
+ *   1. The sponsor path rejects with `PREPARED_TX_NOT_FOUND`.
+ *   2. The slot held by the corrupt entry is checked in (released).
+ *   3. The corrupt entry is gone from the underlying Redis store.
+ *
+ * Promotion-side end-to-end coverage lives in
+ * `sponsorPromotionSponsored.test.ts`, which exercises the same pattern
+ * through real `MemoryPrepareStore` + real handler.
+ */
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { createHash } from 'crypto';
+import { Transaction } from '@mysten/sui/transactions';
+import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
+import { toBase64, toBase58 } from '@mysten/sui/utils';
+import { bcs } from '@mysten/sui/bcs';
+import { GAS_VARIANCE_FIXED_MIST, sha256Bytes as _sha256Bytes } from '@stelis/core-relay';
+import { SLIPPAGE_CAP_BPS } from '@stelis/contracts';
+import { computePolicyHash } from '../src/policyHash.js';
+import { handleSponsor, SponsorValidationError } from '../src/handlers/sponsor.js';
+import type { RelayerContext } from '../src/context.js';
+import { SponsorPool } from '../src/context.js';
+import { RedisPrepareStore } from '../src/store/redisPrepareStore.js';
+import { MemoryAbuseBlocker } from '../src/store/memoryAbuseBlocker.js';
+import { PREPARE_TTL_MS } from '../src/handlers/prepare.js';
+import type { GenericPreparedTxEntry } from '../src/store/prepareTypes.js';
+import { FakeRedisClient } from './helpers/fakeRedisClient.js';
+
+// ─── Test constants ─────────────────────────────────────────────────────
+
+const CLIENT_IP = '203.0.113.42';
+const senderKp = Ed25519Keypair.generate();
+const SENDER = senderKp.toSuiAddress();
+const sponsorKp = Ed25519Keypair.generate();
+// 32+ char HMAC secret for the sponsor pool lease proofs.
+const TEST_HMAC_SECRET = 'redis-corruption-test-hmac-secret-00000';
+const SPONSOR_ADDRESS = sponsorKp.toSuiAddress();
+const PAYMENT_ID = '0x' + 'cd'.repeat(32);
+
+const MOCK_CONFIG = {
+  packageId: '0x' + '11'.repeat(32),
+  configId: '0x' + '22'.repeat(32),
+  vaultRegistryId: '0x' + '33'.repeat(32),
+  relayerAddress: '0x' + 'ff'.repeat(32),
+  maxClaimMist: 50_000_000n,
+  minSettleMist: 1_000_000n,
+  maxRelayerFeeMist: 100_000n,
+  protocolFlatFeeMist: 50_000n,
+  configVersion: 1n,
+  maxSpreadBps: 500n,
+} as const;
+
+// ─── Helpers ────────────────────────────────────────────────────────────
+
+async function buildValidTx(): Promise<{
+  txBytes: Uint8Array;
+  encodedTxBytes: string;
+  txHash: string;
+}> {
+  // Minimal settle_with_credit PTB so handleSponsor's L1 validation would
+  // succeed if execution reached it. The corrupt-entry path rejects much
+  // earlier — at peek() — so the PTB body is not exercised, but it must
+  // still be a real signed transaction so decode/peek can run.
+  const tx = new Transaction();
+  tx.setSender(SENDER);
+  tx.setGasOwner(SPONSOR_ADDRESS);
+  tx.setGasBudget(5_000_000);
+  tx.setGasPrice(1000);
+  const digest = new Uint8Array(32);
+  digest.fill(1);
+  tx.setGasPayment([{ objectId: '0x' + '01'.repeat(32), version: '1', digest: toBase58(digest) }]);
+  const objRef = (id: string) =>
+    tx.objectRef({ objectId: id, version: '1', digest: toBase58(digest) });
+
+  const policyHashHex = computePolicyHash({
+    maxClaimMist: MOCK_CONFIG.maxClaimMist,
+    maxRelayerFeeMist: MOCK_CONFIG.maxRelayerFeeMist,
+    protocolFeeMist: MOCK_CONFIG.protocolFlatFeeMist,
+    quoteTtlMs: PREPARE_TTL_MS,
+    gasVarianceFixedMist: GAS_VARIANCE_FIXED_MIST,
+    slippageCapBps: SLIPPAGE_CAP_BPS,
+  });
+  const policyHashBytes = Buffer.from(policyHashHex.replace('0x', ''), 'hex');
+
+  tx.moveCall({
+    target: `${MOCK_CONFIG.packageId}::settle::settle_with_credit`,
+    arguments: [
+      objRef(MOCK_CONFIG.configId),
+      objRef(MOCK_CONFIG.vaultRegistryId),
+      objRef('0x6'),
+      objRef('0x' + '04'.repeat(32)),
+      tx.pure(bcs.u64().serialize(1_000n)),
+      tx.pure(bcs.u64().serialize(5_250_000n)),
+      tx.pure(bcs.Address.serialize(MOCK_CONFIG.relayerAddress)),
+      tx.pure(bcs.vector(bcs.u8()).serialize([])),
+      tx.pure(bcs.u64().serialize(1n)),
+      tx.pure(bcs.u64().serialize(5_000_000n)),
+      tx.pure(bcs.u64().serialize(GAS_VARIANCE_FIXED_MIST)),
+      tx.pure(bcs.u64().serialize(0n)),
+      tx.pure(bcs.u64().serialize(MOCK_CONFIG.maxRelayerFeeMist)),
+      tx.pure(bcs.u64().serialize(MOCK_CONFIG.protocolFlatFeeMist)),
+      tx.pure(bcs.u64().serialize(MOCK_CONFIG.configVersion)),
+      tx.pure(bcs.u64().serialize(BigInt(Date.now()))),
+      tx.pure(bcs.vector(bcs.u8()).serialize([...policyHashBytes])),
+      tx.pure(bcs.vector(bcs.u8()).serialize([])),
+    ],
+    typeArguments: [],
+  });
+
+  const bytes = await tx.build({ onlyTransactionKind: false });
+  const hash = createHash('sha256').update(bytes).digest('hex');
+  return { txBytes: bytes, encodedTxBytes: toBase64(bytes), txHash: hash };
+}
+
+function makePreparedEntry(txHash: string): GenericPreparedTxEntry {
+  return {
+    issuedAt: Date.now(),
+    receiptId: PAYMENT_ID,
+    senderAddress: SENDER,
+    nonce: 1n,
+    txBytesHash: txHash,
+    // slotId is filled in after slot checkout in the test body.
+    // No raw lease token is persisted with the entry. The sponsor pool stores
+    // its committed lease proof separately, keyed by slot and bound to the
+    // receipt id plus commit digest.
+    slotId: '__placeholder__',
+    sponsorAddress: SPONSOR_ADDRESS,
+    clientIp: CLIENT_IP,
+    executionPathKey: 'credit',
+    orderId: null,
+    mode: 'generic',
+  };
+}
+
+async function buildValidSignature(data: Uint8Array): Promise<string> {
+  const { signature } = await senderKp.signTransaction(data);
+  return signature;
+}
+
+function makeMockSui() {
+  return {
+    simulateTransaction: vi.fn(),
+    executeTransaction: vi.fn(),
+    getObject: vi.fn().mockResolvedValue({
+      object: {
+        json: {
+          max_relayer_fee_mist: '100000',
+          protocol_flat_fee_mist: '50000',
+          max_claim_mist: '50000000',
+          min_settle_mist: '1000000',
+          config_version: '1',
+          max_spread_bps: '500',
+        },
+      },
+    }),
+  };
+}
+
+interface E2EHarness {
+  redis: FakeRedisClient;
+  prepareStore: RedisPrepareStore;
+  sponsorPool: SponsorPool;
+  ctx: RelayerContext;
+  releaseSpy: ReturnType<typeof vi.fn>;
+}
+
+async function buildHarness(): Promise<E2EHarness> {
+  const redis = new FakeRedisClient();
+  // Real SponsorPool with a single in-memory key.
+  const sponsorPool = new SponsorPool([sponsorKp], { hmacSecret: TEST_HMAC_SECRET });
+  // Spy on checkin so we can prove the slot was released without poking
+  // at SponsorPool internals.
+  const checkinSpy = vi.spyOn(sponsorPool, 'checkin');
+
+  // Track release calls separately for the assertion message.
+  // onRelease passes `(slotId, receiptId, txBytesHash | null)`. The third
+  // argument is the commit digest the lease was promoted to in the prepare flow.
+  const releaseSpy = vi.fn(
+    async (slotId: string, receiptId: string, txBytesHash: string | null) => {
+      await sponsorPool.checkin(slotId, receiptId, txBytesHash);
+    },
+  );
+
+  const prepareStore = new RedisPrepareStore(redis, releaseSpy);
+
+  const ctx: RelayerContext = {
+    network: 'testnet',
+    sui: makeMockSui() as unknown as RelayerContext['sui'],
+    sponsorPool: sponsorPool as unknown as RelayerContext['sponsorPool'],
+    packageId: MOCK_CONFIG.packageId,
+    configId: MOCK_CONFIG.configId,
+    vaultRegistryId: MOCK_CONFIG.vaultRegistryId,
+    rateLimiter: {} as RelayerContext['rateLimiter'],
+    abuseBlocker: new MemoryAbuseBlocker() as unknown as RelayerContext['abuseBlocker'],
+    prepareStore,
+    relayerRecipientAddress: MOCK_CONFIG.relayerAddress,
+    allowedSettlementSwapPaths: [],
+    getConfig: vi.fn().mockResolvedValue({
+      packageId: MOCK_CONFIG.packageId,
+      configId: MOCK_CONFIG.configId,
+      maxClaimMist: MOCK_CONFIG.maxClaimMist,
+      minSettleMist: MOCK_CONFIG.minSettleMist,
+      maxRelayerFeeMist: MOCK_CONFIG.maxRelayerFeeMist,
+      protocolFlatFeeMist: MOCK_CONFIG.protocolFlatFeeMist,
+      configVersion: MOCK_CONFIG.configVersion,
+      maxSpreadBps: MOCK_CONFIG.maxSpreadBps,
+    }),
+    invalidateConfigCache: vi.fn(),
+    warmUp: vi.fn(),
+    dispose: vi.fn(),
+  };
+
+  // Silence the structured event log for clean test output
+  void checkinSpy;
+  return { redis, prepareStore, sponsorPool, ctx, releaseSpy };
+}
+
+// ─── Tests ──────────────────────────────────────────────────────────────
+
+describe('Redis-backed sponsor path: corrupt entry recovery (end-to-end)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('rejects PREPARED_TX_NOT_FOUND, releases slot, and removes the entry from Redis', async () => {
+    const harness = await buildHarness();
+    const { redis, prepareStore, sponsorPool, ctx, releaseSpy } = harness;
+
+    // 1. Check out a real sponsor slot — this is the slot that will be
+    //    held until evictPreparedEntry() releases it. receiptId reserves the
+    //    lease and commit() pins it to the final txBytesHash before store().
+    const slot = await sponsorPool.checkout(PAYMENT_ID);
+    expect(slot).not.toBeNull();
+    if (!slot) throw new Error('expected slot');
+
+    // 2. Build a real transaction + signature so handleSponsor can decode
+    //    and verify before reaching peek().
+    const { txBytes, encodedTxBytes, txHash } = await buildValidTx();
+    const userSig = await buildValidSignature(txBytes);
+
+    // 3. Store a valid prepared entry through the real RedisPrepareStore.
+    const entry = makePreparedEntry(txHash);
+    entry.slotId = slot.slotId;
+    // Commit the lease to the prepared txBytesHash before store().
+    // A post-store corruption path then
+    // exercises the evictPreparedEntry → pool.checkin chain with the
+    // committed txBytesHash.
+    await sponsorPool.commit(slot.slotId, PAYMENT_ID, txHash);
+    await prepareStore.store(PAYMENT_ID, entry);
+
+    // 4. Forge corruption: read raw JSON from FakeRedisClient, set
+    //    `_v: 99`, write back. The store now contains a real-shaped
+    //    entry that the deserializer will refuse on the version check.
+    const entryKey = `stelis:prepare:${PAYMENT_ID}`;
+    const rawJson = await redis.get(entryKey);
+    expect(rawJson).not.toBeNull();
+    const parsed = JSON.parse(rawJson!);
+    parsed._v = 99;
+    await redis.set(entryKey, JSON.stringify(parsed), { PX: 65_000 });
+
+    // 5. Drive handleSponsor end-to-end. It must reject AND clean up.
+    await expect(
+      handleSponsor(
+        ctx,
+        { txBytes: encodedTxBytes, userSignature: userSig, receiptId: PAYMENT_ID },
+        CLIENT_IP,
+      ),
+    ).rejects.toThrow(SponsorValidationError);
+
+    // 6a. Slot release: handleSponsor's peek-catch must have called
+    //     evictPreparedEntry(), which calls _onRelease (the releaseSpy here),
+    //     which calls SponsorPool.checkin(). The raw-entry extractor
+    //     recovers the committed hash from the forged JSON, and the
+    //     pool CAS matches because the Redis lease is already committed
+    //     to that same hash above.
+    expect(releaseSpy).toHaveBeenCalledWith(slot.slotId, PAYMENT_ID, txHash);
+
+    // 6b. Entry must be gone from the underlying store. evictPreparedEntry
+    //     issues a DEL after attempting slot recovery.
+    const afterRaw = await redis.get(entryKey);
+    expect(afterRaw).toBeNull();
+  });
+
+  it('covers the consume() success-branch deserialize failure path (real corruption between peek and consume)', async () => {
+    // This case targets the SECOND throw site inside RedisPrepareStore:
+    // `consume()` returns the success branch from Lua, but
+    // `deserializeEntry()` then throws. The store-internal code path is:
+    //
+    //   consume() success branch → try { return deserializeEntry(str) }
+    //                              catch (err) {
+    //                                _releaseSlotFromRawEntry(str, ...);
+    //                                throw err;
+    //                              }
+    //
+    // For the handler to reach `consume()` at all, `peek()` must succeed
+    // first. So we cannot just forge corruption before calling
+    // handleSponsor — that hits the peek-throw path covered above.
+    //
+    // Spy on `prepareStore.peek` so it (1) calls the REAL peek
+    // implementation, (2) returns a valid entry, and (3) immediately
+    // afterward forges a `_v: 99` corruption into the same entry's raw
+    // JSON. By the time the handler reaches `consume()` a few async ticks
+    // later, the entry is corrupt and `consume()`'s success-branch
+    // deserialize fails. The store releases the slot best-effort and
+    // re-throws; the handler then catches the throw, calls
+    // `evictPreparedEntry()` (idempotent — entry is already DELed by
+    // Lua at this point), and rejects with PREPARED_TX_NOT_FOUND.
+    //
+    // The peek itself stays REAL — we are not faking its return value,
+    // only adding a side effect after it returns.
+    const harness = await buildHarness();
+    const { redis, prepareStore, sponsorPool, ctx, releaseSpy } = harness;
+
+    // receiptId reserves the lease, then commit() pins it to the final
+    // txBytesHash before store().
+    const slot = await sponsorPool.checkout(PAYMENT_ID);
+    if (!slot) throw new Error('expected slot');
+
+    const { txBytes, encodedTxBytes, txHash } = await buildValidTx();
+    const userSig = await buildValidSignature(txBytes);
+    const entry = makePreparedEntry(txHash);
+    entry.slotId = slot.slotId;
+    // Commit the lease to the prepared txBytesHash before store(). A
+    // post-store corruption path then
+    // exercises the evictPreparedEntry → pool.checkin chain with the
+    // committed txBytesHash.
+    await sponsorPool.commit(slot.slotId, PAYMENT_ID, txHash);
+    await prepareStore.store(PAYMENT_ID, entry);
+
+    const entryKey = `stelis:prepare:${PAYMENT_ID}`;
+
+    // Spy on peek with the real method passthrough + post-return side effect.
+    // bind() preserves `this` binding to the real RedisPrepareStore instance.
+    const realPeek = prepareStore.peek.bind(prepareStore);
+    const peekSpy = vi.spyOn(prepareStore, 'peek').mockImplementation(async (rid: string) => {
+      // 1. Run the real peek end-to-end (real GET, real deserialize).
+      const result = await realPeek(rid);
+      // 2. Forge `_v: 99` corruption AFTER peek returns. The redis
+      //    write is observed by the next operation (consume's Lua GET).
+      if (rid === PAYMENT_ID) {
+        const rawJson = await redis.get(entryKey);
+        if (rawJson) {
+          const parsed = JSON.parse(rawJson);
+          parsed._v = 99;
+          await redis.set(entryKey, JSON.stringify(parsed), { PX: 65_000 });
+        }
+      }
+      // 3. Return the (still-valid) entry the real peek produced. The
+      //    handler will use peeked.senderAddress and proceed normally
+      //    until it reaches consume().
+      return result;
+    });
+
+    // Also spy on consume so we can prove it was actually invoked.
+    const consumeSpy = vi.spyOn(prepareStore, 'consume');
+
+    await expect(
+      handleSponsor(
+        ctx,
+        { txBytes: encodedTxBytes, userSignature: userSig, receiptId: PAYMENT_ID },
+        CLIENT_IP,
+      ),
+    ).rejects.toThrow(SponsorValidationError);
+
+    // peek must have run (and our spy must have forged corruption).
+    expect(peekSpy).toHaveBeenCalledWith(PAYMENT_ID);
+    // consume must have been reached — this is the whole point of this test.
+    expect(consumeSpy).toHaveBeenCalled();
+    // consume must have actually thrown (success-branch deserialize failure).
+    // We assert it by checking that consume's promise rejected.
+    const consumeResult = consumeSpy.mock.results.at(-1);
+    expect(consumeResult?.type).toBe('return');
+    if (consumeResult?.type === 'return') {
+      await expect(consumeResult.value).rejects.toThrow(/unsupported schema version 99/);
+    }
+
+    // Slot must be released — either through the store-internal
+    // _releaseSlotFromRawEntry() that runs before consume's throw, OR
+    // through the handler's evictPreparedEntry() catch path. Either way the
+    // _onRelease callback (releaseSpy) must observe the slot ID at
+    // least once.
+    // onRelease is invoked with `(slotId, receiptId, txBytesHash)`.
+    // The raw-entry extractor recovers the committed hash from the
+    // forged JSON, and the pool CAS matches because the Redis lease
+    // is already committed to that same hash above.
+    expect(releaseSpy).toHaveBeenCalledWith(slot.slotId, PAYMENT_ID, txHash);
+
+    // Entry must be gone from Redis after the failure handling.
+    const afterRaw = await redis.get(entryKey);
+    expect(afterRaw).toBeNull();
+  });
+
+  // ─────────────────────────────────────────────────────────────
+  // Core acceptance:
+  // a live committed lease must still refuse attacker bytes even if a
+  // Redis attacker overwrites the prepare entry's `txBytesHash` under
+  // the same receiptId.
+  // ─────────────────────────────────────────────────────────────
+
+  // The SponsorPool signing gate is bound to the prepare commit via the
+  // two-stage HMAC proof, so a Redis-only attacker who overwrites the
+  // prepare entry's `txBytesHash` under the same receiptId cannot reach
+  // the signer with their own PTB — the committed proof in Redis still
+  // references the original hash.
+  //
+  // We exercise this at the SponsorPool layer directly (without
+  // building a full handleSponsor flow) so the test is not fragile
+  // to upstream validation paths. The pool-unit contract is the
+  // tight closure: if pool.sign() refuses the attacker bytes under
+  // a live committed lease, no caller can reach a successful
+  // signature for them.
+  it('Redis prepare entry tampering does not pass sponsor slot HMAC verification', async () => {
+    const harness = await buildHarness();
+    const { redis, prepareStore, sponsorPool } = harness;
+
+    // 1. Legitimate prepare: checkout, commit to legit hash, store.
+    const slot = await sponsorPool.checkout(PAYMENT_ID);
+    if (!slot) throw new Error('expected slot');
+    const legit = await buildValidTx();
+    const legitEntry = makePreparedEntry(legit.txHash);
+    legitEntry.slotId = slot.slotId;
+    await sponsorPool.commit(slot.slotId, PAYMENT_ID, legit.txHash);
+    await prepareStore.store(PAYMENT_ID, legitEntry);
+
+    // 2. Attacker overwrites entry[PAYMENT_ID].txBytesHash to a
+    //    hash of their choice, simulating Redis-write compromise.
+    const attackerBytes = new Uint8Array([0xba, 0xad, 0xf0, 0x0d]);
+    const attackerHash = createHash('sha256').update(attackerBytes).digest('hex');
+    expect(attackerHash).not.toBe(legit.txHash);
+
+    const entryKey = `stelis:prepare:${PAYMENT_ID}`;
+    const rawJson = await redis.get(entryKey);
+    expect(rawJson).not.toBeNull();
+    const parsed = JSON.parse(rawJson!);
+    parsed.txBytesHash = attackerHash;
+    await redis.set(entryKey, JSON.stringify(parsed), { PX: 65_000 });
+
+    // 3. Sanity: the store-level consume() accepts the forged entry
+    //    because its txBytesHash matches hash(attackerBytes). The
+    //    attack SHOULD pass consume() — that's exactly why a pool-
+    //    layer commit-bound proof is needed.
+    const peeked = await prepareStore.peek(PAYMENT_ID);
+    expect(peeked?.txBytesHash).toBe(attackerHash);
+
+    // 4. Pool.sign() for the attacker's bytes must fail. The Redis
+    //    lease value is still HMAC(secret, PAYMENT_ID || slot || legit.txHash).
+    //    pool.sign() computes HMAC(secret, PAYMENT_ID || slot || hash(attackerBytes))
+    //    which is a different hex digest — the comparison fails.
+    await expect(sponsorPool.sign(slot.slotId, PAYMENT_ID, attackerBytes)).rejects.toThrow();
+
+    // 5. Positive control: the legitimate bytes still succeed
+    //    because the commit digest was hash(legit.txBytes).
+    const ok = await sponsorPool.sign(slot.slotId, PAYMENT_ID, legit.txBytes);
+    expect(ok.signature).toBeDefined();
+  });
+});

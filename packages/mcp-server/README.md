@@ -1,0 +1,66 @@
+# @stelis/mcp-server
+
+MCP server for agent clients using Stelis sponsored-transaction workflows.
+
+This package exposes Stelis host endpoints as Model Context Protocol tools. It is a sibling published product to `@stelis/sdk`; it does not import or wrap the SDK.
+
+- Built for: agent runtimes and MCP clients that call a deployed Stelis relay host.
+- Use for: MCP tool schemas, request validation, host endpoint calls, and the CLI entry.
+- Not for: building user transactions, wallet custody, SDK APIs, relay server runtime, or host operations policy.
+
+## Scope
+
+Use this package when an agent runtime needs to:
+
+- discover a deployed Stelis host's relay capabilities
+- prepare a sponsored transaction from caller-provided serialized `TransactionKind` bytes
+- submit a wallet-signed transaction returned by prepare
+- inspect and use promotion endpoints when a developer JWT is available
+
+Stelis does not custody keys, sign for users, or build arbitrary Sui transactions in this MCP server. The caller must provide `txKindBytes` before prepare and a user signature before sponsor.
+
+## Install
+
+```bash
+npm install @stelis/mcp-server
+```
+
+## Run
+
+```bash
+stelis-mcp-server
+```
+
+Set a default host with:
+
+```bash
+STELIS_RELAY_URL=https://your-host.example.com/relay stelis-mcp-server
+```
+
+Tools also accept `relayUrl`, which overrides `STELIS_RELAY_URL` for that call.
+
+## Environment
+
+| Variable | Required | Description |
+| --- | --- | --- |
+| `STELIS_RELAY_URL` | optional | Default relay endpoint, ending in `/relay`. |
+| `STELIS_REQUEST_TIMEOUT_MS` | optional | Default HTTP timeout in milliseconds. Defaults to `20000`. |
+
+## Tool Model
+
+The server follows the Stelis API agent tier model:
+
+- capability discovery requires no credential
+- generic prepare requires caller-provided `txKindBytes`, `senderAddress`, `paymentTokenType`, and prepare authorization fields signed by the sender wallet
+- generic sponsor requires `receiptId`, exact prepared `txBytes`, and `userSignature`
+- Studio promotion tools require a developer JWT and keep that credential request-local
+
+Agents read `supportedSettlementSwapPaths` from `stelis_get_relay_config` and choose a `paymentTokenType` from that list. The host has one active settlement swap path per `paymentTokenType`; MCP tools do not accept a pool ID or path ID.
+
+The server never stores developer JWTs, user signatures, transaction bytes, or private keys.
+
+## Host Errors
+
+Host failures are returned to the tool caller with the host-provided `code`, HTTP `status`, and response `body`.
+
+The MCP server does not retry host errors. Agent retry and backoff policy belongs to the caller. Capacity codes include `SPONSOR_CAPACITY_UNAVAILABLE`, `SPONSOR_REFILL_ACCOUNT_UNHEALTHY`, `PREPARE_OVERLOADED`, `NO_SPONSOR_SLOT`, and `LEASE_EXPIRED`.
