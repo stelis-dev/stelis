@@ -1,18 +1,24 @@
 # Stelis
 
-Stelis helps wallets, apps, and agents use value they already hold to execute programmable transactions on Sui.
+Stelis is a settlement layer for token-funded transaction execution on Sui.
 
-Gas abstraction has been a persistent UX challenge for blockchain applications. A wallet can hold useful assets, but still be blocked from using an app until it also holds the chain's native gas token.
+SUI remains the execution fuel; the user's held value becomes the settlement source.
 
-Sui has made meaningful progress with gasless stablecoin transfers, where qualified transfers can move value without requiring the sender to hold SUI for gas. Stelis focuses on what comes after transfers: programmable transactions for apps, services, and agents.
+Across blockchains, the long-running UX problem is not that users lack value. It is that value and execution are often coupled through a native gas token. A wallet, app, service, or agent may hold stablecoins, protocol tokens, or vault credit, but still be unable to act until the required gas asset is available.
 
-Stelis uses Sui's transaction and ownership primitives to separate execution from settlement. A relay pays SUI gas upfront for a user-approved transaction, validates the transaction, submits it to Sui, and verifies settlement from supported payment tokens or user vault credit.
+Stelis separates those concerns. On Sui, transactions still execute with SUI gas, while their cost can be settled from a supported payment token or from user-owned vault credit.
 
-Studio promotion flows can also sponsor eligible actions from a promotion budget.
+This matches how payment systems normally feel: processing costs are part of settlement, not a second currency the payer must acquire before every action. Sui already points in this direction with gasless stablecoin transfers. Stelis extends the same settlement framing beyond transfers to app actions, service actions, and agent actions that need programmable execution.
 
-The product surfaces are a TypeScript SDK, an MCP server for agent clients, a deployable relay API host, public and admin web apps, and the on-chain Move package.
+Payment-token support is explicit. A host configures settlement-ready assets with viable SUI settlement routes, live liquidity, and route policy. That keeps the model broad across token assets while preserving operational control.
 
-The repository is a monorepo for development, but the public products are defined by the packages that users install, deploy, or run.
+Stelis uses Sui primitives to make the model concrete. Programmable Transaction Blocks compose the user action and settlement path in one execution flow. Sponsored gas separates the sender from the gas payer. Object ownership keeps vault credit user-owned.
+
+A Stelis relay is an execution host for the settlement model. It sponsors only transactions bound to settlement expectations, submits them with SUI gas, and verifies settlement after execution.
+
+User vaults are user-owned settlement sources, not relayer balances. They preserve the user's asset boundary while giving wallets, apps, services, and agents a reusable way to turn held value into execution capacity.
+
+The product surfaces are a TypeScript SDK for apps and services, an MCP server for agent clients, a deployable relay API host for operators, public and admin web apps, and the on-chain Move package.
 
 ## Product Entry Points
 
