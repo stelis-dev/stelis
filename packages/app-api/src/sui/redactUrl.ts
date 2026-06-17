@@ -1,12 +1,14 @@
 /**
- * Redact query string from URL for safe logging/admin display.
- * API keys may be in query params — redact them to prevent log leakage.
+ * Redact endpoint URLs for safe logging/admin display.
+ * API keys and provider tokens can appear in either path or query fields.
  */
 export function redactUrl(raw: string): string {
   try {
     const u = new URL(raw);
-    return u.search ? `${u.origin}${u.pathname}?[REDACTED]` : raw;
+    const redactedPath = u.pathname === '/' ? '' : '/[REDACTED]';
+    const redactedSearch = u.search ? '?[REDACTED]' : '';
+    return `${u.origin}${redactedPath}${redactedSearch}`;
   } catch {
-    return raw;
+    return '[INVALID_URL]';
   }
 }

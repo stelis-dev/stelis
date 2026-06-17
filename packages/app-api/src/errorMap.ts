@@ -30,8 +30,9 @@
  *   from error payload (e.g. `SponsorBlockedError.retryAfterMs`)
  *   remain in the route.
  * - Class-specific body fields (`digest`, `subcode`, spread `meta`)
- *   are preserved verbatim so the HTTP response shape does not
- *   change.
+ *   are preserved only for non-5xx responses. Server-side failures keep
+ *   the public code and hide internal lease, slot, signer, Redis key, or
+ *   endpoint details.
  */
 import {
   BlockCheckUnavailableError,
@@ -224,12 +225,21 @@ export function mapError(err: unknown): MappedErrorResponse | null {
   const defaultStatus = policy?.httpStatus ?? 500;
   const status = hints.statusHint ?? defaultStatus;
 
+  const body = buildPublicBody(err, hints, status);
+
+  return hints.fixedHeaders ? { status, headers: hints.fixedHeaders, body } : { status, body };
+}
+
+function buildPublicBody(err: Error, hints: ExtractedHints, status: number): MappedErrorBody {
+  if (status >= 500) {
+    return { error: 'Internal server error', code: hints.code };
+  }
+
   const body: MappedErrorBody = { error: err.message, code: hints.code };
   if (hints.digest !== undefined) body.digest = hints.digest;
   if (hints.subcode !== undefined) body.subcode = hints.subcode;
   if (hints.meta) Object.assign(body, hints.meta);
-
-  return hints.fixedHeaders ? { status, headers: hints.fixedHeaders, body } : { status, body };
+  return body;
 }
 
 // ─────────────────────────────────────────────

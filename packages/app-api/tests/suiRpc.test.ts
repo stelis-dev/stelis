@@ -13,6 +13,7 @@ import { SuiRpcFailoverTransport } from '../src/sui/failoverTransport.js';
 import { UnaryCall } from '@protobuf-ts/runtime-rpc';
 import type { MethodInfo, RpcOptions, RpcMetadata, RpcStatus } from '@protobuf-ts/runtime-rpc';
 import { parseEndpointConfigJson, loadRpcConfig } from '../src/sui/parseEndpointConfig.js';
+import { redactUrl } from '../src/sui/redactUrl.js';
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -122,6 +123,30 @@ describe('loadRpcConfig', () => {
     } finally {
       unlinkSync(path);
     }
+  });
+});
+
+// ── redactUrl ───────────────────────────────────────────────────────────────
+
+describe('redactUrl', () => {
+  it('redacts query secrets', () => {
+    expect(redactUrl('https://provider.example/rpc?apiKey=secret')).toBe(
+      'https://provider.example/[REDACTED]?[REDACTED]',
+    );
+  });
+
+  it('redacts path secrets even without a query string', () => {
+    expect(redactUrl('https://provider.example/rpc/secret-token')).toBe(
+      'https://provider.example/[REDACTED]',
+    );
+  });
+
+  it('does not echo invalid raw URL values', () => {
+    expect(redactUrl('not a url with secret-token')).toBe('[INVALID_URL]');
+  });
+
+  it('keeps origin-only HTTPS endpoints readable', () => {
+    expect(redactUrl('https://provider.example')).toBe('https://provider.example');
   });
 });
 
@@ -448,10 +473,57 @@ describe('parseEndpointConfigJson', () => {
     expect(() => parseEndpointConfigJson('[{}]')).toThrow('url');
   });
 
+  it('does not echo invalid raw URL values in parser errors', () => {
+    expect(() => parseEndpointConfigJson('[{"url":"not a url with secret-token"}]')).toThrow(
+      '[INVALID_URL]',
+    );
+    try {
+      parseEndpointConfigJson('[{"url":"not a url with secret-token"}]');
+    } catch (err) {
+      expect(String(err)).not.toContain('secret-token');
+    }
+  });
+
   it('throws on URL with embedded credentials in JSON config', () => {
     expect(() => parseEndpointConfigJson('[{"url":"https://user:secret@provider.com"}]')).toThrow(
       'embedded credentials',
     );
+  });
+
+  it('rejects authenticated HTTP endpoints', () => {
+    expect(() =>
+      parseEndpointConfigJson(
+        '[{"url":"http://127.0.0.1:9000","localDevelopmentEndpoint":true,"auth":{"header":"x-token","valueEnv":"MY_TOKEN"}}]',
+        (name) => (name === 'MY_TOKEN' ? 'secret' : undefined),
+      ),
+    ).toThrow('HTTP RPC endpoints');
+  });
+
+  it('rejects HTTP endpoints with static metadata', () => {
+    expect(() =>
+      parseEndpointConfigJson(
+        '[{"url":"http://127.0.0.1:9000","localDevelopmentEndpoint":true,"meta":{"x-token":"secret"}}]',
+      ),
+    ).toThrow('HTTP RPC endpoints');
+  });
+
+  it('rejects non-local HTTP endpoints even when local mode is explicit', () => {
+    expect(() =>
+      parseEndpointConfigJson('[{"url":"http://provider.example","localDevelopmentEndpoint":true}]'),
+    ).toThrow('localhost');
+  });
+
+  it('rejects HTTP endpoints unless local mode is explicit', () => {
+    expect(() => parseEndpointConfigJson('[{"url":"http://127.0.0.1:9000"}]')).toThrow(
+      'localDevelopmentEndpoint',
+    );
+  });
+
+  it('accepts unauthenticated local HTTP only when local mode is explicit', () => {
+    const result = parseEndpointConfigJson(
+      '[{"url":"http://127.0.0.1:9000","localDevelopmentEndpoint":true}]',
+    );
+    expect(result).toEqual([{ url: 'http://127.0.0.1:9000' }]);
   });
 
   it('throws on null array element', () => {

@@ -9,6 +9,7 @@
 import { describe, it, expect } from 'vitest';
 import { generateKeyPairSync, createSign } from 'node:crypto';
 import {
+  DEVELOPER_JWT_CLOCK_LEEWAY_SECONDS,
   parseDeveloperJwtTrustConfig,
   verifyDeveloperJwt,
   type DeveloperJwtTrustConfig,
@@ -25,6 +26,20 @@ const { publicKey: TEST_PUBLIC_KEY, privateKey: TEST_PRIVATE_KEY } = generateKey
 
 const TEST_PUBLIC_KEY_PEM = TEST_PUBLIC_KEY.export({ type: 'spki', format: 'pem' }) as string;
 const TEST_PRIVATE_KEY_PEM = TEST_PRIVATE_KEY.export({ type: 'pkcs8', format: 'pem' }) as string;
+const { publicKey: TEST_ES256_PUBLIC_KEY } = generateKeyPairSync('ec', {
+  namedCurve: 'P-256',
+});
+const TEST_ES256_PUBLIC_KEY_PEM = TEST_ES256_PUBLIC_KEY.export({
+  type: 'spki',
+  format: 'pem',
+}) as string;
+const { publicKey: TEST_P384_PUBLIC_KEY } = generateKeyPairSync('ec', {
+  namedCurve: 'P-384',
+});
+const TEST_P384_PUBLIC_KEY_PEM = TEST_P384_PUBLIC_KEY.export({
+  type: 'spki',
+  format: 'pem',
+}) as string;
 
 /** A valid Sui address (66 hex chars with 0x prefix). */
 const TEST_SUI_ADDRESS = '0x' + 'ab'.repeat(32);
@@ -142,6 +157,50 @@ describe('parseDeveloperJwtTrustConfig', () => {
     });
     expect(() => parseDeveloperJwtTrustConfig(json)).toThrow('invalid PEM');
   });
+
+  it('rejects RS256 config with an EC public key', () => {
+    const json = JSON.stringify({
+      issuer: 'x',
+      audience: 'y',
+      algorithm: 'RS256',
+      publicKeyPem: TEST_ES256_PUBLIC_KEY_PEM,
+      claimPaths: { userId: 'sub', senderAddress: 'addr' },
+    });
+    expect(() => parseDeveloperJwtTrustConfig(json)).toThrow('RS256 requires an RSA public key');
+  });
+
+  it('rejects ES256 config with an RSA public key', () => {
+    const json = JSON.stringify({
+      issuer: 'x',
+      audience: 'y',
+      algorithm: 'ES256',
+      publicKeyPem: TEST_PUBLIC_KEY_PEM,
+      claimPaths: { userId: 'sub', senderAddress: 'addr' },
+    });
+    expect(() => parseDeveloperJwtTrustConfig(json)).toThrow('ES256 requires an EC P-256 public key');
+  });
+
+  it('rejects ES256 config with a non-P-256 EC public key', () => {
+    const json = JSON.stringify({
+      issuer: 'x',
+      audience: 'y',
+      algorithm: 'ES256',
+      publicKeyPem: TEST_P384_PUBLIC_KEY_PEM,
+      claimPaths: { userId: 'sub', senderAddress: 'addr' },
+    });
+    expect(() => parseDeveloperJwtTrustConfig(json)).toThrow('ES256 requires an EC P-256 public key');
+  });
+
+  it('accepts ES256 config with a P-256 public key', () => {
+    const json = JSON.stringify({
+      issuer: 'x',
+      audience: 'y',
+      algorithm: 'ES256',
+      publicKeyPem: TEST_ES256_PUBLIC_KEY_PEM,
+      claimPaths: { userId: 'sub', senderAddress: 'addr' },
+    });
+    expect(parseDeveloperJwtTrustConfig(json).algorithm).toBe('ES256');
+  });
 });
 
 // ─────────────────────────────────────────────
@@ -201,7 +260,7 @@ describe('verifyDeveloperJwt', () => {
     await expect(verifyDeveloperJwt(jwt, TRUST_CONFIG)).rejects.toThrow('token expired');
   });
 
-  it('rejects token at exact exp boundary (exp === now)', async () => {
+  it('accepts token at exact exp boundary within clock leeway', async () => {
     const now = Math.floor(Date.now() / 1000);
     const jwt = signTestJwt({
       payload: {
@@ -213,8 +272,58 @@ describe('verifyDeveloperJwt', () => {
         iat: now - 60,
       },
     });
+    await expect(verifyDeveloperJwt(jwt, TRUST_CONFIG, { nowSeconds: now })).resolves.toMatchObject(
+      { userId: 'user-1' },
+    );
+  });
+
+  it('accepts token expired inside the configured clock leeway', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const jwt = signTestJwt({
+      payload: {
+        iss: TRUST_CONFIG.issuer,
+        aud: TRUST_CONFIG.audience,
+        sub: 'user-1',
+        wallet_address: TEST_SUI_ADDRESS,
+        exp: now - DEVELOPER_JWT_CLOCK_LEEWAY_SECONDS + 1,
+      },
+    });
+    await expect(verifyDeveloperJwt(jwt, TRUST_CONFIG, { nowSeconds: now })).resolves.toMatchObject(
+      { userId: 'user-1' },
+    );
+  });
+
+  it('rejects token at the expired clock leeway boundary', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const jwt = signTestJwt({
+      payload: {
+        iss: TRUST_CONFIG.issuer,
+        aud: TRUST_CONFIG.audience,
+        sub: 'user-1',
+        wallet_address: TEST_SUI_ADDRESS,
+        exp: now - DEVELOPER_JWT_CLOCK_LEEWAY_SECONDS,
+      },
+    });
     await expect(verifyDeveloperJwt(jwt, TRUST_CONFIG, { nowSeconds: now })).rejects.toThrow(
       'token expired',
+    );
+  });
+
+  it('accepts iat and nbf at the future clock leeway boundary', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const jwt = signTestJwt({
+      payload: {
+        iss: TRUST_CONFIG.issuer,
+        aud: TRUST_CONFIG.audience,
+        sub: 'user-1',
+        wallet_address: TEST_SUI_ADDRESS,
+        iat: now + DEVELOPER_JWT_CLOCK_LEEWAY_SECONDS,
+        nbf: now + DEVELOPER_JWT_CLOCK_LEEWAY_SECONDS,
+        exp: now + 600,
+      },
+    });
+    await expect(verifyDeveloperJwt(jwt, TRUST_CONFIG, { nowSeconds: now })).resolves.toMatchObject(
+      { userId: 'user-1' },
     );
   });
 
@@ -226,11 +335,13 @@ describe('verifyDeveloperJwt', () => {
         aud: TRUST_CONFIG.audience,
         sub: 'user-1',
         wallet_address: TEST_SUI_ADDRESS,
-        iat: now + 120, // 120s in future
+        iat: now + DEVELOPER_JWT_CLOCK_LEEWAY_SECONDS + 1,
         exp: now + 600,
       },
     });
-    await expect(verifyDeveloperJwt(jwt, TRUST_CONFIG)).rejects.toThrow('iat is in the future');
+    await expect(verifyDeveloperJwt(jwt, TRUST_CONFIG, { nowSeconds: now })).rejects.toThrow(
+      'iat is in the future',
+    );
   });
 
   it('rejects invalid signature (wrong key)', async () => {
@@ -486,10 +597,12 @@ describe('verifyDeveloperJwt', () => {
         aud: TRUST_CONFIG.audience,
         sub: 'user-1',
         wallet_address: TEST_SUI_ADDRESS,
-        nbf: now + 120, // not valid for 120s
+        nbf: now + DEVELOPER_JWT_CLOCK_LEEWAY_SECONDS + 1,
         exp: now + 600,
       },
     });
-    await expect(verifyDeveloperJwt(jwt, TRUST_CONFIG)).rejects.toThrow('not yet valid (nbf)');
+    await expect(verifyDeveloperJwt(jwt, TRUST_CONFIG, { nowSeconds: now })).rejects.toThrow(
+      'not yet valid (nbf)',
+    );
   });
 });

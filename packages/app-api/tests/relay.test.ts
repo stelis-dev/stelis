@@ -1010,8 +1010,8 @@ describe('relay routes', () => {
       // with code=SPONSOR_FAILED and statusHint=500 when execution succeeded
       // but effects are missing `gasUsed` (Sui gRPC edge case). Locks the
       // route-level invariant:
-      //   errorMap projects this to HTTP 500 with code=SPONSOR_FAILED (no
-      //   new public code leak, no 422 preflight misclassification).
+      //   errorMap projects this to HTTP 500 with code=SPONSOR_FAILED,
+      //   without exposing the internal execution digest.
       //
       // Slot state refresh after this path is owned by the
       // sponsor-terminal host callback inside `handleSponsor`. The
@@ -1036,8 +1036,8 @@ describe('relay routes', () => {
       expect(res.status).toBe(500);
       const body = await res.json();
       expect(body.code).toBe('SPONSOR_FAILED');
-      // Error message preserved through errorMap for operator/client trace
-      expect(body.error).toContain('0xdigest_exec_no_gas');
+      expect(body.error).toBe('Internal server error');
+      expect(JSON.stringify(body)).not.toContain('0xdigest_exec_no_gas');
     });
 
     it('returns 503 + SPONSOR_CONGESTION on SponsorCongestionError', async () => {

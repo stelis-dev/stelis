@@ -91,6 +91,22 @@ describe('errorMap — PrepareValidationError', () => {
     expect(m?.status).toBe(400);
     expect(m?.body.code).toBe('BAD_REQUEST');
   });
+
+  it('sanitizes 5xx message and meta fields', () => {
+    const m = mapError(
+      new PrepareValidationError(
+        'SPONSOR_LEASE_COMMIT_FAILED',
+        'lease commit failed for slot-1 redis key sponsor:lease:secret',
+        { slotId: 'slot-1', redisKey: 'sponsor:lease:secret' },
+        500,
+      ),
+    );
+    expect(m?.status).toBe(500);
+    expect(m?.body).toEqual({
+      error: 'Internal server error',
+      code: 'SPONSOR_LEASE_COMMIT_FAILED',
+    });
+  });
 });
 
 describe('errorMap — PrepareStudioUserQuotaError', () => {
@@ -113,6 +129,18 @@ describe('errorMap — SponsorValidationError', () => {
     const m = mapError(new SponsorValidationError('PREPARED_TX_EXPIRED', 'expired', 410));
     expect(m?.status).toBe(410);
     expect(m?.body.code).toBe('PREPARED_TX_EXPIRED');
+  });
+
+  it('sanitizes 5xx message fields', () => {
+    const m = mapError(
+      new SponsorValidationError(
+        'SPONSOR_FAILED',
+        'Execution succeeded but gasUsed missing. Digest: 0xdigest_exec_no_gas signer=0xabc',
+        500,
+      ),
+    );
+    expect(m?.status).toBe(500);
+    expect(m?.body).toEqual({ error: 'Internal server error', code: 'SPONSOR_FAILED' });
   });
 });
 
@@ -154,6 +182,7 @@ describe('errorMap — SponsorCongestionError', () => {
     const m = mapError(new SponsorCongestionError('cancelled'));
     expect(m?.status).toBe(503);
     expect(m?.body.code).toBe('SPONSOR_CONGESTION');
+    expect(m?.body.error).toBe('Internal server error');
     expect(m?.headers).toBeUndefined();
   });
 });
@@ -164,6 +193,7 @@ describe('errorMap — SponsorLeaseExpiredError', () => {
     expect(m?.status).toBe(503);
     expect(m?.headers).toEqual({ 'Retry-After': '1' });
     expect(m?.body.code).toBe('LEASE_EXPIRED');
+    expect(JSON.stringify(m?.body)).not.toContain('slot-1');
   });
 });
 

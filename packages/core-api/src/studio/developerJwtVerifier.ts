@@ -70,6 +70,8 @@ const ALGORITHM_MAP: Record<string, string> = {
   ES256: 'SHA256',
 };
 
+export const DEVELOPER_JWT_CLOCK_LEEWAY_SECONDS = 60;
+
 // ─────────────────────────────────────────────
 // Trust Config Parsing and Validation
 // ─────────────────────────────────────────────
@@ -116,12 +118,14 @@ export function parseDeveloperJwtTrustConfig(jsonStr: string): DeveloperJwtTrust
     );
   }
 
-  // Public key validation — try to parse PEM
+  // Public key validation — try to parse PEM and bind key type to alg.
+  let publicKey: KeyObject;
   try {
-    createPublicKey(publicKeyPem);
+    publicKey = createPublicKey(publicKeyPem);
   } catch {
     throw new Error(`${prefix}.publicKeyPem: invalid PEM public key`);
   }
+  validatePublicKeyForAlgorithm(publicKey, algorithm, `${prefix}.publicKeyPem`);
 
   // Claim paths validation
   const claimPaths = entry.claimPaths;
@@ -147,6 +151,27 @@ function requireString(obj: Record<string, unknown>, key: string, prefix: string
     throw new Error(`${prefix}.${key}: required non-empty string`);
   }
   return val;
+}
+
+function validatePublicKeyForAlgorithm(
+  publicKey: KeyObject,
+  algorithm: DeveloperJwtTrustConfig['algorithm'],
+  prefix: string,
+): void {
+  if (algorithm === 'RS256') {
+    if (publicKey.asymmetricKeyType !== 'rsa') {
+      throw new Error(`${prefix}: RS256 requires an RSA public key`);
+    }
+    return;
+  }
+
+  if (publicKey.asymmetricKeyType !== 'ec') {
+    throw new Error(`${prefix}: ES256 requires an EC P-256 public key`);
+  }
+  const details = publicKey.asymmetricKeyDetails as { namedCurve?: string } | undefined;
+  if (details?.namedCurve !== 'prime256v1' && details?.namedCurve !== 'secp256r1') {
+    throw new Error(`${prefix}: ES256 requires an EC P-256 public key`);
+  }
 }
 
 // ─────────────────────────────────────────────
@@ -240,6 +265,7 @@ export async function verifyDeveloperJwt(
   const signingInput = `${headerB64}.${payloadB64}`;
   const signatureBytes = base64urlDecode(signatureB64);
   const publicKey: KeyObject = createPublicKey(trustConfig.publicKeyPem);
+  validatePublicKeyForAlgorithm(publicKey, trustConfig.algorithm, 'developer JWT publicKeyPem');
 
   let signatureValid: boolean;
 
@@ -280,7 +306,7 @@ export async function verifyDeveloperJwt(
   if (typeof exp !== 'number' || !Number.isSafeInteger(exp)) {
     throw new Error('developer JWT: exp must be a safe integer number');
   }
-  if (exp <= now) {
+  if (exp <= now - DEVELOPER_JWT_CLOCK_LEEWAY_SECONDS) {
     throw new Error('developer JWT: token expired');
   }
 
@@ -289,7 +315,7 @@ export async function verifyDeveloperJwt(
     if (typeof iat !== 'number' || !Number.isSafeInteger(iat)) {
       throw new Error('developer JWT: iat must be a safe integer number');
     }
-    if (iat > now) {
+    if (iat > now + DEVELOPER_JWT_CLOCK_LEEWAY_SECONDS) {
       throw new Error('developer JWT: iat is in the future');
     }
   }
@@ -299,7 +325,7 @@ export async function verifyDeveloperJwt(
     if (typeof nbf !== 'number' || !Number.isSafeInteger(nbf)) {
       throw new Error('developer JWT: nbf must be a safe integer number');
     }
-    if (nbf > now) {
+    if (nbf > now + DEVELOPER_JWT_CLOCK_LEEWAY_SECONDS) {
       throw new Error('developer JWT: token not yet valid (nbf)');
     }
   }

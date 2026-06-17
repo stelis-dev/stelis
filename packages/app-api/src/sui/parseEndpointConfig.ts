@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { resolve, dirname } from 'node:path';
 import type { RpcMetadata } from '@protobuf-ts/runtime-rpc';
 import type { SuiRpcEndpointConfig } from './failoverTransport.js';
+import { redactUrl } from './redactUrl.js';
 
 // ─────────────────────────────────────────────
 // Raw config types (before env resolution)
@@ -38,6 +39,8 @@ export interface SuiRpcEndpointRawConfig {
   auth?: SuiRpcEndpointAuthConfig;
   /** Non-secret static headers. */
   meta?: RpcMetadata;
+  /** Allows unauthenticated loopback HTTP endpoints for local development only. */
+  localDevelopmentEndpoint?: boolean;
   fetchInit?: Omit<RequestInit, 'body' | 'headers' | 'method' | 'signal'>;
 }
 
@@ -97,8 +100,17 @@ export function parseEndpointConfigJson(
       throw new Error(`${pos}: "url" must be a non-empty string`);
     }
     const url = entry.url.trim();
+    let localDevelopmentEndpoint = false;
+    if (entry.localDevelopmentEndpoint !== undefined) {
+      if (typeof entry.localDevelopmentEndpoint !== 'boolean') {
+        throw new Error(`${pos}: "localDevelopmentEndpoint" must be a boolean when provided`);
+      }
+      localDevelopmentEndpoint = entry.localDevelopmentEndpoint;
+    }
+
+    let parsed: URL;
     try {
-      const parsed = new URL(url);
+      parsed = new URL(url);
       if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
         throw new Error(`Unsupported protocol: ${parsed.protocol}`);
       }
@@ -109,8 +121,28 @@ export function parseEndpointConfigJson(
       }
     } catch (err) {
       throw new Error(
-        `${pos}: invalid URL "${url}": ${err instanceof Error ? err.message : String(err)}`,
+        `${pos}: invalid URL "${redactUrl(url)}": ${
+          err instanceof Error ? err.message : String(err)
+        }`,
       );
+    }
+
+    const hasAuthConfig = entry.auth != null;
+    const hasStaticMeta = entry.meta != null;
+    if (parsed.protocol === 'http:') {
+      if (!localDevelopmentEndpoint) {
+        throw new Error(
+          `${pos}: HTTP RPC endpoints require localDevelopmentEndpoint=true and are only allowed for unauthenticated local development endpoints`,
+        );
+      }
+      if (!isLocalDevelopmentHost(parsed.hostname)) {
+        throw new Error(
+          `${pos}: HTTP RPC endpoints with localDevelopmentEndpoint=true must use localhost, 127.0.0.1, or ::1`,
+        );
+      }
+      if (hasAuthConfig || hasStaticMeta) {
+        throw new Error(`${pos}: HTTP RPC endpoints must not carry auth or meta headers`);
+      }
     }
 
     // Resolve meta — start with static meta if provided
@@ -195,6 +227,16 @@ export function parseEndpointConfigJson(
   }
 
   return results;
+}
+
+function isLocalDevelopmentHost(hostname: string): boolean {
+  const normalized = hostname.toLowerCase();
+  return (
+    normalized === 'localhost' ||
+    normalized === '127.0.0.1' ||
+    normalized === '::1' ||
+    normalized === '[::1]'
+  );
 }
 
 /**
