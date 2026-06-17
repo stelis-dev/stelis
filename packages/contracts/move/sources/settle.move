@@ -21,6 +21,8 @@ module stelis::settle {
     /// Spread guard: bid-ask spread exceeds Config.max_spread_bps, or book is
     /// empty / one-sided / crossed.  Only enforced on swap entrypoints.
     const ESpreadTooWide: u64 = 110;
+    const SPREAD_GUARD_DEPTH: u64 = 8;
+    const DEEPBOOK_PRICE_SCALE: u128 = 1_000_000_000;
 
     // ─────────────────────────────────────────────
     // Spread Guard — internal helper
@@ -38,15 +40,90 @@ module stelis::settle {
     fun assert_spread_ok<BaseType, QuoteType>(
         config: &Config,
         pool: &deepbook::pool::Pool<BaseType, QuoteType>,
+        input_amount: u64,
+        is_base_for_quote: bool,
         clock: &Clock,
     ) {
-        let (bid_prices, _bid_qtys, ask_prices, _ask_qtys) =
-            deepbook::pool::get_level2_ticks_from_mid<BaseType, QuoteType>(pool, 1, clock);
+        let (bid_prices, bid_qtys, ask_prices, ask_qtys) =
+            deepbook::pool::get_level2_ticks_from_mid<BaseType, QuoteType>(pool, SPREAD_GUARD_DEPTH, clock);
 
         // Fail-closed: empty or one-sided book
         assert!(!bid_prices.is_empty() && !ask_prices.is_empty(), ESpreadTooWide);
 
-        check_spread_from_prices(bid_prices[0], ask_prices[0], config::max_spread_bps(config));
+        let (effective_bid, effective_ask) = if (is_base_for_quote) {
+            (
+                cumulative_bid_price_for_base_input(&bid_prices, &bid_qtys, input_amount),
+                ask_prices[0],
+            )
+        } else {
+            (
+                bid_prices[0],
+                cumulative_ask_price_for_quote_input(&ask_prices, &ask_qtys, input_amount),
+            )
+        };
+
+        check_spread_from_prices(effective_bid, effective_ask, config::max_spread_bps(config));
+    }
+
+    fun cumulative_bid_price_for_base_input(
+        prices: &vector<u64>,
+        quantities: &vector<u64>,
+        input_base_amount: u64,
+    ): u64 {
+        assert!(input_base_amount > 0, ESpreadTooWide);
+        assert!(vector::length(prices) == vector::length(quantities), ESpreadTooWide);
+        let mut remaining = input_base_amount;
+        let mut filled_base = 0u128;
+        let mut quote_out = 0u128;
+        let mut i = 0;
+        let len = vector::length(prices);
+        while (i < len && remaining > 0) {
+            let level_base = quantities[i];
+            if (level_base > 0) {
+                let take = if (level_base >= remaining) remaining else level_base;
+                filled_base = filled_base + (take as u128);
+                quote_out = quote_out + (((take as u128) * (prices[i] as u128)) / DEEPBOOK_PRICE_SCALE);
+                remaining = remaining - take;
+            };
+            i = i + 1;
+        };
+        assert!(remaining == 0 && filled_base > 0 && quote_out > 0, ESpreadTooWide);
+        ((quote_out * DEEPBOOK_PRICE_SCALE) / filled_base) as u64
+    }
+
+    fun cumulative_ask_price_for_quote_input(
+        prices: &vector<u64>,
+        quantities: &vector<u64>,
+        input_quote_amount: u64,
+    ): u64 {
+        assert!(input_quote_amount > 0, ESpreadTooWide);
+        assert!(vector::length(prices) == vector::length(quantities), ESpreadTooWide);
+        let mut remaining = input_quote_amount as u128;
+        let mut spent_quote = 0u128;
+        let mut base_out = 0u128;
+        let mut i = 0;
+        let len = vector::length(prices);
+        while (i < len && remaining > 0) {
+            let price = prices[i] as u128;
+            let level_base = quantities[i] as u128;
+            let level_quote_capacity = (level_base * price) / DEEPBOOK_PRICE_SCALE;
+            if (level_quote_capacity > 0) {
+                if (level_quote_capacity >= remaining) {
+                    let base_take = (remaining * DEEPBOOK_PRICE_SCALE) / price;
+                    assert!(base_take > 0, ESpreadTooWide);
+                    spent_quote = spent_quote + remaining;
+                    base_out = base_out + base_take;
+                    remaining = 0;
+                } else {
+                    spent_quote = spent_quote + level_quote_capacity;
+                    base_out = base_out + level_base;
+                    remaining = remaining - level_quote_capacity;
+                };
+            };
+            i = i + 1;
+        };
+        assert!(remaining == 0 && spent_quote > 0 && base_out > 0, ESpreadTooWide);
+        ((spent_quote * DEEPBOOK_PRICE_SCALE) / base_out) as u64
     }
 
     /// Pure spread judgment: aborts with ESpreadTooWide if spread is invalid.
@@ -78,6 +155,36 @@ module stelis::settle {
         check_spread_from_prices(best_bid, best_ask, max_spread_bps);
     }
 
+    #[test_only]
+    public fun assert_base_for_quote_spread_ok_from_book(
+        bid_prices: vector<u64>,
+        bid_quantities: vector<u64>,
+        ask_prices: vector<u64>,
+        ask_quantities: vector<u64>,
+        input_base_amount: u64,
+        max_spread_bps: u64,
+    ) {
+        assert!(!bid_prices.is_empty() && !ask_prices.is_empty(), ESpreadTooWide);
+        assert!(vector::length(&ask_prices) == vector::length(&ask_quantities), ESpreadTooWide);
+        let effective_bid = cumulative_bid_price_for_base_input(&bid_prices, &bid_quantities, input_base_amount);
+        check_spread_from_prices(effective_bid, ask_prices[0], max_spread_bps);
+    }
+
+    #[test_only]
+    public fun assert_quote_for_base_spread_ok_from_book(
+        bid_prices: vector<u64>,
+        bid_quantities: vector<u64>,
+        ask_prices: vector<u64>,
+        ask_quantities: vector<u64>,
+        input_quote_amount: u64,
+        max_spread_bps: u64,
+    ) {
+        assert!(!bid_prices.is_empty() && !ask_prices.is_empty(), ESpreadTooWide);
+        assert!(vector::length(&bid_prices) == vector::length(&bid_quantities), ESpreadTooWide);
+        let effective_ask = cumulative_ask_price_for_quote_input(&ask_prices, &ask_quantities, input_quote_amount);
+        check_spread_from_prices(bid_prices[0], effective_ask, max_spread_bps);
+    }
+
     // ─────────────────────────────────────────────
     // Core settlement logic (vault-independent)
     //
@@ -103,6 +210,7 @@ module stelis::settle {
         quoted_relayer_fee_mist: u64,
         expected_protocol_fee_mist: u64,
         expected_config_version: u64,
+        enforce_min_settle_mist: bool,
         quote_timestamp_ms: u64,
         policy_hash: vector<u8>,
         order_id_hash: vector<u8>,
@@ -124,7 +232,9 @@ module stelis::settle {
 
         // S-3: Total in lower bound
         let total_in = coin::value(&coin_in);
-        assert!(total_in >= config::min_settle_mist(config), ETotalInTooLow);
+        if (enforce_min_settle_mist) {
+            assert!(total_in >= config::min_settle_mist(config), ETotalInTooLow);
+        };
 
         // L2: Config version drift detection
         assert!(config::config_version(config) == expected_config_version, EConfigVersionMismatch);
@@ -204,6 +314,7 @@ module stelis::settle {
         quoted_relayer_fee_mist: u64,
         expected_protocol_fee_mist: u64,
         expected_config_version: u64,
+        enforce_min_settle_mist: bool,
         quote_timestamp_ms: u64,
         policy_hash: vector<u8>,
         order_id_hash: vector<u8>,
@@ -217,7 +328,7 @@ module stelis::settle {
             relayer_claim, relayer_recipient, receipt_id, nonce,
             sim_gas_reported, gas_variance_fixed_mist, slippage_buffer_mist,
             quoted_relayer_fee_mist, expected_protocol_fee_mist, expected_config_version,
-            quote_timestamp_ms, policy_hash, order_id_hash,
+            enforce_min_settle_mist, quote_timestamp_ms, policy_hash, order_id_hash,
             ctx,
         );
 
@@ -258,7 +369,7 @@ module stelis::settle {
         ctx: &mut TxContext
     ) {
         // Spread guard: check pool health before swap
-        assert_spread_ok(config, pool, clock);
+        assert_spread_ok(config, pool, swap_amount, true, clock);
 
         // Input-fee mode: zero DEEP coin forces DeepBook to charge fee from the
         // input token economy instead of the DEEP token economy. Stelis never
@@ -291,7 +402,7 @@ module stelis::settle {
             relayer_claim, relayer_recipient, receipt_id, nonce,
             sim_gas_reported, gas_variance_fixed_mist, slippage_buffer_mist,
             quoted_relayer_fee_mist, expected_protocol_fee_mist, expected_config_version,
-            quote_timestamp_ms, policy_hash, order_id_hash,
+            true, quote_timestamp_ms, policy_hash, order_id_hash,
             ctx,
         );
 
@@ -331,7 +442,7 @@ module stelis::settle {
         vault::validate_vault(registry, ctx.sender(), vault::vault_id(user_vault));
 
         // Spread guard: check pool health before swap
-        assert_spread_ok(config, pool, clock);
+        assert_spread_ok(config, pool, swap_amount, true, clock);
 
         // Input-fee mode: zero DEEP coin forces DeepBook to charge fee from the
         // input token economy instead of the DEEP token economy.
@@ -361,7 +472,7 @@ module stelis::settle {
                 relayer_claim, relayer_recipient, receipt_id, nonce,
                 sim_gas_reported, gas_variance_fixed_mist, slippage_buffer_mist,
                 quoted_relayer_fee_mist, expected_protocol_fee_mist, expected_config_version,
-                quote_timestamp_ms, policy_hash, order_id_hash,
+                true, quote_timestamp_ms, policy_hash, order_id_hash,
                 ctx,
             );
         } else {
@@ -385,7 +496,7 @@ module stelis::settle {
                 relayer_claim, relayer_recipient, receipt_id, nonce,
                 sim_gas_reported, gas_variance_fixed_mist, slippage_buffer_mist,
                 quoted_relayer_fee_mist, expected_protocol_fee_mist, expected_config_version,
-                quote_timestamp_ms, policy_hash, order_id_hash,
+                true, quote_timestamp_ms, policy_hash, order_id_hash,
                 ctx,
             );
         }
@@ -420,7 +531,7 @@ module stelis::settle {
         ctx: &mut TxContext
     ) {
         // Spread guard: check pool health before swap
-        assert_spread_ok(config, pool, clock);
+        assert_spread_ok(config, pool, swap_amount, false, clock);
 
         // Input-fee mode: zero DEEP coin forces DeepBook to charge fee from the
         // input token economy instead of the DEEP token economy.
@@ -452,7 +563,7 @@ module stelis::settle {
             relayer_claim, relayer_recipient, receipt_id, nonce,
             sim_gas_reported, gas_variance_fixed_mist, slippage_buffer_mist,
             quoted_relayer_fee_mist, expected_protocol_fee_mist, expected_config_version,
-            quote_timestamp_ms, policy_hash, order_id_hash,
+            true, quote_timestamp_ms, policy_hash, order_id_hash,
             ctx,
         );
 
@@ -492,7 +603,7 @@ module stelis::settle {
         vault::validate_vault(registry, ctx.sender(), vault::vault_id(user_vault));
 
         // Spread guard: check pool health before swap
-        assert_spread_ok(config, pool, clock);
+        assert_spread_ok(config, pool, swap_amount, false, clock);
 
         // Input-fee mode: zero DEEP coin forces DeepBook to charge fee from the
         // input token economy instead of the DEEP token economy.
@@ -523,7 +634,7 @@ module stelis::settle {
                 relayer_claim, relayer_recipient, receipt_id, nonce,
                 sim_gas_reported, gas_variance_fixed_mist, slippage_buffer_mist,
                 quoted_relayer_fee_mist, expected_protocol_fee_mist, expected_config_version,
-                quote_timestamp_ms, policy_hash, order_id_hash,
+                true, quote_timestamp_ms, policy_hash, order_id_hash,
                 ctx,
             );
         } else {
@@ -548,7 +659,7 @@ module stelis::settle {
                 relayer_claim, relayer_recipient, receipt_id, nonce,
                 sim_gas_reported, gas_variance_fixed_mist, slippage_buffer_mist,
                 quoted_relayer_fee_mist, expected_protocol_fee_mist, expected_config_version,
-                quote_timestamp_ms, policy_hash, order_id_hash,
+                true, quote_timestamp_ms, policy_hash, order_id_hash,
                 ctx,
             );
         }
@@ -586,7 +697,7 @@ module stelis::settle {
             relayer_claim, relayer_recipient, receipt_id, nonce,
             sim_gas_reported, gas_variance_fixed_mist, slippage_buffer_mist,
             quoted_relayer_fee_mist, expected_protocol_fee_mist, expected_config_version,
-            quote_timestamp_ms, policy_hash, order_id_hash,
+            false, quote_timestamp_ms, policy_hash, order_id_hash,
             ctx,
         );
     }
@@ -623,7 +734,7 @@ module stelis::settle {
             relayer_claim, relayer_recipient, receipt_id, nonce,
             sim_gas_reported, gas_variance_fixed_mist, slippage_buffer_mist,
             quoted_relayer_fee_mist, expected_protocol_fee_mist, expected_config_version,
-            quote_timestamp_ms, policy_hash, order_id_hash,
+            true, quote_timestamp_ms, policy_hash, order_id_hash,
             ctx,
         );
         vault::transfer_vault(user_vault, ctx.sender());
@@ -662,7 +773,7 @@ module stelis::settle {
                 relayer_claim, relayer_recipient, receipt_id, nonce,
                 sim_gas_reported, gas_variance_fixed_mist, slippage_buffer_mist,
                 quoted_relayer_fee_mist, expected_protocol_fee_mist, expected_config_version,
-                quote_timestamp_ms, policy_hash, order_id_hash,
+                true, quote_timestamp_ms, policy_hash, order_id_hash,
                 ctx,
             );
         } else {
@@ -671,7 +782,7 @@ module stelis::settle {
                 relayer_claim, relayer_recipient, receipt_id, nonce,
                 sim_gas_reported, gas_variance_fixed_mist, slippage_buffer_mist,
                 quoted_relayer_fee_mist, expected_protocol_fee_mist, expected_config_version,
-                quote_timestamp_ms, policy_hash, order_id_hash,
+                true, quote_timestamp_ms, policy_hash, order_id_hash,
                 ctx,
             );
         }
@@ -703,7 +814,7 @@ module stelis::settle {
             relayer_claim, relayer_recipient, receipt_id, nonce,
             sim_gas_reported, gas_variance_fixed_mist, slippage_buffer_mist,
             quoted_relayer_fee_mist, expected_protocol_fee_mist, expected_config_version,
-            quote_timestamp_ms, policy_hash, order_id_hash,
+            true, quote_timestamp_ms, policy_hash, order_id_hash,
             ctx,
         );
     }
@@ -744,7 +855,7 @@ module stelis::settle {
             relayer_claim, relayer_recipient, receipt_id, nonce,
             sim_gas_reported, gas_variance_fixed_mist, slippage_buffer_mist,
             quoted_relayer_fee_mist, expected_protocol_fee_mist, expected_config_version,
-            quote_timestamp_ms, policy_hash, order_id_hash,
+            true, quote_timestamp_ms, policy_hash, order_id_hash,
             ctx,
         );
         vault::transfer_vault(user_vault, ctx.sender());
@@ -779,7 +890,7 @@ module stelis::settle {
             relayer_claim, relayer_recipient, receipt_id, nonce,
             sim_gas_reported, gas_variance_fixed_mist, slippage_buffer_mist,
             quoted_relayer_fee_mist, expected_protocol_fee_mist, expected_config_version,
-            quote_timestamp_ms, policy_hash, order_id_hash,
+            true, quote_timestamp_ms, policy_hash, order_id_hash,
             ctx,
         );
     }
@@ -818,7 +929,7 @@ module stelis::settle {
             relayer_claim, relayer_recipient, receipt_id, nonce,
             sim_gas_reported, gas_variance_fixed_mist, slippage_buffer_mist,
             quoted_relayer_fee_mist, expected_protocol_fee_mist, expected_config_version,
-            quote_timestamp_ms, policy_hash, order_id_hash,
+            true, quote_timestamp_ms, policy_hash, order_id_hash,
             ctx,
         );
     }

@@ -41,6 +41,15 @@ module stelis::settle_tests {
     const EInvalidRelayerFeeCap: u64 = 7;
     const EInvalidSpreadBps: u64 = 8;
     const EPendingAdminExists: u64 = 9;
+    const EPendingConfigExists: u64 = 10;
+    const ENoPendingConfig: u64 = 11;
+    const EConfigUpdateNotReady: u64 = 12;
+    const EPendingTreasuryExists: u64 = 13;
+    const ENoPendingTreasury: u64 = 14;
+    const ETreasuryUpdateNotReady: u64 = 15;
+    const EPendingPauseExists: u64 = 16;
+    const ENoPendingPause: u64 = 17;
+    const EPauseUpdateNotReady: u64 = 18;
     // L2 tamper-detection error codes — defined in settle.move, referenced by abort value in tests
 
     // Vault Errors
@@ -53,6 +62,39 @@ module stelis::settle_tests {
     fun setup_test(scenario: &mut Scenario) {
         let ctx = test_scenario::ctx(scenario);
         config::init_for_testing(ctx);
+    }
+
+    fun advance_two_epochs_and_apply_config(scenario: &mut Scenario, sender: address) {
+        test_scenario::next_epoch(scenario, sender);
+        test_scenario::next_epoch(scenario, sender);
+        {
+            let mut config = test_scenario::take_shared<Config>(scenario);
+            let ctx = test_scenario::ctx(scenario);
+            config::apply_config_update(&mut config, ctx);
+            test_scenario::return_shared(config);
+        };
+    }
+
+    fun advance_two_epochs_and_apply_treasury(scenario: &mut Scenario, sender: address) {
+        test_scenario::next_epoch(scenario, sender);
+        test_scenario::next_epoch(scenario, sender);
+        {
+            let mut config = test_scenario::take_shared<Config>(scenario);
+            let ctx = test_scenario::ctx(scenario);
+            config::apply_protocol_treasury_update(&mut config, ctx);
+            test_scenario::return_shared(config);
+        };
+    }
+
+    fun advance_two_epochs_and_apply_pause(scenario: &mut Scenario, sender: address) {
+        test_scenario::next_epoch(scenario, sender);
+        test_scenario::next_epoch(scenario, sender);
+        {
+            let mut config = test_scenario::take_shared<Config>(scenario);
+            let ctx = test_scenario::ctx(scenario);
+            config::apply_paused_update(&mut config, ctx);
+            test_scenario::return_shared(config);
+        };
     }
 
     // --- Success Cases ---
@@ -287,6 +329,7 @@ module stelis::settle_tests {
             );
             test_scenario::return_shared(config);
         };
+        advance_two_epochs_and_apply_config(&mut scenario, ADDR_RELAYER);
 
         // 2. User Settle (new user path)
         test_scenario::next_tx(&mut scenario, ADDR_USER);
@@ -541,6 +584,7 @@ module stelis::settle_tests {
             config::update_config(&mut config, 0, 0, max_claim, 1_000_000, 500, ctx);
             test_scenario::return_shared(config);
         };
+        advance_two_epochs_and_apply_config(&mut scenario, ADDR_RELAYER);
 
         test_scenario::next_tx(&mut scenario, ADDR_USER);
         {
@@ -700,6 +744,7 @@ module stelis::settle_tests {
             config::update_config(&mut config, 0, 1000, 50_000_000, 100_000, 500, ctx);
             test_scenario::return_shared(config);
         };
+        advance_two_epochs_and_apply_config(&mut scenario, ADDR_RELAYER);
 
         // User submits settle with stale expected_protocol_fee_mist = 500 (expects old fee),
         // but chain actually charges 1000. Drift must be rejected.
@@ -1286,9 +1331,18 @@ module stelis::settle_tests {
 
             // Update spread cap to 300 (3%)
             config::update_config(&mut config, 0, 0, max_claim, min_settle, 300, ctx);
+            assert!(config::max_spread_bps(&config) == 500, 4);
+            assert!(config::config_version(&config) == v0, 5);
+            test_scenario::return_shared(config);
+        };
 
+        advance_two_epochs_and_apply_config(&mut scenario, ADDR_RELAYER);
+
+        test_scenario::next_tx(&mut scenario, ADDR_ADMIN);
+        {
+            let config = test_scenario::take_shared<Config>(&scenario);
             assert!(config::max_spread_bps(&config) == 300, 2);
-            assert!(config::config_version(&config) == v0 + 1, 3);
+            assert!(config::config_version(&config) == 1, 3);
 
             test_scenario::return_shared(config);
         };
@@ -1310,6 +1364,15 @@ module stelis::settle_tests {
 
             // Update spread cap from 500 (default) to 300
             config::update_config(&mut config, 0, 0, max_claim, min_settle, 300, ctx);
+            test_scenario::return_shared(config);
+        };
+
+        test_scenario::next_epoch(&mut scenario, ADDR_ADMIN);
+        test_scenario::next_epoch(&mut scenario, ADDR_RELAYER);
+        {
+            let mut config = test_scenario::take_shared<Config>(&scenario);
+            let ctx = test_scenario::ctx(&mut scenario);
+            config::apply_config_update(&mut config, ctx);
 
             // Read the emitted ConfigUpdatedEvent in the same TX block
             let events = event::events_by_type<stelis::events::ConfigUpdatedEvent>();
@@ -1323,6 +1386,365 @@ module stelis::settle_tests {
 
             test_scenario::return_shared(config);
         };
+        test_scenario::end(scenario);
+    }
+
+    #[test]
+    #[expected_failure(abort_code = EConfigUpdateNotReady, location = stelis::config)]
+    fun test_update_config_apply_before_delay_fails() {
+        let mut scenario = test_scenario::begin(ADDR_ADMIN);
+        setup_test(&mut scenario);
+
+        test_scenario::next_tx(&mut scenario, ADDR_ADMIN);
+        {
+            let mut config = test_scenario::take_shared<Config>(&scenario);
+            let ctx = test_scenario::ctx(&mut scenario);
+            let max_claim = config::max_claim_mist(&config);
+            let min_settle = config::min_settle_mist(&config);
+            config::update_config(&mut config, 0, 0, max_claim, min_settle, 300, ctx);
+            test_scenario::return_shared(config);
+        };
+
+        test_scenario::next_epoch(&mut scenario, ADDR_RELAYER);
+        {
+            let mut config = test_scenario::take_shared<Config>(&scenario);
+            let ctx = test_scenario::ctx(&mut scenario);
+            config::apply_config_update(&mut config, ctx);
+            test_scenario::return_shared(config);
+        };
+
+        test_scenario::end(scenario);
+    }
+
+    #[test]
+    #[expected_failure(abort_code = EPendingConfigExists, location = stelis::config)]
+    fun test_update_config_pending_collision() {
+        let mut scenario = test_scenario::begin(ADDR_ADMIN);
+        setup_test(&mut scenario);
+
+        test_scenario::next_tx(&mut scenario, ADDR_ADMIN);
+        {
+            let mut config = test_scenario::take_shared<Config>(&scenario);
+            let ctx = test_scenario::ctx(&mut scenario);
+            let max_claim = config::max_claim_mist(&config);
+            let min_settle = config::min_settle_mist(&config);
+            config::update_config(&mut config, 0, 0, max_claim, min_settle, 300, ctx);
+            config::update_config(&mut config, 0, 0, max_claim, min_settle, 400, ctx);
+            test_scenario::return_shared(config);
+        };
+
+        test_scenario::end(scenario);
+    }
+
+    #[test]
+    fun test_update_config_cancel_allows_new_proposal() {
+        let mut scenario = test_scenario::begin(ADDR_ADMIN);
+        setup_test(&mut scenario);
+
+        test_scenario::next_tx(&mut scenario, ADDR_ADMIN);
+        {
+            let mut config = test_scenario::take_shared<Config>(&scenario);
+            let ctx = test_scenario::ctx(&mut scenario);
+            let max_claim = config::max_claim_mist(&config);
+            let min_settle = config::min_settle_mist(&config);
+            config::update_config(&mut config, 0, 0, max_claim, min_settle, 300, ctx);
+            test_scenario::return_shared(config);
+        };
+
+        test_scenario::next_tx(&mut scenario, ADDR_ADMIN);
+        {
+            let mut config = test_scenario::take_shared<Config>(&scenario);
+            let ctx = test_scenario::ctx(&mut scenario);
+            let max_claim = config::max_claim_mist(&config);
+            let min_settle = config::min_settle_mist(&config);
+            config::cancel_config_update(&mut config, ctx);
+            config::update_config(&mut config, 0, 0, max_claim, min_settle, 400, ctx);
+            test_scenario::return_shared(config);
+        };
+
+        advance_two_epochs_and_apply_config(&mut scenario, ADDR_RELAYER);
+
+        test_scenario::next_tx(&mut scenario, ADDR_ADMIN);
+        {
+            let config = test_scenario::take_shared<Config>(&scenario);
+            assert!(config::max_spread_bps(&config) == 400, 61);
+            test_scenario::return_shared(config);
+        };
+
+        test_scenario::end(scenario);
+    }
+
+    #[test]
+    #[expected_failure(abort_code = ENoPendingConfig, location = stelis::config)]
+    fun test_update_config_same_values_does_not_queue() {
+        let mut scenario = test_scenario::begin(ADDR_ADMIN);
+        setup_test(&mut scenario);
+
+        test_scenario::next_tx(&mut scenario, ADDR_ADMIN);
+        {
+            let mut config = test_scenario::take_shared<Config>(&scenario);
+            let ctx = test_scenario::ctx(&mut scenario);
+            let max_relayer_fee = config::max_relayer_fee_mist(&config);
+            let protocol_fee = config::protocol_flat_fee_mist(&config);
+            let max_claim = config::max_claim_mist(&config);
+            let min_settle = config::min_settle_mist(&config);
+            let max_spread = config::max_spread_bps(&config);
+            config::update_config(
+                &mut config,
+                max_relayer_fee,
+                protocol_fee,
+                max_claim,
+                min_settle,
+                max_spread,
+                ctx,
+            );
+            assert!(config::config_version(&config) == 0, 73);
+            test_scenario::return_shared(config);
+        };
+
+        test_scenario::next_epoch(&mut scenario, ADDR_RELAYER);
+        test_scenario::next_epoch(&mut scenario, ADDR_RELAYER);
+        {
+            let mut config = test_scenario::take_shared<Config>(&scenario);
+            let ctx = test_scenario::ctx(&mut scenario);
+            config::apply_config_update(&mut config, ctx);
+            test_scenario::return_shared(config);
+        };
+
+        test_scenario::end(scenario);
+    }
+
+    #[test]
+    fun test_update_treasury_delayed_permissionless_apply() {
+        let mut scenario = test_scenario::begin(ADDR_ADMIN);
+        setup_test(&mut scenario);
+
+        test_scenario::next_tx(&mut scenario, ADDR_ADMIN);
+        {
+            let mut config = test_scenario::take_shared<Config>(&scenario);
+            let ctx = test_scenario::ctx(&mut scenario);
+            config::update_protocol_treasury(&mut config, @0xD00D, ctx);
+            assert!(config::protocol_treasury(&config) == ADDR_ADMIN, 62);
+            test_scenario::return_shared(config);
+        };
+
+        advance_two_epochs_and_apply_treasury(&mut scenario, ADDR_RELAYER);
+
+        test_scenario::next_tx(&mut scenario, ADDR_ADMIN);
+        {
+            let config = test_scenario::take_shared<Config>(&scenario);
+            assert!(config::protocol_treasury(&config) == @0xD00D, 63);
+            assert!(config::config_version(&config) == 1, 64);
+            test_scenario::return_shared(config);
+        };
+
+        test_scenario::end(scenario);
+    }
+
+    #[test]
+    #[expected_failure(abort_code = ETreasuryUpdateNotReady, location = stelis::config)]
+    fun test_update_treasury_apply_before_delay_fails() {
+        let mut scenario = test_scenario::begin(ADDR_ADMIN);
+        setup_test(&mut scenario);
+
+        test_scenario::next_tx(&mut scenario, ADDR_ADMIN);
+        {
+            let mut config = test_scenario::take_shared<Config>(&scenario);
+            let ctx = test_scenario::ctx(&mut scenario);
+            config::update_protocol_treasury(&mut config, @0xD00D, ctx);
+            test_scenario::return_shared(config);
+        };
+
+        test_scenario::next_epoch(&mut scenario, ADDR_RELAYER);
+        {
+            let mut config = test_scenario::take_shared<Config>(&scenario);
+            let ctx = test_scenario::ctx(&mut scenario);
+            config::apply_protocol_treasury_update(&mut config, ctx);
+            test_scenario::return_shared(config);
+        };
+
+        test_scenario::end(scenario);
+    }
+
+    #[test]
+    #[expected_failure(abort_code = ENoPendingTreasury, location = stelis::config)]
+    fun test_update_treasury_same_value_does_not_queue() {
+        let mut scenario = test_scenario::begin(ADDR_ADMIN);
+        setup_test(&mut scenario);
+
+        test_scenario::next_tx(&mut scenario, ADDR_ADMIN);
+        {
+            let mut config = test_scenario::take_shared<Config>(&scenario);
+            let ctx = test_scenario::ctx(&mut scenario);
+            let treasury = config::protocol_treasury(&config);
+            config::update_protocol_treasury(&mut config, treasury, ctx);
+            assert!(config::config_version(&config) == 0, 74);
+            test_scenario::return_shared(config);
+        };
+
+        test_scenario::next_epoch(&mut scenario, ADDR_RELAYER);
+        test_scenario::next_epoch(&mut scenario, ADDR_RELAYER);
+        {
+            let mut config = test_scenario::take_shared<Config>(&scenario);
+            let ctx = test_scenario::ctx(&mut scenario);
+            config::apply_protocol_treasury_update(&mut config, ctx);
+            test_scenario::return_shared(config);
+        };
+
+        test_scenario::end(scenario);
+    }
+
+    #[test]
+    #[expected_failure(abort_code = EPendingTreasuryExists, location = stelis::config)]
+    fun test_update_treasury_pending_collision() {
+        let mut scenario = test_scenario::begin(ADDR_ADMIN);
+        setup_test(&mut scenario);
+
+        test_scenario::next_tx(&mut scenario, ADDR_ADMIN);
+        {
+            let mut config = test_scenario::take_shared<Config>(&scenario);
+            let ctx = test_scenario::ctx(&mut scenario);
+            config::update_protocol_treasury(&mut config, @0xD00D, ctx);
+            config::update_protocol_treasury(&mut config, @0xD00E, ctx);
+            test_scenario::return_shared(config);
+        };
+
+        test_scenario::end(scenario);
+    }
+
+    #[test]
+    fun test_unpause_delayed_permissionless_apply() {
+        let mut scenario = test_scenario::begin(ADDR_ADMIN);
+        setup_test(&mut scenario);
+
+        test_scenario::next_tx(&mut scenario, ADDR_ADMIN);
+        {
+            let mut config = test_scenario::take_shared<Config>(&scenario);
+            let ctx = test_scenario::ctx(&mut scenario);
+            config::set_paused(&mut config, true, ctx);
+            assert!(config::paused(&config), 65);
+            assert!(config::config_version(&config) == 1, 66);
+            test_scenario::return_shared(config);
+        };
+
+        test_scenario::next_tx(&mut scenario, ADDR_ADMIN);
+        {
+            let mut config = test_scenario::take_shared<Config>(&scenario);
+            let ctx = test_scenario::ctx(&mut scenario);
+            config::set_paused(&mut config, false, ctx);
+            assert!(config::paused(&config), 67);
+            assert!(config::config_version(&config) == 1, 68);
+            test_scenario::return_shared(config);
+        };
+
+        advance_two_epochs_and_apply_pause(&mut scenario, ADDR_RELAYER);
+
+        test_scenario::next_tx(&mut scenario, ADDR_ADMIN);
+        {
+            let config = test_scenario::take_shared<Config>(&scenario);
+            assert!(!config::paused(&config), 69);
+            assert!(config::config_version(&config) == 2, 70);
+            test_scenario::return_shared(config);
+        };
+
+        test_scenario::end(scenario);
+    }
+
+    #[test]
+    #[expected_failure(abort_code = EPauseUpdateNotReady, location = stelis::config)]
+    fun test_unpause_apply_before_delay_fails() {
+        let mut scenario = test_scenario::begin(ADDR_ADMIN);
+        setup_test(&mut scenario);
+
+        test_scenario::next_tx(&mut scenario, ADDR_ADMIN);
+        {
+            let mut config = test_scenario::take_shared<Config>(&scenario);
+            let ctx = test_scenario::ctx(&mut scenario);
+            config::set_paused(&mut config, true, ctx);
+            test_scenario::return_shared(config);
+        };
+
+        test_scenario::next_tx(&mut scenario, ADDR_ADMIN);
+        {
+            let mut config = test_scenario::take_shared<Config>(&scenario);
+            let ctx = test_scenario::ctx(&mut scenario);
+            config::set_paused(&mut config, false, ctx);
+            test_scenario::return_shared(config);
+        };
+
+        test_scenario::next_epoch(&mut scenario, ADDR_RELAYER);
+        {
+            let mut config = test_scenario::take_shared<Config>(&scenario);
+            let ctx = test_scenario::ctx(&mut scenario);
+            config::apply_paused_update(&mut config, ctx);
+            test_scenario::return_shared(config);
+        };
+
+        test_scenario::end(scenario);
+    }
+
+    #[test]
+    #[expected_failure(abort_code = EPendingPauseExists, location = stelis::config)]
+    fun test_unpause_pending_collision() {
+        let mut scenario = test_scenario::begin(ADDR_ADMIN);
+        setup_test(&mut scenario);
+
+        test_scenario::next_tx(&mut scenario, ADDR_ADMIN);
+        {
+            let mut config = test_scenario::take_shared<Config>(&scenario);
+            let ctx = test_scenario::ctx(&mut scenario);
+            config::set_paused(&mut config, true, ctx);
+            config::set_paused(&mut config, false, ctx);
+            config::set_paused(&mut config, false, ctx);
+            test_scenario::return_shared(config);
+        };
+
+        test_scenario::end(scenario);
+    }
+
+    #[test]
+    fun test_repeated_emergency_pause_does_not_bump_version_without_state_change() {
+        let mut scenario = test_scenario::begin(ADDR_ADMIN);
+        setup_test(&mut scenario);
+
+        test_scenario::next_tx(&mut scenario, ADDR_ADMIN);
+        {
+            let mut config = test_scenario::take_shared<Config>(&scenario);
+            let ctx = test_scenario::ctx(&mut scenario);
+            config::set_paused(&mut config, true, ctx);
+            assert!(config::config_version(&config) == 1, 71);
+            config::set_paused(&mut config, true, ctx);
+            assert!(config::config_version(&config) == 1, 72);
+            test_scenario::return_shared(config);
+        };
+
+        test_scenario::end(scenario);
+    }
+
+    #[test]
+    #[expected_failure(abort_code = ENoPendingPause, location = stelis::config)]
+    fun test_unpause_when_already_unpaused_does_not_queue() {
+        let mut scenario = test_scenario::begin(ADDR_ADMIN);
+        setup_test(&mut scenario);
+
+        test_scenario::next_tx(&mut scenario, ADDR_ADMIN);
+        {
+            let mut config = test_scenario::take_shared<Config>(&scenario);
+            let ctx = test_scenario::ctx(&mut scenario);
+            config::set_paused(&mut config, false, ctx);
+            assert!(config::config_version(&config) == 0, 75);
+            test_scenario::return_shared(config);
+        };
+
+        test_scenario::next_epoch(&mut scenario, ADDR_RELAYER);
+        test_scenario::next_epoch(&mut scenario, ADDR_RELAYER);
+        {
+            let mut config = test_scenario::take_shared<Config>(&scenario);
+            let ctx = test_scenario::ctx(&mut scenario);
+            config::apply_paused_update(&mut config, ctx);
+            test_scenario::return_shared(config);
+        };
+
         test_scenario::end(scenario);
     }
 
@@ -1417,6 +1839,82 @@ module stelis::settle_tests {
         let max_price: u64 = 9_223_372_036_854_775_807; // (1<<63)-1
         let bid: u64 = 9_200_000_000_000_000_000;
         settle::assert_spread_ok_from_prices(bid, max_price, 500);
+    }
+
+    #[test]
+    fun test_spread_cumulative_base_for_quote_passes() {
+        settle::assert_base_for_quote_spread_ok_from_book(
+            vector[9_900_000_000, 9_800_000_000],
+            vector[50_000_000_000, 50_000_000_000],
+            vector[10_000_000_000],
+            vector[100_000_000_000],
+            100_000_000_000,
+            500,
+        );
+    }
+
+    #[test]
+    #[expected_failure(abort_code = ESpreadTooWide, location = stelis::settle)]
+    fun test_spread_cumulative_base_for_quote_rejects_full_input_wide() {
+        settle::assert_base_for_quote_spread_ok_from_book(
+            vector[9_900_000_000, 9_000_000_000],
+            vector[10_000_000_000, 90_000_000_000],
+            vector[10_000_000_000],
+            vector[100_000_000_000],
+            100_000_000_000,
+            500,
+        );
+    }
+
+    #[test]
+    #[expected_failure(abort_code = ESpreadTooWide, location = stelis::settle)]
+    fun test_spread_cumulative_base_for_quote_rejects_insufficient_liquidity() {
+        settle::assert_base_for_quote_spread_ok_from_book(
+            vector[9_900_000_000, 9_800_000_000],
+            vector[50_000_000_000, 50_000_000_000],
+            vector[10_000_000_000],
+            vector[100_000_000_000],
+            101_000_000_000,
+            500,
+        );
+    }
+
+    #[test]
+    #[expected_failure(abort_code = ESpreadTooWide, location = stelis::settle)]
+    fun test_spread_cumulative_base_for_quote_rejects_one_sided_book() {
+        settle::assert_base_for_quote_spread_ok_from_book(
+            vector[9_900_000_000],
+            vector[100_000_000_000],
+            vector[],
+            vector[],
+            100_000_000_000,
+            500,
+        );
+    }
+
+    #[test]
+    fun test_spread_cumulative_quote_for_base_passes() {
+        settle::assert_quote_for_base_spread_ok_from_book(
+            vector[9_800_000_000],
+            vector[100_000_000_000],
+            vector[10_000_000_000, 10_100_000_000],
+            vector[5_000_000_000, 5_000_000_000],
+            100_500_000_000,
+            500,
+        );
+    }
+
+    #[test]
+    #[expected_failure(abort_code = ESpreadTooWide, location = stelis::settle)]
+    fun test_spread_cumulative_quote_for_base_rejects_full_input_wide() {
+        settle::assert_quote_for_base_spread_ok_from_book(
+            vector[9_800_000_000],
+            vector[100_000_000_000],
+            vector[10_000_000_000, 11_000_000_000],
+            vector[1_000_000_000, 9_000_000_000],
+            109_000_000_000,
+            500,
+        );
     }
 
     // === withdraw_amount Tests ===
@@ -1577,7 +2075,7 @@ module stelis::settle_tests {
             let mut rogue = test_scenario::take_from_sender_by_id<UserVault>(&scenario, vault_ids[1]);
             let ctx = test_scenario::ctx(&mut scenario);
             let coin_in = coin::mint_for_testing<SUI>(100_000_000, ctx);
-            
+
             settle::settle_with_vault_for_testing(
                 &config, &registry, &clock, &mut rogue, coin_in, 0, ADDR_RELAYER,
                 vector[], 1, 0, 0, 0, 0, 0, 0, 0, vector[], vector[], 0, ctx
@@ -1721,6 +2219,202 @@ module stelis::settle_tests {
             );
 
             assert!(vault::balance(&vault) == 998_000_000, 20);
+            test_scenario::return_shared(config);
+            test_scenario::return_shared(registry);
+            test_scenario::return_to_sender(&scenario, vault);
+        };
+
+        clock::destroy_for_testing(clock);
+        test_scenario::end(scenario);
+    }
+
+    #[test]
+    fun test_settle_with_credit_below_min_settle_success() {
+        let mut scenario = test_scenario::begin(ADDR_ADMIN);
+        setup_test(&mut scenario);
+        let mut clock = clock::create_for_testing(test_scenario::ctx(&mut scenario));
+        clock::set_for_testing(&mut clock, 1000);
+
+        test_scenario::next_tx(&mut scenario, ADDR_USER);
+        {
+            let config = test_scenario::take_shared<Config>(&scenario);
+            let mut registry = test_scenario::take_shared<VaultRegistry>(&scenario);
+            let ctx = test_scenario::ctx(&mut scenario);
+            let coin_in = coin::mint_for_testing<SUI>(1_000_000_000, ctx);
+            settle::settle_for_testing(
+                &config, &mut registry, &clock, coin_in, 0, ADDR_RELAYER,
+                vector[], 1, 0, 0, 0, 0, 0, 0, 0, vector[], vector[], ctx
+            );
+            test_scenario::return_shared(config);
+            test_scenario::return_shared(registry);
+        };
+
+        test_scenario::next_tx(&mut scenario, ADDR_USER);
+        {
+            let config = test_scenario::take_shared<Config>(&scenario);
+            let registry = test_scenario::take_shared<VaultRegistry>(&scenario);
+            let mut vault = test_scenario::take_from_sender<UserVault>(&scenario);
+            let ctx = test_scenario::ctx(&mut scenario);
+
+            settle::settle_with_credit(
+                &config, &registry, &clock, &mut vault,
+                500, // below default min_settle_mist
+                100,
+                ADDR_RELAYER,
+                vector[], 2, 0, 0, 0, 0, 0, 0, 0, vector[], vector[], ctx
+            );
+
+            assert!(vault::balance(&vault) == 999_999_900, 21);
+            test_scenario::return_shared(config);
+            test_scenario::return_shared(registry);
+            test_scenario::return_to_sender(&scenario, vault);
+        };
+
+        clock::destroy_for_testing(clock);
+        test_scenario::end(scenario);
+    }
+
+    #[test]
+    #[expected_failure(abort_code = ERelayerFeeCapExceeded, location = stelis::settle)]
+    fun test_settle_with_credit_fee_cap_rejection() {
+        let mut scenario = test_scenario::begin(ADDR_ADMIN);
+        setup_test(&mut scenario);
+        let mut clock = clock::create_for_testing(test_scenario::ctx(&mut scenario));
+        clock::set_for_testing(&mut clock, 1000);
+
+        test_scenario::next_tx(&mut scenario, ADDR_USER);
+        {
+            let config = test_scenario::take_shared<Config>(&scenario);
+            let mut registry = test_scenario::take_shared<VaultRegistry>(&scenario);
+            let ctx = test_scenario::ctx(&mut scenario);
+            let coin_in = coin::mint_for_testing<SUI>(1_000_000_000, ctx);
+            settle::settle_for_testing(
+                &config, &mut registry, &clock, coin_in, 0, ADDR_RELAYER,
+                vector[], 1, 0, 0, 0, 0, 0, 0, 0, vector[], vector[], ctx
+            );
+            test_scenario::return_shared(config);
+            test_scenario::return_shared(registry);
+        };
+
+        test_scenario::next_tx(&mut scenario, ADDR_USER);
+        {
+            let config = test_scenario::take_shared<Config>(&scenario);
+            let registry = test_scenario::take_shared<VaultRegistry>(&scenario);
+            let mut vault = test_scenario::take_from_sender<UserVault>(&scenario);
+            let ctx = test_scenario::ctx(&mut scenario);
+            settle::settle_with_credit(
+                &config, &registry, &clock, &mut vault,
+                1_000_000,
+                100,
+                ADDR_RELAYER,
+                vector[], 2, 0, 0, 0,
+                1, // quoted_relayer_fee_mist exceeds default cap 0
+                0, 0, 0, vector[], vector[], ctx
+            );
+            test_scenario::return_shared(config);
+            test_scenario::return_shared(registry);
+            test_scenario::return_to_sender(&scenario, vault);
+        };
+
+        clock::destroy_for_testing(clock);
+        test_scenario::end(scenario);
+    }
+
+    #[test]
+    #[expected_failure(abort_code = EConfigVersionMismatch, location = stelis::settle)]
+    fun test_settle_with_credit_config_version_mismatch() {
+        let mut scenario = test_scenario::begin(ADDR_ADMIN);
+        setup_test(&mut scenario);
+        let mut clock = clock::create_for_testing(test_scenario::ctx(&mut scenario));
+        clock::set_for_testing(&mut clock, 1000);
+
+        test_scenario::next_tx(&mut scenario, ADDR_USER);
+        {
+            let config = test_scenario::take_shared<Config>(&scenario);
+            let mut registry = test_scenario::take_shared<VaultRegistry>(&scenario);
+            let ctx = test_scenario::ctx(&mut scenario);
+            let coin_in = coin::mint_for_testing<SUI>(1_000_000_000, ctx);
+            settle::settle_for_testing(
+                &config, &mut registry, &clock, coin_in, 0, ADDR_RELAYER,
+                vector[], 1, 0, 0, 0, 0, 0, 0, 0, vector[], vector[], ctx
+            );
+            test_scenario::return_shared(config);
+            test_scenario::return_shared(registry);
+        };
+
+        test_scenario::next_tx(&mut scenario, ADDR_USER);
+        {
+            let config = test_scenario::take_shared<Config>(&scenario);
+            let registry = test_scenario::take_shared<VaultRegistry>(&scenario);
+            let mut vault = test_scenario::take_from_sender<UserVault>(&scenario);
+            let ctx = test_scenario::ctx(&mut scenario);
+            settle::settle_with_credit(
+                &config, &registry, &clock, &mut vault,
+                1_000_000,
+                100,
+                ADDR_RELAYER,
+                vector[], 2, 0, 0, 0, 0, 0,
+                99, // stale or forged expected_config_version
+                0, vector[], vector[], ctx
+            );
+            test_scenario::return_shared(config);
+            test_scenario::return_shared(registry);
+            test_scenario::return_to_sender(&scenario, vault);
+        };
+
+        clock::destroy_for_testing(clock);
+        test_scenario::end(scenario);
+    }
+
+    #[test]
+    #[expected_failure(abort_code = EReplayNonce, location = stelis::vault)]
+    fun test_settle_with_credit_nonce_replay_rejection() {
+        let mut scenario = test_scenario::begin(ADDR_ADMIN);
+        setup_test(&mut scenario);
+        let mut clock = clock::create_for_testing(test_scenario::ctx(&mut scenario));
+        clock::set_for_testing(&mut clock, 1000);
+
+        test_scenario::next_tx(&mut scenario, ADDR_USER);
+        {
+            let config = test_scenario::take_shared<Config>(&scenario);
+            let mut registry = test_scenario::take_shared<VaultRegistry>(&scenario);
+            let ctx = test_scenario::ctx(&mut scenario);
+            let coin_in = coin::mint_for_testing<SUI>(1_000_000_000, ctx);
+            settle::settle_for_testing(
+                &config, &mut registry, &clock, coin_in, 0, ADDR_RELAYER,
+                vector[], 1, 0, 0, 0, 0, 0, 0, 0, vector[], vector[], ctx
+            );
+            test_scenario::return_shared(config);
+            test_scenario::return_shared(registry);
+        };
+
+        test_scenario::next_tx(&mut scenario, ADDR_USER);
+        {
+            let config = test_scenario::take_shared<Config>(&scenario);
+            let registry = test_scenario::take_shared<VaultRegistry>(&scenario);
+            let mut vault = test_scenario::take_from_sender<UserVault>(&scenario);
+            let ctx = test_scenario::ctx(&mut scenario);
+            settle::settle_with_credit(
+                &config, &registry, &clock, &mut vault,
+                1_000_000, 100, ADDR_RELAYER,
+                vector[], 2, 0, 0, 0, 0, 0, 0, 0, vector[], vector[], ctx
+            );
+            test_scenario::return_shared(config);
+            test_scenario::return_shared(registry);
+            test_scenario::return_to_sender(&scenario, vault);
+        };
+
+        test_scenario::next_tx(&mut scenario, ADDR_USER);
+        {
+            let config = test_scenario::take_shared<Config>(&scenario);
+            let registry = test_scenario::take_shared<VaultRegistry>(&scenario);
+            let mut vault = test_scenario::take_from_sender<UserVault>(&scenario);
+            let ctx = test_scenario::ctx(&mut scenario);
+            settle::settle_with_credit(
+                &config, &registry, &clock, &mut vault,
+                1_000_000, 100, ADDR_RELAYER,
+                vector[], 2, 0, 0, 0, 0, 0, 0, 0, vector[], vector[], ctx
+            );
             test_scenario::return_shared(config);
             test_scenario::return_shared(registry);
             test_scenario::return_to_sender(&scenario, vault);
@@ -1877,6 +2571,7 @@ module stelis::settle_tests {
             config::update_config(&mut config, 0, 0, max_claim, 1_000_000, 500, ctx);
             test_scenario::return_shared(config);
         };
+        advance_two_epochs_and_apply_config(&mut scenario, ADDR_RELAYER);
 
         // 2. Create vault
         test_scenario::next_tx(&mut scenario, ADDR_USER);
@@ -2041,6 +2736,15 @@ module stelis::settle_tests {
             let mut config = test_scenario::take_shared<Config>(&scenario);
             let ctx = test_scenario::ctx(&mut scenario);
             config::update_protocol_treasury(&mut config, @0xDEAD, ctx);
+            assert!(config::protocol_treasury(&config) == ADDR_ADMIN, 51);
+            test_scenario::return_shared(config);
+        };
+
+        advance_two_epochs_and_apply_treasury(&mut scenario, ADDR_RELAYER);
+
+        test_scenario::next_tx(&mut scenario, ADDR_ADMIN);
+        {
+            let config = test_scenario::take_shared<Config>(&scenario);
             // Verify via getter
             assert!(config::protocol_treasury(&config) == @0xDEAD, 50);
             test_scenario::return_shared(config);

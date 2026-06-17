@@ -9,6 +9,7 @@ module stelis::config {
     const INITIAL_MAX_CLAIM_MIST: u64 = 75_000_000; // see docs/parameters.md
     // Minimum allowed min_settle_mist (dust spam prevention)
     const MIN_SETTLE_MIST: u64 = 1_000; // see docs/parameters.md
+    const ADMIN_UPDATE_DELAY_EPOCHS: u64 = 2;
 
     // Errors
     const EInvalidMaxClaim: u64 = 2;
@@ -22,6 +23,37 @@ module stelis::config {
     const EInvalidSpreadBps: u64 = 8;
     /// propose_admin called while pending_admin is already set.
     const EPendingAdminExists: u64 = 9;
+    const EPendingConfigExists: u64 = 10;
+    const ENoPendingConfig: u64 = 11;
+    const EConfigUpdateNotReady: u64 = 12;
+    const EPendingTreasuryExists: u64 = 13;
+    const ENoPendingTreasury: u64 = 14;
+    const ETreasuryUpdateNotReady: u64 = 15;
+    const EPendingPauseExists: u64 = 16;
+    const ENoPendingPause: u64 = 17;
+    const EPauseUpdateNotReady: u64 = 18;
+
+    public struct PendingConfigUpdate has copy, drop, store {
+        max_relayer_fee_mist: u64,
+        protocol_flat_fee_mist: u64,
+        max_claim_mist: u64,
+        min_settle_mist: u64,
+        max_spread_bps: u64,
+        queued_epoch: u64,
+        apply_epoch: u64,
+    }
+
+    public struct PendingTreasuryUpdate has copy, drop, store {
+        protocol_treasury: address,
+        queued_epoch: u64,
+        apply_epoch: u64,
+    }
+
+    public struct PendingPauseUpdate has copy, drop, store {
+        paused: bool,
+        queued_epoch: u64,
+        apply_epoch: u64,
+    }
 
     // --- Structs ---
 
@@ -42,9 +74,12 @@ module stelis::config {
         /// Only applies to swap paths; credit-only paths are unaffected.
         max_spread_bps: u64,
         paused: bool,
-        /// Monotonically increasing version. Incremented on every update_config call.
+        /// Monotonically increasing version. Incremented when protocol state changes.
         /// Used by settle.move to detect config drift between /prepare and /sponsor.
         config_version: u64,
+        pending_config_update: Option<PendingConfigUpdate>,
+        pending_treasury_update: Option<PendingTreasuryUpdate>,
+        pending_pause_update: Option<PendingPauseUpdate>,
     }
 
     // --- Init ---
@@ -64,6 +99,9 @@ module stelis::config {
             max_spread_bps: 500,          // see docs/parameters.md
             paused: false,
             config_version: 0,
+            pending_config_update: option::none(),
+            pending_treasury_update: option::none(),
+            pending_pause_update: option::none(),
         };
 
         transfer::share_object(config);
@@ -74,15 +112,76 @@ module stelis::config {
 
     public fun set_paused(config: &mut Config, paused: bool, ctx: &mut TxContext) {
         assert!(ctx.sender() == config.admin, ENotAdmin);
-        config.paused = paused;
-        events::emit_paused_event(paused, ctx.sender(), ctx.epoch());
+        if (paused) {
+            let had_pending_pause = option::is_some(&config.pending_pause_update);
+            if (had_pending_pause) {
+                option::extract(&mut config.pending_pause_update);
+            };
+            let was_paused = config.paused;
+            config.paused = true;
+            if (!was_paused || had_pending_pause) {
+                config.config_version = config.config_version + 1;
+            };
+            events::emit_paused_event(true, ctx.sender(), ctx.epoch());
+            return
+        };
+        assert!(option::is_none(&config.pending_pause_update), EPendingPauseExists);
+        if (!config.paused) {
+            return
+        };
+        let queued_epoch = ctx.epoch();
+        config.pending_pause_update = option::some(PendingPauseUpdate {
+            paused,
+            queued_epoch,
+            apply_epoch: queued_epoch + ADMIN_UPDATE_DELAY_EPOCHS,
+        });
+    }
+
+    public fun apply_paused_update(config: &mut Config, ctx: &mut TxContext) {
+        assert!(option::is_some(&config.pending_pause_update), ENoPendingPause);
+        let pending = *option::borrow(&config.pending_pause_update);
+        assert!(ctx.epoch() >= pending.apply_epoch, EPauseUpdateNotReady);
+        option::extract(&mut config.pending_pause_update);
+        config.paused = pending.paused;
+        config.config_version = config.config_version + 1;
+        events::emit_paused_event(pending.paused, ctx.sender(), ctx.epoch());
+    }
+
+    public fun cancel_paused_update(config: &mut Config, ctx: &mut TxContext) {
+        assert!(ctx.sender() == config.admin, ENotAdmin);
+        assert!(option::is_some(&config.pending_pause_update), ENoPendingPause);
+        option::extract(&mut config.pending_pause_update);
     }
 
     public fun update_protocol_treasury(config: &mut Config, new_treasury: address, ctx: &mut TxContext) {
         assert!(ctx.sender() == config.admin, ENotAdmin);
+        assert!(option::is_none(&config.pending_treasury_update), EPendingTreasuryExists);
+        if (config.protocol_treasury == new_treasury) {
+            return
+        };
+        let queued_epoch = ctx.epoch();
+        config.pending_treasury_update = option::some(PendingTreasuryUpdate {
+            protocol_treasury: new_treasury,
+            queued_epoch,
+            apply_epoch: queued_epoch + ADMIN_UPDATE_DELAY_EPOCHS,
+        });
+    }
+
+    public fun apply_protocol_treasury_update(config: &mut Config, ctx: &mut TxContext) {
+        assert!(option::is_some(&config.pending_treasury_update), ENoPendingTreasury);
+        let pending = *option::borrow(&config.pending_treasury_update);
+        assert!(ctx.epoch() >= pending.apply_epoch, ETreasuryUpdateNotReady);
+        option::extract(&mut config.pending_treasury_update);
         let old_treasury = config.protocol_treasury;
-        config.protocol_treasury = new_treasury;
-        events::emit_treasury_updated_event(old_treasury, new_treasury, ctx.sender(), ctx.epoch());
+        config.protocol_treasury = pending.protocol_treasury;
+        config.config_version = config.config_version + 1;
+        events::emit_treasury_updated_event(old_treasury, pending.protocol_treasury, ctx.sender(), ctx.epoch());
+    }
+
+    public fun cancel_protocol_treasury_update(config: &mut Config, ctx: &mut TxContext) {
+        assert!(ctx.sender() == config.admin, ENotAdmin);
+        assert!(option::is_some(&config.pending_treasury_update), ENoPendingTreasury);
+        option::extract(&mut config.pending_treasury_update);
     }
 
     /// Step 1 — propose a new admin (only current admin can call)
@@ -123,6 +222,7 @@ module stelis::config {
         ctx: &mut TxContext
     ) {
         assert!(ctx.sender() == config.admin, ENotAdmin);
+        assert!(option::is_none(&config.pending_config_update), EPendingConfigExists);
         assert!(new_max_claim_mist <= MAX_CLAIM_MIST, EInvalidMaxClaim);
         // E-7: max_claim_mist > 0
         assert!(new_max_claim_mist > 0, EInvalidMaxClaim);
@@ -139,35 +239,68 @@ module stelis::config {
         // Spread cap must be positive and at or below the full-BPS ceiling.
         assert!(new_max_spread_bps > 0 && new_max_spread_bps <= 10_000, EInvalidSpreadBps);
 
+        if (
+            config.max_relayer_fee_mist == new_max_relayer_fee_mist &&
+            config.protocol_flat_fee_mist == new_protocol_flat_fee_mist &&
+            config.max_claim_mist == new_max_claim_mist &&
+            config.min_settle_mist == new_min_settle_mist &&
+            config.max_spread_bps == new_max_spread_bps
+        ) {
+            return
+        };
+
+        let queued_epoch = ctx.epoch();
+        config.pending_config_update = option::some(PendingConfigUpdate {
+            max_relayer_fee_mist: new_max_relayer_fee_mist,
+            protocol_flat_fee_mist: new_protocol_flat_fee_mist,
+            max_claim_mist: new_max_claim_mist,
+            min_settle_mist: new_min_settle_mist,
+            max_spread_bps: new_max_spread_bps,
+            queued_epoch,
+            apply_epoch: queued_epoch + ADMIN_UPDATE_DELAY_EPOCHS,
+        });
+    }
+
+    public fun apply_config_update(config: &mut Config, ctx: &mut TxContext) {
+        assert!(option::is_some(&config.pending_config_update), ENoPendingConfig);
+        let pending = *option::borrow(&config.pending_config_update);
+        assert!(ctx.epoch() >= pending.apply_epoch, EConfigUpdateNotReady);
+        option::extract(&mut config.pending_config_update);
+
         let old_max_relayer_fee = config.max_relayer_fee_mist;
         let old_proto_fee = config.protocol_flat_fee_mist;
         let old_max = config.max_claim_mist;
         let old_min = config.min_settle_mist;
         let old_spread = config.max_spread_bps;
 
-        config.max_relayer_fee_mist = new_max_relayer_fee_mist;
-        config.protocol_flat_fee_mist = new_protocol_flat_fee_mist;
-        config.max_claim_mist = new_max_claim_mist;
-        config.min_settle_mist = new_min_settle_mist;
-        config.max_spread_bps = new_max_spread_bps;
-        // Increment config_version on every update so settle.move can detect drift.
+        config.max_relayer_fee_mist = pending.max_relayer_fee_mist;
+        config.protocol_flat_fee_mist = pending.protocol_flat_fee_mist;
+        config.max_claim_mist = pending.max_claim_mist;
+        config.min_settle_mist = pending.min_settle_mist;
+        config.max_spread_bps = pending.max_spread_bps;
         config.config_version = config.config_version + 1;
 
         events::emit_config_updated_event(
             old_max_relayer_fee,
-            new_max_relayer_fee_mist,
+            pending.max_relayer_fee_mist,
             old_proto_fee,
-            new_protocol_flat_fee_mist,
+            pending.protocol_flat_fee_mist,
             old_max,
-            new_max_claim_mist,
+            pending.max_claim_mist,
             old_min,
-            new_min_settle_mist,
+            pending.min_settle_mist,
             old_spread,
-            new_max_spread_bps,
+            pending.max_spread_bps,
             config.config_version,
             ctx.sender(),
             ctx.epoch(),
         );
+    }
+
+    public fun cancel_config_update(config: &mut Config, ctx: &mut TxContext) {
+        assert!(ctx.sender() == config.admin, ENotAdmin);
+        assert!(option::is_some(&config.pending_config_update), ENoPendingConfig);
+        option::extract(&mut config.pending_config_update);
     }
 
     // --- Getter functions ---
