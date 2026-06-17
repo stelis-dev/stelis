@@ -12,7 +12,8 @@
  *                                      PX = ttlMs + PREPARE_STORE_KEY_TTL_GRACE_MS
  *   {prefix}ip:{clientIp}           → JSON([{pid, slotId, issuedAt}])
  *                                      PX = ttlMs * PREPARE_STORE_INDEX_TTL_MULTIPLIER
- *   {prefix}sender:{senderAddress}  → JSON([{pid, slotId, issuedAt, nonce}])
+ *   {prefix}sender:{senderAddress}  → JSON([{pid, slotId, issuedAt, nonce}] plus
+ *                                      pending [{pid, nonce, pending, t}])
  *                                      PX = ttlMs * PREPARE_STORE_INDEX_TTL_MULTIPLIER
  *   {prefix}user:{userId}           → JSON([{pid, issuedAt}]) for promotion mode
  *                                      PX = ttlMs * PREPARE_STORE_INDEX_TTL_MULTIPLIER
@@ -122,7 +123,11 @@ end
 local liveSender = {}
 for _, item in ipairs(senderList) do
   if item.pending then
-    liveSender[#liveSender + 1] = item
+    if item.t and (item.t + ttlMs < nowMs) then
+      -- Stale pending reservation — drop
+    else
+      liveSender[#liveSender + 1] = item
+    end
   elseif item.t and (item.t + ttlMs < nowMs) then
     -- Logical TTL expired — drop even if physical key still exists
   elseif redis.call('EXISTS', prefix .. item.pid) == 1 then
@@ -260,6 +265,78 @@ for _, item in ipairs(userList) do
 end
 
 return live
+`;
+
+/**
+ * EVICT_PREPARED_ENTRY_SCRIPT — atomically removes one prepared entry
+ * and all Redis-side index references recoverable from its JSON.
+ *
+ * KEYS[1] = entry key
+ * ARGV[1] = receiptId, ARGV[2] = prefix, ARGV[3] = ttlMs
+ *
+ * Returns the raw entry JSON for slot release evidence, or nil when the
+ * entry is already absent. Malformed JSON still deletes the entry key;
+ * parseable current/unsupported shapes also clean IP, sender, and
+ * promotion-user indexes in the same Redis snapshot.
+ */
+const EVICT_PREPARED_ENTRY_SCRIPT = `
+local entryKey = KEYS[1]
+local pid = ARGV[1]
+local prefix = ARGV[2]
+local ttlMs = tonumber(ARGV[3])
+
+local raw = redis.call('GET', entryKey)
+if not raw then return nil end
+redis.call('DEL', entryKey)
+
+local ok, entry = pcall(cjson.decode, raw)
+if not ok or type(entry) ~= 'table' then
+  return raw
+end
+
+local timeResult = redis.call('TIME')
+local nowMs = tonumber(timeResult[1]) * 1000 + math.floor(tonumber(timeResult[2]) / 1000)
+
+local function rewriteList(key, removePid)
+  if not key or key == '' then return end
+  local listRaw = redis.call('GET', key)
+  if not listRaw then return end
+  local decodedOk, list = pcall(cjson.decode, listRaw)
+  if not decodedOk or type(list) ~= 'table' then return end
+
+  local updated = {}
+  for _, item in ipairs(list) do
+    if item.pid ~= removePid then
+      if item.pending then
+        if item.t and (item.t + ttlMs >= nowMs) then
+          updated[#updated + 1] = item
+        end
+      elseif item.t and (item.t + ttlMs < nowMs) then
+        -- Logical TTL expired — drop
+      elseif item.pid and redis.call('EXISTS', prefix .. item.pid) == 1 then
+        updated[#updated + 1] = item
+      end
+    end
+  end
+
+  if #updated == 0 then
+    redis.call('DEL', key)
+  else
+    redis.call('SET', key, cjson.encode(updated), 'KEEPTTL')
+  end
+end
+
+if entry.clientIp then
+  rewriteList(prefix .. 'ip:' .. entry.clientIp, pid)
+end
+if entry.senderAddress then
+  rewriteList(prefix .. 'sender:' .. entry.senderAddress, pid)
+end
+if entry.mode == 'promotion' and entry.userId then
+  rewriteList(prefix .. 'user:' .. entry.userId, pid)
+end
+
+return raw
 `;
 
 // CONSUME_SCRIPT is defined at the bottom of the file as CONSUME_SCRIPT_WITH_IP
@@ -572,8 +649,7 @@ export class RedisPrepareStore implements PrepareStoreAdapter {
     const ttlMs = options.ttlMs ?? PREPARE_TTL_MS;
     const maxPerIp = options.maxPerIp ?? MAX_CONCURRENT_PER_IP;
     const maxPerStudioUser = options.maxPerStudioUser ?? MAX_OUTSTANDING_PER_STUDIO_USER;
-    const maxOutstandingPerSender =
-      options.maxOutstandingPerSender ?? MAX_OUTSTANDING_PER_SENDER;
+    const maxOutstandingPerSender = options.maxOutstandingPerSender ?? MAX_OUTSTANDING_PER_SENDER;
     if (!Number.isSafeInteger(ttlMs) || ttlMs <= 0) {
       throw new Error('RedisPrepareStore: ttlMs must be > 0 and a safe integer');
     }
@@ -587,9 +663,7 @@ export class RedisPrepareStore implements PrepareStoreAdapter {
       throw new Error('RedisPrepareStore: maxPerStudioUser must be >= 1 and a safe integer');
     }
     if (!Number.isSafeInteger(maxOutstandingPerSender) || maxOutstandingPerSender < 1) {
-      throw new Error(
-        'RedisPrepareStore: maxOutstandingPerSender must be >= 1 and a safe integer',
-      );
+      throw new Error('RedisPrepareStore: maxOutstandingPerSender must be >= 1 and a safe integer');
     }
 
     this._client = client;
@@ -732,7 +806,7 @@ export class RedisPrepareStore implements PrepareStoreAdapter {
       | 'hash_mismatch_undeserializable'
       | 'consume_success_undeserializable'
       | 'undeserializable_eviction',
-  ): void {
+  ): Promise<void> {
     const slot = extractSlotInfoFromRawEntry(rawJson);
     if (!slot) {
       // Cannot find slot identity — slot will only be reclaimed by lease TTL.
@@ -748,9 +822,9 @@ export class RedisPrepareStore implements PrepareStoreAdapter {
         },
         'warn',
       );
-      return;
+      return Promise.resolve();
     }
-    void invokeReleaseCallback({
+    return invokeReleaseCallback({
       onRelease: this._onRelease,
       slotId: slot.slotId,
       receiptId: slot.receiptId,
@@ -813,7 +887,7 @@ export class RedisPrepareStore implements PrepareStoreAdapter {
           });
         }
       } catch {
-        this._releaseSlotFromRawEntry(entryJson, 'prepare_expired_undeserializable');
+        void this._releaseSlotFromRawEntry(entryJson, 'prepare_expired_undeserializable');
       }
       return 'expired';
     }
@@ -839,7 +913,7 @@ export class RedisPrepareStore implements PrepareStoreAdapter {
           });
         }
       } catch {
-        this._releaseSlotFromRawEntry(entryJson, 'hash_mismatch_undeserializable');
+        void this._releaseSlotFromRawEntry(entryJson, 'hash_mismatch_undeserializable');
       }
       return 'hash_mismatch';
     }
@@ -851,7 +925,7 @@ export class RedisPrepareStore implements PrepareStoreAdapter {
     try {
       return deserializeEntry(str);
     } catch (err) {
-      this._releaseSlotFromRawEntry(str, 'consume_success_undeserializable');
+      void this._releaseSlotFromRawEntry(str, 'consume_success_undeserializable');
       throw err;
     }
   }
@@ -880,25 +954,26 @@ export class RedisPrepareStore implements PrepareStoreAdapter {
    */
   async evictPreparedEntry(receiptId: string): Promise<void> {
     const entryKey = this.entryKey(receiptId);
-    let raw: string | null = null;
+    let raw: string | null | undefined;
     try {
-      raw = await this._client.get(entryKey);
+      raw = (await this._client.eval(
+        EVICT_PREPARED_ENTRY_SCRIPT,
+        [entryKey],
+        [receiptId, this._keyPrefix, String(this._ttlMs)],
+      )) as string | null | undefined;
     } catch {
-      // Read failure on the failure path is already final.
+      // Failure path contract: eviction must not mask the primary
+      // sponsor error. The entry keeps its physical TTL if Redis is
+      // unavailable during this best-effort cleanup.
       return;
     }
     if (!raw) return;
 
-    // Try to recover slot identity from the raw shape. If the JSON itself
-    // is unparseable we still attempt the DELETE so the entry stops
-    // occupying the receiptId slot.
-    this._releaseSlotFromRawEntry(raw, 'undeserializable_eviction');
-
-    try {
-      await this._client.del(entryKey);
-    } catch {
-      // Tolerate DEL failure — the entry will reach physical TTL anyway.
-    }
+    // Lua already deleted the entry and cleaned recoverable indexes in
+    // one Redis operation. The returned raw entry is the slot-release
+    // evidence; malformed JSON simply falls through to the unrecoverable
+    // slot-info path.
+    await this._releaseSlotFromRawEntry(raw, 'undeserializable_eviction');
   }
 
   /**
@@ -1001,7 +1076,7 @@ export class RedisPrepareStore implements PrepareStoreAdapter {
       local timeResult = redis.call('TIME')
       local nowMs = tonumber(timeResult[1]) * 1000 + math.floor(tonumber(timeResult[2]) / 1000)
 
-      -- Compact sender-local metadata: keep pending + logically-live entries only.
+      -- Compact sender-local metadata: keep non-expired pending + logically-live entries only.
       -- Logical TTL (issuedAt + ttlMs) takes precedence over physical key existence.
       local senderMax = '0'
       local senderRaw = redis.call('GET', senderKey)
@@ -1010,9 +1085,11 @@ export class RedisPrepareStore implements PrepareStoreAdapter {
         local senderList = cjson.decode(senderRaw)
         for _, item in ipairs(senderList) do
           if item.pending then
-            compacted[#compacted + 1] = item
-            if item.nonce ~= nil then
-              senderMax = maxDecStrings(senderMax, item.nonce)
+            if item.t and (item.t + ttlMs >= nowMs) then
+              compacted[#compacted + 1] = item
+              if item.nonce ~= nil then
+                senderMax = maxDecStrings(senderMax, item.nonce)
+              end
             end
           elseif item.t and (item.t + ttlMs < nowMs) then
             -- Logical TTL expired — drop even if physical key still exists
@@ -1033,7 +1110,7 @@ export class RedisPrepareStore implements PrepareStoreAdapter {
       local nextNonce = addOneDecString(base)
 
       -- Add pending reservation to sender-local metadata
-      compacted[#compacted + 1] = { pid = resId, nonce = nextNonce, pending = true }
+      compacted[#compacted + 1] = { pid = resId, nonce = nextNonce, pending = true, t = nowMs }
       redis.call('SET', senderKey, cjson.encode(compacted), 'PX', senderPx)
 
       return nextNonce

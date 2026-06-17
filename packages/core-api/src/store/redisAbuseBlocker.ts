@@ -15,6 +15,7 @@ import type {
 import type { RedisClientLike } from './redisClient.js';
 import { type Clock, systemClock } from '../clock.js';
 import { validateAbuseBlockerConfig } from './abuseBlockConfig.js';
+import { FIXED_WINDOW_INCR_SCRIPT, parseFixedWindowResult } from './redisFixedWindowCounter.js';
 
 interface RedisBlockEntry {
   reason: string;
@@ -184,10 +185,9 @@ export class RedisAbuseBlocker implements AbuseBlockerAdapter {
   }
 
   private async incrementWindowCounter(key: string, windowMs: number): Promise<number> {
-    const current = await this._client.incr(key);
-    if (current === 1) {
-      await this._client.pexpire(key, windowMs);
-    }
+    const { current } = parseFixedWindowResult(
+      await this._client.eval(FIXED_WINDOW_INCR_SCRIPT, [key], [String(windowMs)]),
+    );
     return current;
   }
 

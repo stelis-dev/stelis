@@ -84,6 +84,24 @@ describe('Redis-backed adapters — real Redis conformance', () => {
     });
   });
 
+  it('RedisAbuseBlocker — installs fixed-window counter TTL on the first failure record', async () => {
+    const blocker = new RedisAbuseBlocker(redis!.client, {
+      addressDryRunThreshold: 10,
+      addressDryRunWindowMs: 1_000,
+      addressBlockDurationMs: 60_000,
+      ipFailureThreshold: 10,
+      ipFailureWindowMs: 1_000,
+      ipBlockDurationMs: 60_000,
+    });
+    const ip = '198.51.100.10';
+
+    await blocker.recordSponsorFailure(ip, undefined, 'PREFLIGHT_FAILED');
+
+    const pttl = Number(await redis!.rawClient.sendCommand(['PTTL', `stelis:abuse:ip_fail:${ip}`]));
+    expect(pttl).toBeGreaterThan(0);
+    expect(pttl).toBeLessThanOrEqual(1_000);
+  });
+
   it('RedisPrepareInflight — shares capacity across instances through one Redis ZSET', async () => {
     const keyPrefix = `test:inflight:${randomUUID()}:`;
     const instanceA = new RedisPrepareInflight(redis!.client, 1, { keyPrefix });
@@ -261,5 +279,77 @@ describe('Redis-backed adapters — real Redis conformance', () => {
     expect(peeked!.txBytesHash).toBe('hash-integ-4');
 
     await store.releaseReservation('integ-pay-004b', sender);
+  });
+
+  it('RedisPrepareStore — ignores stale pending reservations when reserving the next nonce', async () => {
+    const keyPrefix = `test:ps:${randomUUID()}:`;
+    const sender = '0xPENDING_TTL';
+    const store = new RedisPrepareStore(redis!.client, () => {}, {
+      keyPrefix,
+      ttlMs: 500,
+      maxOutstandingPerSender: 10,
+    });
+
+    await expect(store.reserveNonce(sender, 0n, 'pending-old')).resolves.toBe(1n);
+    await sleep(550);
+    await expect(redis!.client.get(`${keyPrefix}sender:${sender}`)).resolves.not.toBeNull();
+
+    await expect(store.reserveNonce(sender, 0n, 'pending-new')).resolves.toBe(1n);
+    await store.releaseReservation('pending-new', sender);
+  });
+
+  it('RedisPrepareStore — evictPreparedEntry deletes entry and cleans related indexes atomically', async () => {
+    const keyPrefix = `test:ps:${randomUUID()}:`;
+    const released: Array<{ slotId: string; receiptId: string; txBytesHash: string | null }> = [];
+    const store = new RedisPrepareStore(
+      redis!.client,
+      (slotId, receiptId, txBytesHash) => {
+        released.push({ slotId, receiptId, txBytesHash });
+      },
+      {
+        keyPrefix,
+        ttlMs: 60_000,
+        maxPerIp: 5,
+        maxPerStudioUser: 1,
+        maxOutstandingPerSender: 10,
+      },
+    );
+
+    const sender = '0xEVICT_SENDER';
+    const userId = 'studio-user-evict';
+    await store.store('evict-pay-001', {
+      issuedAt: Date.now(),
+      receiptId: 'evict-pay-001',
+      nonce: 1n,
+      reservedGasMist: 2_000_000n,
+      executionPathKey: 'promotion-sponsored',
+      txBytesHash: 'hash-evict',
+      slotId: 'slot-evict',
+      sponsorAddress: '0xSP',
+      clientIp: '10.0.0.42',
+      orderId: null,
+      senderAddress: sender,
+      mode: 'promotion',
+      promotionId: 'promotion-evict',
+      userId,
+    });
+
+    await expect(store.checkUserQuota(userId)).resolves.toEqual({ exceeded: true, limit: 1 });
+
+    await store.evictPreparedEntry('evict-pay-001');
+
+    expect(released).toEqual([
+      { slotId: 'slot-evict', receiptId: 'evict-pay-001', txBytesHash: 'hash-evict' },
+    ]);
+    await expect(redis!.client.get(`${keyPrefix}evict-pay-001`)).resolves.toBeNull();
+    await expect(redis!.client.get(`${keyPrefix}ip:10.0.0.42`)).resolves.toBeNull();
+    await expect(redis!.client.get(`${keyPrefix}sender:${sender}`)).resolves.toBeNull();
+    await expect(redis!.client.get(`${keyPrefix}user:${userId}`)).resolves.toBeNull();
+    await expect(store.checkUserQuota(userId)).resolves.toBe('ok');
+    await expect(store.reserveNonce(sender, 0n, 'after-evict')).resolves.toBe(1n);
+    await store.releaseReservation('after-evict', sender);
+
+    await store.evictPreparedEntry('evict-pay-001');
+    expect(released).toHaveLength(1);
   });
 });

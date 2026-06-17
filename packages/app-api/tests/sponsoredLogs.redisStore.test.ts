@@ -10,7 +10,7 @@ function makeKnownEntry(
 ): SponsoredExecutionLogEntry {
   return {
     schemaVersion: 1,
-    createdAt: '2026-04-26T16:00:00.000Z',
+    createdAt: overrides.createdAt ?? '2026-04-26T16:00:00.000Z',
     mode: overrides.mode ?? 'generic',
     outcome: overrides.outcome ?? 'success',
     receiptId: overrides.receiptId,
@@ -106,6 +106,8 @@ describe('RedisSponsoredLogsStore — append script wiring', () => {
     expect(typeof script).toBe('string');
     expect(script).toMatch(/SET',\s*idempotencyKey,\s*'1',\s*'NX'\)/);
     expect(script).not.toMatch(/'PX'/);
+    expect(script).toContain('table.sort');
+    expect(script).toContain('createdAt');
   });
 
   it('marks isKnown=0 and zero deltas for unknown economics', async () => {
@@ -210,9 +212,9 @@ describe('RedisSponsoredLogsStore — getRecent script wiring', () => {
   it('parses JSON entries newest-first up to limit', async () => {
     const { client, evalSpy } = makeMockRedis();
     evalSpy.mockResolvedValueOnce([
-      JSON.stringify(makeKnownEntry({ receiptId: 'r3' })),
-      JSON.stringify(makeKnownEntry({ receiptId: 'r2' })),
-      JSON.stringify(makeKnownEntry({ receiptId: 'r1' })),
+      JSON.stringify(makeKnownEntry({ receiptId: 'r1', createdAt: '2026-04-26T15:00:00Z' })),
+      JSON.stringify(makeKnownEntry({ receiptId: 'r3', createdAt: '2026-04-26T15:00:02Z' })),
+      JSON.stringify(makeKnownEntry({ receiptId: 'r2', createdAt: '2026-04-26T15:00:01Z' })),
     ]);
     const store = new RedisSponsoredLogsStore(client);
     const entries = await store.getRecent('all', 2);
@@ -224,13 +226,27 @@ describe('RedisSponsoredLogsStore — getRecent script wiring', () => {
   it('filters by mode (skips non-matching JSON rows)', async () => {
     const { client, evalSpy } = makeMockRedis();
     evalSpy.mockResolvedValueOnce([
-      JSON.stringify(makeKnownEntry({ receiptId: 'g1', mode: 'generic' })),
-      JSON.stringify(makeKnownEntry({ receiptId: 'p1', mode: 'promotion' })),
-      JSON.stringify(makeKnownEntry({ receiptId: 'g2', mode: 'generic' })),
+      JSON.stringify(
+        makeKnownEntry({
+          receiptId: 'p-old',
+          mode: 'promotion',
+          createdAt: '2026-04-26T15:00:01Z',
+        }),
+      ),
+      JSON.stringify(
+        makeKnownEntry({ receiptId: 'g1', mode: 'generic', createdAt: '2026-04-26T15:00:03Z' }),
+      ),
+      JSON.stringify(
+        makeKnownEntry({
+          receiptId: 'p-new',
+          mode: 'promotion',
+          createdAt: '2026-04-26T15:00:02Z',
+        }),
+      ),
     ]);
     const store = new RedisSponsoredLogsStore(client);
     const entries = await store.getRecent('promotion', 5);
-    expect(entries.map((e) => e.receiptId)).toEqual(['p1']);
+    expect(entries.map((e) => e.receiptId)).toEqual(['p-new', 'p-old']);
   });
 
   it('mode-filter requests the full retained list (no limit*k truncation)', async () => {

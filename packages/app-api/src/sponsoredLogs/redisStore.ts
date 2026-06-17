@@ -4,7 +4,7 @@
  * All writes go through a single Lua script so that:
  *   - idempotency check (`SET NX`, no TTL),
  *   - per-mode + all-mode aggregate updates (`HINCRBY` on int64 string fields),
- *   - recent-list append + cap (`LPUSH` + `LTRIM`)
+ *   - recent-list append + createdAt sort + cap
  * are atomic per emit. This mirrors `RedisPromotionExecutionLedger`'s
  * Lua-atomic money update pattern.
  *
@@ -17,7 +17,7 @@
  *     fields: sponsoredExecutions, cumulativeRelayerNetMist,
  *             cumulativeLossMist, lossCount   (int64 string)
  *   stelis:sponsored_logs:recent                           LIST
- *     newest-first JSON-serialised SponsoredExecutionLogEntry, capped.
+ *     createdAt newest-first JSON-serialised SponsoredExecutionLogEntry, capped.
  *   stelis:sponsored_logs:idem:{mode|receiptId|outcome}    STRING (NX, no TTL)
  *
  * Idempotency contract: the idem key is set with `NX` and no TTL so the
@@ -95,7 +95,25 @@ if isKnown == '1' then
 end
 
 redis.call('LPUSH', recentKey, entryJson)
-redis.call('LTRIM', recentKey, 0, recentCap - 1)
+local rows = redis.call('LRANGE', recentKey, 0, -1)
+table.sort(rows, function(a, b)
+  local okA, entryA = pcall(cjson.decode, a)
+  local okB, entryB = pcall(cjson.decode, b)
+  local createdA = ''
+  local createdB = ''
+  if okA and type(entryA) == 'table' and type(entryA.createdAt) == 'string' then
+    createdA = entryA.createdAt
+  end
+  if okB and type(entryB) == 'table' and type(entryB.createdAt) == 'string' then
+    createdB = entryB.createdAt
+  end
+  return createdA > createdB
+end)
+redis.call('DEL', recentKey)
+local keep = math.min(#rows, recentCap)
+for i = 1, keep do
+  redis.call('RPUSH', recentKey, rows[i])
+end
 
 return 1
 `.trim();
@@ -131,6 +149,13 @@ function aggKey(mode: SponsoredExecutionAggregateMode): string {
 
 function idemKey(entry: SponsoredExecutionLogEntry): string {
   return `${IDEM_PREFIX}:${sponsoredLogIdempotencyKey(entry)}`;
+}
+
+function compareCreatedAtDesc(
+  a: SponsoredExecutionLogEntry,
+  b: SponsoredExecutionLogEntry,
+): number {
+  return b.createdAt.localeCompare(a.createdAt);
 }
 
 export interface RedisSponsoredLogsStoreOptions {
@@ -223,11 +248,15 @@ export class RedisSponsoredLogsStore implements SponsoredLogsStoreAdapter {
         continue;
       }
       if (!isLogEntry(parsed)) continue;
-      if (mode !== 'all' && parsed.mode !== (mode as SponsoredExecutionMode)) continue;
       entries.push(parsed);
-      if (entries.length >= limit) break;
     }
-    return entries;
+    entries.sort(compareCreatedAtDesc);
+    if (mode === 'all') {
+      return entries.slice(0, limit);
+    }
+    return entries
+      .filter((entry) => entry.mode === (mode as SponsoredExecutionMode))
+      .slice(0, limit);
   }
 }
 
@@ -236,6 +265,7 @@ function isLogEntry(value: unknown): value is SponsoredExecutionLogEntry {
   const v = value as Partial<SponsoredExecutionLogEntry>;
   return (
     v.schemaVersion === 1 &&
+    typeof v.createdAt === 'string' &&
     typeof v.mode === 'string' &&
     (v.mode === 'generic' || v.mode === 'promotion') &&
     typeof v.outcome === 'string' &&

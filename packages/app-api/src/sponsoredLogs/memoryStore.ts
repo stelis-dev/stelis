@@ -48,6 +48,13 @@ function freezeAggregate(
   };
 }
 
+function compareCreatedAtDesc(
+  a: SponsoredExecutionLogEntry,
+  b: SponsoredExecutionLogEntry,
+): number {
+  return b.createdAt.localeCompare(a.createdAt);
+}
+
 export interface MemorySponsoredLogsStoreOptions {
   /**
    * Recent-list cap. Older entries past this index are dropped on
@@ -110,8 +117,9 @@ export class MemorySponsoredLogsStore implements SponsoredLogsStoreAdapter {
       }
     }
 
-    // Recent — newest-first, bounded.
+    // Recent — newest-first by createdAt, bounded.
     this.recent.unshift(entry);
+    this.recent.sort(compareCreatedAtDesc);
     if (this.recent.length > this.recentCap) {
       this.recent.length = this.recentCap;
     }

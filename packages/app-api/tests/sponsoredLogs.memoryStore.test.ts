@@ -14,7 +14,7 @@ function makeKnownEntry(
 ): SponsoredExecutionLogEntry {
   return {
     schemaVersion: 1,
-    createdAt: '2026-04-26T16:00:00.000Z',
+    createdAt: overrides.createdAt ?? '2026-04-26T16:00:00.000Z',
     mode: overrides.mode,
     outcome: overrides.outcome ?? 'success',
     receiptId: overrides.receiptId,
@@ -46,7 +46,7 @@ function makeUnknownEntry(
 ): SponsoredExecutionLogEntry {
   return {
     schemaVersion: 1,
-    createdAt: '2026-04-26T16:00:00.000Z',
+    createdAt: overrides.createdAt ?? '2026-04-26T16:00:00.000Z',
     mode: overrides.mode,
     outcome: overrides.outcome ?? 'success',
     receiptId: overrides.receiptId,
@@ -356,10 +356,10 @@ describe('MemorySponsoredLogsStore — recent list', () => {
   it('returns newest-first up to limit', async () => {
     const store = new MemorySponsoredLogsStore();
     await store.append(
-      makeKnownEntry({ receiptId: 'r1', mode: 'generic', createdAt: '2026-04-26T15:00:00Z' }),
+      makeKnownEntry({ receiptId: 'r2', mode: 'promotion', createdAt: '2026-04-26T15:00:01Z' }),
     );
     await store.append(
-      makeKnownEntry({ receiptId: 'r2', mode: 'promotion', createdAt: '2026-04-26T15:00:01Z' }),
+      makeKnownEntry({ receiptId: 'r1', mode: 'generic', createdAt: '2026-04-26T15:00:00Z' }),
     );
     await store.append(
       makeKnownEntry({ receiptId: 'r3', mode: 'generic', createdAt: '2026-04-26T15:00:02Z' }),
@@ -373,9 +373,15 @@ describe('MemorySponsoredLogsStore — recent list', () => {
 
   it('filters by mode', async () => {
     const store = new MemorySponsoredLogsStore();
-    await store.append(makeKnownEntry({ receiptId: 'r1', mode: 'generic' }));
-    await store.append(makeKnownEntry({ receiptId: 'r2', mode: 'promotion' }));
-    await store.append(makeKnownEntry({ receiptId: 'r3', mode: 'generic' }));
+    await store.append(
+      makeKnownEntry({ receiptId: 'r3', mode: 'generic', createdAt: '2026-04-26T15:00:03Z' }),
+    );
+    await store.append(
+      makeKnownEntry({ receiptId: 'r1', mode: 'generic', createdAt: '2026-04-26T15:00:01Z' }),
+    );
+    await store.append(
+      makeKnownEntry({ receiptId: 'r2', mode: 'promotion', createdAt: '2026-04-26T15:00:02Z' }),
+    );
 
     const generic = await store.getRecent('generic', 10);
     expect(generic.map((e) => e.receiptId)).toEqual(['r3', 'r1']);
@@ -385,8 +391,14 @@ describe('MemorySponsoredLogsStore — recent list', () => {
 
   it('caps recent list at recentCap and drops oldest', async () => {
     const store = new MemorySponsoredLogsStore({ recentCap: 3 });
-    for (let i = 0; i < 5; i++) {
-      await store.append(makeKnownEntry({ receiptId: `r${i}`, mode: 'generic' }));
+    for (const [receiptId, createdAt] of [
+      ['r0', '2026-04-26T15:00:00Z'],
+      ['r4', '2026-04-26T15:00:04Z'],
+      ['r1', '2026-04-26T15:00:01Z'],
+      ['r3', '2026-04-26T15:00:03Z'],
+      ['r2', '2026-04-26T15:00:02Z'],
+    ] as const) {
+      await store.append(makeKnownEntry({ receiptId, mode: 'generic', createdAt }));
     }
     const recent = await store.getRecent('all', 10);
     expect(recent.map((e) => e.receiptId)).toEqual(['r4', 'r3', 'r2']);

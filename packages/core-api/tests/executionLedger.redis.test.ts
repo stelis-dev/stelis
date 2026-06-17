@@ -40,6 +40,39 @@ describe('RedisPromotionExecutionLedger — real Redis conformance', () => {
     },
   );
 
+  describe('reserve — Redis reservation TTL', () => {
+    beforeEach(async () => {
+      await redis!.flush();
+    });
+
+    it('stores the reservation coordination record with a physical TTL', async () => {
+      const client = redis!.client;
+      const ledger = new RedisPromotionExecutionLedger(client, 100, 999_999_999);
+
+      await ledger.claim('ttl-promo', 'ttl-user', {
+        maxParticipants: 1,
+        perUserGasAllowanceMist: '5000000',
+        useUntilAt: null,
+      });
+      const reserve = await ledger.reserve({
+        promotionId: 'ttl-promo',
+        userId: 'ttl-user',
+        receiptId: 'ttl-receipt',
+        amountMist: 1_000_000n,
+      });
+      expect(reserve.ok).toBe(true);
+
+      const pttl = Number(
+        await redis!.rawClient.sendCommand([
+          'PTTL',
+          'stelis:promotion_execution_ledger:res:ttl-receipt',
+        ]),
+      );
+      expect(pttl).toBeGreaterThan(0);
+      expect(pttl).toBeLessThanOrEqual(120_100);
+    });
+  });
+
   // ─────────────────────────────────────────────
   // Redis claim status re-check
   // ─────────────────────────────────────────────

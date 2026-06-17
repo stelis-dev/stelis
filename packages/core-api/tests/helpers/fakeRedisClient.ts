@@ -247,7 +247,10 @@ export class FakeRedisClient implements RedisClientLike {
       const liveSender: Array<Record<string, unknown>> = [];
       for (const item of senderList) {
         if ((item as Record<string, unknown>).pending) {
-          liveSender.push(item);
+          const t = (item as Record<string, unknown>).t;
+          if (typeof t === 'number' && t + ttlMs >= nowMs) {
+            liveSender.push(item);
+          }
         } else if (
           typeof (item as Record<string, unknown>).t === 'number' &&
           ((item as Record<string, unknown>).t as number) + ttlMs < nowMs
@@ -350,17 +353,19 @@ export class FakeRedisClient implements RedisClientLike {
       const maxOutstandingPerSender = Number(args[5] ?? '3');
       const reserveNowMs = Date.now();
 
-      // Compact: keep pending + logically-live entries only (same as real Lua)
+      // Compact: keep non-expired pending + logically-live entries only (same as real Lua)
       let senderMax = 0n;
       const senderRaw = senderKey ? await this.get(senderKey) : null;
       const rawList: Array<Record<string, unknown>> = senderRaw ? JSON.parse(senderRaw) : [];
       const senderList: Array<Record<string, unknown>> = [];
       for (const item of rawList) {
         if (item.pending) {
-          senderList.push(item);
-          if (item.nonce != null) {
-            const nonce = BigInt(item.nonce as string);
-            if (nonce > senderMax) senderMax = nonce;
+          if (typeof item.t === 'number' && item.t + reserveTtlMs >= reserveNowMs) {
+            senderList.push(item);
+            if (item.nonce != null) {
+              const nonce = BigInt(item.nonce as string);
+              if (nonce > senderMax) senderMax = nonce;
+            }
           }
         } else if (typeof item.t === 'number' && (item.t as number) + reserveTtlMs < reserveNowMs) {
           // Logical TTL expired — drop
@@ -388,10 +393,75 @@ export class FakeRedisClient implements RedisClientLike {
       const next = (onchain > senderMax ? onchain : senderMax) + 1n;
 
       // Add pending reservation to sender-local metadata
-      senderList.push({ pid: resId, nonce: next.toString(), pending: true });
+      senderList.push({ pid: resId, nonce: next.toString(), pending: true, t: reserveNowMs });
       await this.set(senderKey, JSON.stringify(senderList), { px: senderPx });
 
       return next.toString();
+    }
+
+    // ── RedisPrepareStore EVICT_PREPARED_ENTRY_SCRIPT emulation ──
+    if (script.includes('local function rewriteList') && script.includes('return raw')) {
+      const entryKey = keys[0];
+      const pid = args[0] ?? '';
+      const prefix = args[1] ?? '';
+      const ttlMs = Number(args[2] ?? '60000');
+      const raw = await this.get(entryKey);
+      if (raw === null) return null;
+      await this.del(entryKey);
+
+      let entry: Record<string, unknown>;
+      try {
+        entry = JSON.parse(raw) as Record<string, unknown>;
+      } catch {
+        return raw;
+      }
+
+      const nowMs = Date.now();
+      const rewriteList = async (key: string) => {
+        const listRaw = await this.get(key);
+        if (!listRaw) return;
+        let list: Array<Record<string, unknown>>;
+        try {
+          list = JSON.parse(listRaw) as Array<Record<string, unknown>>;
+        } catch {
+          return;
+        }
+        const updated: Array<Record<string, unknown>> = [];
+        for (const item of list) {
+          if (item.pid === pid) continue;
+          if (item.pending) {
+            if (typeof item.t === 'number' && item.t + ttlMs >= nowMs) {
+              updated.push(item);
+            }
+          } else if (typeof item.t === 'number' && item.t + ttlMs < nowMs) {
+            // Logical TTL expired — drop
+          } else if (item.pid && (await this.get(prefix + String(item.pid))) !== null) {
+            updated.push(item);
+          }
+        }
+        if (updated.length === 0) {
+          await this.del(key);
+        } else {
+          const currentTtl = this.pttl(key);
+          await this.set(
+            key,
+            JSON.stringify(updated),
+            currentTtl > 0 ? { px: currentTtl } : undefined,
+          );
+        }
+      };
+
+      if (typeof entry.clientIp === 'string') {
+        await rewriteList(prefix + 'ip:' + entry.clientIp);
+      }
+      if (typeof entry.senderAddress === 'string') {
+        await rewriteList(prefix + 'sender:' + entry.senderAddress);
+      }
+      if (entry.mode === 'promotion' && typeof entry.userId === 'string') {
+        await rewriteList(prefix + 'user:' + entry.userId);
+      }
+
+      return raw;
     }
 
     // ── RedisPrepareStore releaseReservation emulation ──

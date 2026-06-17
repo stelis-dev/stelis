@@ -24,7 +24,7 @@
  *   stelis:promotion_execution_ledger:budget:{promotionId}:avail       → int64 (available)
  *   stelis:promotion_execution_ledger:budget:{promotionId}:res_total   → int64 (reserved total)
  *   stelis:promotion_execution_ledger:budget:{promotionId}:con_total   → int64 (consumed total)
- *   stelis:promotion_execution_ledger:res:{receiptId}                   → JSON({promotionId,userId,amountMist,expiresAt})
+ *   stelis:promotion_execution_ledger:res:{receiptId}                   → JSON({promotionId,userId,amountMist,expiresAt}) with PX
  *   stelis:promotion_execution_ledger:terminal:{receiptId}              → "consumed"|"released" (with PX)
  *
  * Precision: All money arithmetic uses DECRBY/INCRBY (int64).
@@ -205,7 +205,7 @@ return 0
  * Atomic: budget deduct + entitlement deduct + reservation record.
  *
  * KEYS: [budgetAvail, entMeta, entRem, entRes, resKey, terminalKey, budgetResTotal]
- * ARGV: [amountMist, receiptId, promotionId, userId, ttlMs]
+ * ARGV: [amountMist, receiptId, promotionId, userId, ttlMs, reservationKeyTtlMs]
  *
  * Returns: 'OK' | 0(budget_insufficient) | 10(ent_not_found) | 11(ent_not_active)
  *          | 12(concurrent_reservation) | 13(ent_insufficient)
@@ -258,6 +258,7 @@ local coordData = cjson.encode({
   expiresAt = expiresAt
 })
 redis.call('SET', KEYS[5], coordData)
+redis.call('PEXPIRE', KEYS[5], ARGV[6])
 
 -- Commit: entitlement reservation marker
 redis.call('SET', KEYS[4], ARGV[2] .. ':' .. ARGV[1])
@@ -600,7 +601,14 @@ export class RedisPromotionExecutionLedger implements PromotionExecutionLedger {
         terminalKey(receiptId),
         budgetResTotalKey(promotionId),
       ],
-      [amountMist.toString(), receiptId, promotionId, userId, this.ttlMs.toString()],
+      [
+        amountMist.toString(),
+        receiptId,
+        promotionId,
+        userId,
+        this.ttlMs.toString(),
+        this.terminalTtlMs.toString(),
+      ],
     );
 
     if (result === 'OK') {

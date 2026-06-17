@@ -328,6 +328,21 @@ export function runLedgerConformanceTests(
       );
     });
 
+    it('accounts overrun as max(0, actual - reserved) without changing response meaning', async () => {
+      const actualGas = RESERVE_AMOUNT + 200_000n;
+      const result = await ledger.consume('receipt-1', actualGas);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      const expectedTotal = 10n * BigInt(PER_USER_ALLOWANCE);
+      const budget = await ledger.getBudgetSummary(PROMO_ID);
+      expect(budget.availableMist).toBe(expectedTotal - actualGas);
+      expect(budget.reservedMist).toBe(0n);
+      expect(budget.consumedMist).toBe(actualGas);
+      expect(result.entitlement.activeReservationReceiptId).toBeNull();
+      expect(result.entitlement.consumedGasAllowanceMist).toBe(actualGas.toString());
+    });
+
     it('clamps budget.available to 0 when overrun exceeds remaining budget', async () => {
       // Use a fresh promotion so the clamp scenario is isolated from the
       // suite-wide `beforeEach` reservation. Budget total = 1 * 2M = 2M.
