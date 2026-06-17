@@ -8,12 +8,9 @@
  * Tests verify the behavioral contract, not implementation details.
  *
  * Test count visibility: `runLedgerConformanceTests()` registers the shared
- * `it()` cases. Callers wrap the call inside their own `describe` (or
- * `describeIfReady` / `describe.skip` gate). When a Redis-gated wrapper such
- * as `executionLedger.redis.test.ts` skips, all shared cases register as
- * skipped under that wrapper. This indirection is the reason a full
- * `npm test` run can report skipped tests from a single wrapper file even
- * though the count is not visible from `it.skip` grep against that wrapper.
+ * `it()` cases. Redis callers run this suite through the non-skippable
+ * `test:redis` command, so Redis startup failure must surface as a failed
+ * conformance run rather than skipped tests.
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';

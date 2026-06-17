@@ -3,85 +3,39 @@
  *
  * Runs the shared conformance suite against the Redis implementation.
  * Uses redis-memory-server for isolated test instances.
- * Gracefully skipped if redis/redis-memory-server are not available.
+ * Redis startup failure is a test failure; this file is part of the
+ * non-skippable real Redis authority behind `test:redis`.
  */
 
-import { createRequire } from 'node:module';
-import { createServer } from 'node:net';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { wrapRedisClient } from '../src/store/redisClient.js';
-import type { RawRedisClient } from '../src/store/redisClient.js';
 import { RedisPromotionExecutionLedger } from '../src/studio/executionLedgerRedis.js';
 import { RedisPromotionStore } from '../src/studio/promotionStore.js';
 import { runLedgerConformanceTests } from './executionLedger.conformance.js';
+import { startRealRedis, type RealRedisHandle } from './helpers/realRedis.js';
 
-const require = createRequire(import.meta.url);
-
-type RedisModule = typeof import('redis');
-type RedisMemoryServerModule = {
-  RedisMemoryServer: new () => {
-    getHost(): Promise<string>;
-    getPort(): Promise<number>;
-    stop(): Promise<void>;
-  };
-};
-
-let redisModule: RedisModule | null = null;
-let redisMemoryServerModule: RedisMemoryServerModule | null = null;
-
-try {
-  redisModule = require('redis') as RedisModule;
-  redisMemoryServerModule = require('redis-memory-server') as RedisMemoryServerModule;
-} catch {
-  // Optional: skipped if not installed
-}
-
-async function canBindLocalPort(): Promise<boolean> {
-  return new Promise((resolve) => {
-    const server = createServer();
-    server.once('error', () => resolve(false));
-    server.listen(0, '127.0.0.1', () => {
-      server.close(() => resolve(true));
-    });
-  });
-}
-
-const canRun = await canBindLocalPort();
-const describeIfReady = redisModule && redisMemoryServerModule && canRun ? describe : describe.skip;
-
-describeIfReady('RedisPromotionExecutionLedger', () => {
-  let server: InstanceType<RedisMemoryServerModule['RedisMemoryServer']> | null = null;
-  let rawClient: Awaited<ReturnType<RedisModule['createClient']>> | null = null;
+describe('RedisPromotionExecutionLedger — real Redis conformance', () => {
+  let redis: RealRedisHandle | null = null;
 
   beforeAll(async () => {
-    server = new redisMemoryServerModule!.RedisMemoryServer();
-    const host = await server.getHost();
-    const port = await server.getPort();
-    rawClient = redisModule!.createClient({ url: `redis://${host}:${port}` });
-    await rawClient.connect();
+    redis = await startRealRedis();
   });
 
   afterAll(async () => {
-    if (rawClient?.isOpen) {
-      await rawClient.quit();
-    }
-    if (server) {
-      await server.stop();
-    }
+    await redis?.stop();
   });
 
   runLedgerConformanceTests(
     // Normal factory: fresh Redis state per test via FLUSHDB
     async () => {
-      await rawClient!.sendCommand(['FLUSHDB']);
-      const client = wrapRedisClient(rawClient! as unknown as RawRedisClient);
+      await redis!.flush();
+      const client = redis!.client;
       // Disable reaper (very long interval) for normal tests
       return new RedisPromotionExecutionLedger(client, 60_000, 999_999_999);
     },
     // Sweep factory: TTL=0 so reservations expire immediately
     async () => {
-      await rawClient!.sendCommand(['FLUSHDB']);
-      const client = wrapRedisClient(rawClient! as unknown as RawRedisClient);
+      await redis!.flush();
+      const client = redis!.client;
       return new RedisPromotionExecutionLedger(client, 0, 999_999_999);
     },
   );
@@ -92,11 +46,11 @@ describeIfReady('RedisPromotionExecutionLedger', () => {
 
   describe('claim — promotion_not_active race closure (Redis-only)', () => {
     beforeEach(async () => {
-      await rawClient!.sendCommand(['FLUSHDB']);
+      await redis!.flush();
     });
 
     it('rejects claim with promotion_not_active when canonical record has status !== "active"', async () => {
-      const client = wrapRedisClient(rawClient! as unknown as RawRedisClient);
+      const client = redis!.client;
       const store = new RedisPromotionStore(client);
       const record = await store.create({
         type: 'gas_sponsorship',
@@ -137,7 +91,7 @@ describeIfReady('RedisPromotionExecutionLedger', () => {
     });
 
     it('rejects claim with promotion_not_active when canonical record is missing', async () => {
-      const client = wrapRedisClient(rawClient! as unknown as RawRedisClient);
+      const client = redis!.client;
       const store = new RedisPromotionStore(client);
 
       const ledger = new RedisPromotionExecutionLedger(
@@ -160,7 +114,7 @@ describeIfReady('RedisPromotionExecutionLedger', () => {
     });
 
     it('succeeds when canonical record has status === "active"', async () => {
-      const client = wrapRedisClient(rawClient! as unknown as RawRedisClient);
+      const client = redis!.client;
       const store = new RedisPromotionStore(client);
       const record = await store.create({
         type: 'gas_sponsorship',

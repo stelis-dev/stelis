@@ -11,6 +11,9 @@ interface FakeRedisEntry {
  * It intentionally supports only the subset used by Stelis adapters:
  * `GET`, `SET NX PX`, `DEL`, `INCR`, `PEXPIRE`, and the small Lua scripts
  * embedded in the Redis-backed stores.
+ *
+ * This is not production Redis semantics evidence. Real Redis conformance
+ * lives in `*.redis.test.ts` and runs through `test:redis`.
  */
 export class FakeRedisClient implements RedisClientLike {
   private readonly _store = new Map<string, FakeRedisEntry>();
