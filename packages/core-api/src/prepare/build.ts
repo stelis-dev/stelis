@@ -13,7 +13,6 @@
  * so each pass creates a fresh Transaction.
  */
 import { Transaction } from '@mysten/sui/transactions';
-import type { SuiGrpcClient } from '@mysten/sui/grpc';
 import type { RelayerCostEstimate, SimulationGasUsed } from '@stelis/core-relay';
 import type { SingleHopSettlementSwapPath, SettleProfile } from '@stelis/contracts';
 import type {
@@ -60,7 +59,26 @@ import type { PrefixUsage, SettlePlanAuditFields } from './settlePlanTypes.js';
 import { logStructuredEvent } from '../structuredEventLog.js';
 import { PREPARE_BUILD_STAGE } from '../observability/events.js';
 import { createHash } from 'crypto';
-import { mist, unBps, type Bps, type Mist } from '../internal/brand.js';
+import { mist, unBps, type Mist } from '../internal/brand.js';
+import type {
+  BuildContext,
+  GenericPrepareBuildOutput,
+  GenericPrepareBuildRequest,
+} from './buildTypes.js';
+export type {
+  BuildContext,
+  GenericPrepareBuildOutput,
+  GenericPrepareBuildRequest,
+} from './buildTypes.js';
+import {
+  absorbPassRpcStats,
+  emptyBuildRpcAccumulator,
+  emptyPreparePassRpcStats,
+  emptyQuoteRpcStats,
+  summarizeRpcStats,
+  type BuildRpcAccumulator,
+  type PreparePassRpcStats,
+} from './buildRpcStats.js';
 
 const DECIMAL_MIST_RE = /^(?:0|[1-9]\d*)$/;
 
@@ -112,92 +130,6 @@ function buildBfqFloorPayload(
     target_output_mist: quote.targetOutputMist.toString(),
     effective_target_output_mist: quote.effectiveTargetOutputMist.toString(),
   };
-}
-
-// ─────────────────────────────────────────────
-// Types
-// ─────────────────────────────────────────────
-
-/** Context needed for the build phase */
-export interface BuildContext {
-  sui: SuiGrpcClient;
-  packageId: string;
-  configId: string;
-  vaultRegistryId: string;
-  deepbookPackageId: string;
-  relayerRecipientAddress: string;
-  maxClaimMist: bigint;
-  /** On-chain min_settle_mist. Used for INSUFFICIENT_SETTLE_INPUT meta. */
-  minSettleMist: bigint;
-  /**
-   * Relayer-quoted fee (MIST) per TX — set from RELAYER_FEE_MIST env var.
-   * Embedded in settle PTB as `quoted_relayer_fee_mist`.
-   */
-  quotedRelayerFeeMist: bigint;
-  /** Protocol flat fee in MIST. Used for requiredTotalIn calculation. */
-  protocolFlatFeeMist: bigint;
-  /**
-   * On-chain config_version. Embedded as expected_config_version in settle PTB.
-   * On-chain validates equality to detect config drift.
-   */
-  configVersion: bigint;
-}
-
-/** Input for the generic prepare build pipeline. */
-export interface GenericPrepareBuildRequest {
-  /** Deserialized user transaction (from replay.ts) */
-  userTxKindBytes: string;
-  senderAddress: string;
-  /** Swap pool config. Required for all settle paths. */
-  pool: SingleHopSettlementSwapPath;
-  /** Server-only static route descriptor used by market policy. */
-  descriptor: StaticPoolDescriptor;
-  sponsorAddress: string;
-  slippageBps: Bps;
-  gasMarginBps: Bps;
-  /** Profile determined by vault query */
-  profile: SettleProfile;
-  /** Vault object ID (null for new_user) */
-  vaultObjectId: string | null;
-  /** User credit amount (MIST, '0' for new_user) */
-  credit: string;
-  /** Receipt ID (32 bytes) */
-  receiptId: Uint8Array;
-  /** S-14: monotonic nonce for on-chain replay prevention */
-  nonce: bigint;
-  /** Policy hash (32 bytes) */
-  policyHash: Uint8Array;
-  /** Quote timestamp (ms since epoch) */
-  quoteTimestampMs: number;
-  /**
-   * Order ID hash (sha256 of orderId). Empty Uint8Array if no orderId.
-   */
-  orderIdHash?: Uint8Array;
-}
-
-/** Output from the generic prepare build pipeline. */
-export interface GenericPrepareBuildOutput {
-  txBytes: Uint8Array;
-  txBytesHash: string;
-  /**
-   * Branded `Mist`. Consumers inside `core-api` can read this as a
-   * bigint subtype without unwrapping; the brand prevents raw bigints
-   * from being written into this field from outside
-   * `core-api/src/internal/brand.ts`.
-   */
-  relayerClaim: Mist;
-  /** Branded `Mist`. */
-  simGas: Mist;
-  /** Gas variance fixed component (GAS_VARIANCE_FIXED_MIST) for on-chain embed. */
-  gasVarianceFixedMist: bigint;
-  /** Slippage buffer MIST (0 for credit-only settle). */
-  slippageBufferMist: bigint;
-  grossGas: bigint;
-  profile: SettleProfile;
-  /** How the payment token was sourced for this build. */
-  paymentInputSource: PaymentInputSource;
-  /** Final pass2 swap input amount. 0 for credit-only settlement. */
-  swapAmountSmallest: bigint;
 }
 
 /**
@@ -1211,121 +1143,6 @@ interface SettleAuditFields {
   expectedProtocolFeeMist: bigint;
   /** Expected config_version at quote time — drift detection. */
   expectedConfigVersion: bigint;
-}
-
-/**
- * Per-pass RPC accounting captured during one `runPreparePass` invocation.
- * `midPriceCalls` is 0 or 1 — one batchGetHopMidPrices fetch per pass at most,
- * and pass2 reuses pass1's prefetched prices. `quote` aggregates the
- * quantity-in / quantity-out_verify primitives from the wrapped market quote
- * port; it stays at zero values for credit branches that never reach the
- * solver.
- */
-interface PreparePassRpcStats {
-  midPriceCalls: number;
-  midPriceTotalMs: number;
-  quote: QuoteRpcStats;
-}
-
-function emptyQuoteRpcStats(): QuoteRpcStats {
-  return {
-    quantityInCalls: 0,
-    quantityOutVerifyCalls: 0,
-    totalDurationMs: 0,
-    maxDurationMs: 0,
-    quantityInLogicalCalls: 0,
-    quantityOutVerifyLogicalCalls: 0,
-    cacheHits: 0,
-  };
-}
-
-function emptyPreparePassRpcStats(): PreparePassRpcStats {
-  return {
-    midPriceCalls: 0,
-    midPriceTotalMs: 0,
-    quote: emptyQuoteRpcStats(),
-  };
-}
-
-/**
- * Request-scoped RPC accumulator for one /prepare invocation. Tracks
- * mid-price calls separately from per-pass quantity-in / quantity-out_verify
- * counts so the emit at `two_pass_complete` can carry both the per-pass
- * numbers and the aggregate sum.
- */
-interface BuildRpcAccumulator {
-  midPriceCalls: number;
-  midPriceTotalMs: number;
-  pass1Quote: QuoteRpcStats;
-  pass1_5Quote: QuoteRpcStats;
-  pass2Quote: QuoteRpcStats;
-}
-
-function emptyBuildRpcAccumulator(): BuildRpcAccumulator {
-  return {
-    midPriceCalls: 0,
-    midPriceTotalMs: 0,
-    pass1Quote: emptyQuoteRpcStats(),
-    pass1_5Quote: emptyQuoteRpcStats(),
-    pass2Quote: emptyQuoteRpcStats(),
-  };
-}
-
-function absorbPassRpcStats(acc: BuildRpcAccumulator, passStats: PreparePassRpcStats): void {
-  acc.midPriceCalls += passStats.midPriceCalls;
-  acc.midPriceTotalMs += passStats.midPriceTotalMs;
-}
-
-function summarizeRpcStats(acc: BuildRpcAccumulator): {
-  quoteQuantityInCalls: number;
-  quoteQuantityOutVerifyCalls: number;
-  quoteTotalRpcCalls: number;
-  quoteRpcTotalMs: number;
-  quoteRpcMaxMs: number;
-  quoteQuantityInLogicalCalls: number;
-  quoteQuantityOutVerifyLogicalCalls: number;
-  quoteCacheHits: number;
-} {
-  const quoteQuantityInCalls =
-    acc.pass1Quote.quantityInCalls +
-    acc.pass1_5Quote.quantityInCalls +
-    acc.pass2Quote.quantityInCalls;
-  const quoteQuantityOutVerifyCalls =
-    acc.pass1Quote.quantityOutVerifyCalls +
-    acc.pass1_5Quote.quantityOutVerifyCalls +
-    acc.pass2Quote.quantityOutVerifyCalls;
-  const quoteQuantityInLogicalCalls =
-    acc.pass1Quote.quantityInLogicalCalls +
-    acc.pass1_5Quote.quantityInLogicalCalls +
-    acc.pass2Quote.quantityInLogicalCalls;
-  const quoteQuantityOutVerifyLogicalCalls =
-    acc.pass1Quote.quantityOutVerifyLogicalCalls +
-    acc.pass1_5Quote.quantityOutVerifyLogicalCalls +
-    acc.pass2Quote.quantityOutVerifyLogicalCalls;
-  const quoteCacheHits =
-    acc.pass1Quote.cacheHits + acc.pass1_5Quote.cacheHits + acc.pass2Quote.cacheHits;
-  const quoteTotalRpcCalls = acc.midPriceCalls + quoteQuantityInCalls + quoteQuantityOutVerifyCalls;
-  const quoteRpcTotalMs =
-    acc.midPriceTotalMs +
-    acc.pass1Quote.totalDurationMs +
-    acc.pass1_5Quote.totalDurationMs +
-    acc.pass2Quote.totalDurationMs;
-  const quoteRpcMaxMs = Math.max(
-    acc.midPriceTotalMs,
-    acc.pass1Quote.maxDurationMs,
-    acc.pass1_5Quote.maxDurationMs,
-    acc.pass2Quote.maxDurationMs,
-  );
-  return {
-    quoteQuantityInCalls,
-    quoteQuantityOutVerifyCalls,
-    quoteTotalRpcCalls,
-    quoteRpcTotalMs,
-    quoteRpcMaxMs,
-    quoteQuantityInLogicalCalls,
-    quoteQuantityOutVerifyLogicalCalls,
-    quoteCacheHits,
-  };
 }
 
 /** Result of a single planner/compiler pass — tx + the effective settle path. */

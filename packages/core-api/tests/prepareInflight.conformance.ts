@@ -8,8 +8,8 @@
  * Backend-specific cases live in their respective entry files:
  *   - Memory: has no Redis-only analog (capacity check is trivial);
  *     entry is pure conformance plus a small impl-only sanity block.
- *   - Redis: TTL crash recovery (expired token prune), cross-instance
- *     cluster state, custom key prefix, and default TTL value stay in
+ *   - Redis: TTL crash recovery (expired token prune), shared Redis
+ *     state across app instances, custom key prefix, and default TTL value stay in
  *     `redisPrepareInflight.test.ts`.
  */
 

@@ -8,7 +8,7 @@
  *   - Bounded inflight count after prune (no impossible counts)
  *   - Custom key prefix routing
  *   - Default TTL value (`PREPARE_TTL_MS + 5000`)
- *   - Cross-instance cluster-state reconciliation via authoritative ZCARD
+ *   - Cross-instance shared-state reconciliation via authoritative ZCARD
  *
  * Uses an in-memory ZSET simulation to exercise the Lua script
  * semantics without a real Redis instance.
@@ -168,7 +168,7 @@ describe('RedisPrepareInflight — Redis-specific', () => {
     expect(args?.[1]).toBe('65000');
   });
 
-  it('cross-instance reject: B.inflight reflects actual cluster state from A', async () => {
+  it('cross-instance reject: B.inflight reflects shared Redis state from A', async () => {
     const instanceA = new RedisPrepareInflight(redis, 1);
     const instanceB = new RedisPrepareInflight(redis, 1);
 

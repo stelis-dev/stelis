@@ -4,7 +4,7 @@
  * The shared adapter contract is exercised by
  * `prepareInflight.conformance.ts`. Memory-only cases are limited to
  * constructor input validation because the memory backend has no
- * TTL / token-prune / cluster-state behavior to assert separately.
+ * TTL / token-prune / shared-state behavior to assert separately.
  */
 import { describe, expect, it } from 'vitest';
 import { MemoryPrepareInflight } from '../src/store/memoryPrepareInflight.js';

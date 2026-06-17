@@ -9,7 +9,7 @@
  * operations and releases capacity when each operation completes.
  *
  * Implementations:
- *   - `RedisPrepareInflight` — cluster-global, tokenized ZSET
+ *   - `RedisPrepareInflight` — shared Redis, tokenized ZSET
  *     reservation with TTL safety net. Required for production hosts;
  *     `app-api` injects this at boot.
  *   - `MemoryPrepareInflight` — single-process test-only fixture. Not

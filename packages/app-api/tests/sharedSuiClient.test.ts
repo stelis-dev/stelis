@@ -93,6 +93,7 @@ vi.mock('../src/redisClient.js', () => ({
 }));
 
 vi.mock('@stelis/core-api/prepareConfig', () => ({
+  createPreparePoolDescriptorMap: vi.fn().mockReturnValue(new Map()),
   resolvePrepareConfig: vi.fn().mockReturnValue({
     supportedSettlementSwapPaths: [],
     deepbookPackageId: '0xDEEPBOOK',

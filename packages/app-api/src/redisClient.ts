@@ -49,7 +49,7 @@ export async function createRedisClient(redisUrl: string): Promise<RedisClient> 
   // ── Topology probe (fail-closed) ─────────────────────────────────
   // Must run before wrapRedisClient() drops raw command access.
   // RedisPrepareStore.consume() uses dynamic Lua key access that Redis
-  // Cluster key routing cannot route safely. Boot must reject
+  // Multi-key Lua scripts require one writable Redis data endpoint. Boot must reject
   // unsupported topologies rather than relying on operator memory.
   try {
     await assertSupportedRedisTopology(client);
@@ -132,7 +132,7 @@ async function assertSupportedRedisTopology(client: RedisRuntimeClient): Promise
         'Stelis requires a standalone Redis data endpoint. ' +
         'Direct Redis Cluster and Sentinel endpoints are not supported. ' +
         'RedisPrepareStore.consume() uses dynamic Lua key access ' +
-        'that Redis Cluster key routing cannot route safely, and shared locks require one write authority.',
+        'that multi-key Lua scripts require one writable data endpoint, and shared locks require one write authority.',
     );
   }
 

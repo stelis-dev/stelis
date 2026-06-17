@@ -9,7 +9,7 @@
  * Key layout:
  *   {prefix}inflight:slots  → ZSET  member=token, score=acquireTimestampMs
  *
- * All operations use a single key, making this cluster-safe.
+ * All operations use a single shared Redis key.
  *
  * TTL safety net:
  *   Tokens older than `ttlMs` are pruned on every acquire call.

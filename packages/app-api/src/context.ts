@@ -32,7 +32,6 @@ import {
   type RelayerContext,
   type PreparedTxEntry,
 } from '@stelis/core-api';
-import { createStaticPoolDescriptorMap } from '@stelis/core-relay/server';
 import { STELIS_CONTRACT_IDS, DEEPBOOK_IDS } from '@stelis/contracts';
 import { executeSponsorSlotRefill } from './sponsor-operations/executeRefill.js';
 import { createSponsorOperationsRefillWorker } from './sponsor-operations/refillWorker.js';
@@ -49,7 +48,11 @@ import { bootstrapSponsorOperations } from './sponsor-operations/bootstrap.js';
 import type { SponsorAvailabilityView } from './sponsor-operations/gate.js';
 import { probeAndWriteSponsorRefillAccountState } from './sponsor-operations/sponsorRefillAccountProbe.js';
 import { parseChainBalanceMist } from './sponsor-operations/balanceParsing.js';
-import { resolvePrepareConfig, parseRelayerFeeEnv } from '@stelis/core-api/prepareConfig';
+import {
+  createPreparePoolDescriptorMap,
+  resolvePrepareConfig,
+  parseRelayerFeeEnv,
+} from '@stelis/core-api/prepareConfig';
 import {
   logStructuredEvent,
   PREPARE_STORE_EVICT_CLEANUP_FAILED,
@@ -304,7 +307,7 @@ async function initContext(): Promise<AppApiContext> {
       deepbookIds.packageId,
       settlementSwapPathRegistryPath,
     );
-    const poolDescriptors = createStaticPoolDescriptorMap(settlementSwapPaths);
+    const poolDescriptors = createPreparePoolDescriptorMap(settlementSwapPaths);
     // eslint-disable-next-line no-console
     console.log(
       `[app-api] Settlement swap path registry loaded: ${settlementSwapPaths.length} path(s) — ` +
@@ -319,7 +322,7 @@ async function initContext(): Promise<AppApiContext> {
       quotedRelayerFeeMist: parseRelayerFeeEnv(process.env.RELAYER_FEE_MIST),
     });
 
-    // ── 7. Prepare in-flight limiter (Redis-backed, cluster-global) ──
+    // ── 7. Prepare in-flight limiter (Redis-backed, shared across app instances) ──
     // Explicit injection — official runtime must not fall back to
     // MemoryPrepareInflight. The default preserves the existing
     // sponsor-slot-based capacity heuristic.

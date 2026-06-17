@@ -2,6 +2,7 @@ import type { SingleHopSettlementSwapPath } from '@stelis/contracts';
 import { SETTLEMENT_SWAP_DIRECTION_VECTORS } from '@stelis/contracts';
 import type { AllowedSettlementSwapPath } from '@stelis/core-relay';
 import type { StaticPoolDescriptor, StaticPoolDescriptorMap } from '@stelis/core-relay/server';
+import { createStaticPoolDescriptorMap } from '@stelis/core-relay/server';
 import type { PrepareHandlerConfig } from './handlers/prepare.js';
 
 /**
@@ -164,6 +165,16 @@ function assertPoolDescriptorCoverage(
       throw new Error(`[PREPARE_CONFIG] Unexpected StaticPoolDescriptor for ${tokenType}`);
     }
   }
+}
+
+/**
+ * Build the static pool descriptor map from host-loaded settlement swap paths.
+ * `core-api` owns the descriptor shape because prepare handlers consume it.
+ */
+export function createPreparePoolDescriptorMap(
+  pools: readonly SingleHopSettlementSwapPath[],
+): StaticPoolDescriptorMap {
+  return createStaticPoolDescriptorMap(pools);
 }
 
 /**

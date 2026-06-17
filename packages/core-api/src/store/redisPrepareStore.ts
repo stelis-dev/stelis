@@ -705,7 +705,7 @@ export class RedisPrepareStore implements PrepareStoreAdapter {
     const userPxMs = this._ttlMs * PREPARE_STORE_INDEX_TTL_MULTIPLIER;
     // Empty userKey for non-promotion entries — Lua skips the user-index
     // branches when userKey == ''. The KEYS array length stays uniform so
-    // cluster-mode hash-slot routing is consistent regardless of mode.
+    // shared-key naming stays deterministic regardless of runtime mode.
     const userKey = entry.mode === 'promotion' ? this.userKey(entry.userId) : '';
 
     const result = await this._client.eval(
@@ -849,7 +849,7 @@ export class RedisPrepareStore implements PrepareStoreAdapter {
     // clientIp at call time, we use a two-step approach:
     //   1. Lua GETs the entry, extracts clientIp, builds ip key internally
     //
-    // BUT: Redis Cluster requires all keys to be passed in KEYS[].
+    // Keep every Redis key reference explicit in KEYS[] for Lua reviewability.
     // For single-node Redis (our target), accessing dynamic keys in Lua is OK.
     // We pass a placeholder KEYS[2] and let Lua compute the real ip key.
 
