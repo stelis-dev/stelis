@@ -19,7 +19,11 @@ import { fromBase64, toHex } from '@mysten/sui/utils';
 import { normalizeSuiAddress } from '@mysten/sui/utils';
 import type { SettleArgs } from './types.js';
 import type { PtbCommand } from '@stelis/contracts';
-import { SETTLE_FUNCTIONS, settlementSwapDirectionFromFunctionName } from '@stelis/contracts';
+import {
+  SETTLE_FUNCTIONS,
+  SETTLE_WITH_CREDIT_FUNCTION,
+  settlementSwapDirectionFromFunctionName,
+} from '@stelis/contracts';
 import {
   FIELD_OFFSET,
   VARIANT_LAYOUTS,
@@ -200,8 +204,8 @@ function decodePureU64(arg: unknown, inputs: unknown[]): bigint {
     throw new ParseSettleArgsError(`Input[${arg.Input}] Pure has no bytes`);
   }
   const decoded = fromBase64(pure.bytes);
-  if (decoded.length < 8) {
-    throw new ParseSettleArgsError(`Pure u64 needs 8 bytes, got ${decoded.length}`);
+  if (decoded.length !== 8) {
+    throw new ParseSettleArgsError(`Pure u64 must be exactly 8 bytes, got ${decoded.length}`);
   }
   // BCS u64: 8-byte little-endian
   let value = 0n;
@@ -209,6 +213,52 @@ function decodePureU64(arg: unknown, inputs: unknown[]): bigint {
     value = (value << 8n) | BigInt(decoded[idx]!);
   }
   return value;
+}
+
+function encodeUleb128Length(value: number): Uint8Array {
+  const bytes: number[] = [];
+  let remaining = value;
+  do {
+    let byte = remaining & 0x7f;
+    remaining = Math.floor(remaining / 128);
+    if (remaining > 0) byte |= 0x80;
+    bytes.push(byte);
+  } while (remaining > 0);
+  return new Uint8Array(bytes);
+}
+
+function decodeCanonicalUleb128Length(decoded: Uint8Array): { length: number; offset: number } {
+  let vecLen = 0;
+  let multiplier = 1;
+  let offset = 0;
+
+  for (; offset < decoded.length; offset++) {
+    const byte = decoded[offset]!;
+    const digit = byte & 0x7f;
+    vecLen += digit * multiplier;
+    if (vecLen > 0xffffffff) {
+      throw new ParseSettleArgsError('Pure vector<u8> length prefix overflows u32');
+    }
+    if ((byte & 0x80) === 0) {
+      offset++;
+      const canonical = encodeUleb128Length(vecLen);
+      if (canonical.length !== offset) {
+        throw new ParseSettleArgsError('Pure vector<u8> length prefix is not canonical ULEB128');
+      }
+      for (let i = 0; i < canonical.length; i++) {
+        if (decoded[i] !== canonical[i]) {
+          throw new ParseSettleArgsError('Pure vector<u8> length prefix is not canonical ULEB128');
+        }
+      }
+      return { length: vecLen, offset };
+    }
+    multiplier *= 128;
+    if (offset >= 4) {
+      throw new ParseSettleArgsError('Pure vector<u8> length prefix overflows u32');
+    }
+  }
+
+  throw new ParseSettleArgsError('Pure vector<u8> length prefix is incomplete');
 }
 
 function decodePureVectorU8(arg: unknown, inputs: unknown[]): Uint8Array {
@@ -232,21 +282,10 @@ function decodePureVectorU8(arg: unknown, inputs: unknown[]): Uint8Array {
   if (decoded.length === 0) {
     throw new ParseSettleArgsError('Pure vector<u8> is empty (missing length prefix)');
   }
-  let vecLen = 0;
-  let shift = 0;
-  let offset = 0;
-  for (; offset < decoded.length; offset++) {
-    const byte = decoded[offset]!;
-    vecLen |= (byte & 0x7f) << shift;
-    if ((byte & 0x80) === 0) {
-      offset++;
-      break;
-    }
-    shift += 7;
-  }
-  if (offset + vecLen > decoded.length) {
+  const { length: vecLen, offset } = decodeCanonicalUleb128Length(decoded);
+  if (offset + vecLen !== decoded.length) {
     throw new ParseSettleArgsError(
-      `Pure vector<u8> length ${vecLen} exceeds available bytes ${decoded.length - offset}`,
+      `Pure vector<u8> length ${vecLen} does not match available bytes ${decoded.length - offset}`,
     );
   }
   return decoded.slice(offset, offset + vecLen);
@@ -319,7 +358,7 @@ export function parseSettleArgs(
   const relayerRecipient = decodePureAddress(args[indexMap.recipient], inputs);
 
   let extractedSettlementSwapPath: SettleArgs['extractedSettlementSwapPath'] | undefined;
-  if (fnName !== 'settle_with_credit') {
+  if (fnName !== SETTLE_WITH_CREDIT_FUNCTION) {
     const settlementSwapDirection = settlementSwapDirectionFromFunctionName(fnName);
     if (!settlementSwapDirection) {
       throw new ParseSettleArgsError(

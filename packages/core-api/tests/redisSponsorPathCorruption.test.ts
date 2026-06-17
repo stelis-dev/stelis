@@ -32,7 +32,7 @@ import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { toBase64, toBase58 } from '@mysten/sui/utils';
 import { bcs } from '@mysten/sui/bcs';
 import { GAS_VARIANCE_FIXED_MIST, sha256Bytes as _sha256Bytes } from '@stelis/core-relay';
-import { SLIPPAGE_CAP_BPS } from '@stelis/contracts';
+import { SETTLE_WITH_CREDIT_FUNCTION, SLIPPAGE_CAP_BPS } from '@stelis/contracts';
 import { computePolicyHash } from '../src/policyHash.js';
 import { handleSponsor, SponsorValidationError } from '../src/handlers/sponsor.js';
 import type { RelayerContext } from '../src/context.js';
@@ -74,7 +74,7 @@ async function buildValidTx(): Promise<{
   encodedTxBytes: string;
   txHash: string;
 }> {
-  // Minimal settle_with_credit PTB so handleSponsor's L1 validation would
+  // Minimal credit-only settlement PTB so handleSponsor's L1 validation would
   // succeed if execution reached it. The corrupt-entry path rejects much
   // earlier — at peek() — so the PTB body is not exercised, but it must
   // still be a real signed transaction so decode/peek can run.
@@ -100,7 +100,7 @@ async function buildValidTx(): Promise<{
   const policyHashBytes = Buffer.from(policyHashHex.replace('0x', ''), 'hex');
 
   tx.moveCall({
-    target: `${MOCK_CONFIG.packageId}::settle::settle_with_credit`,
+    target: `${MOCK_CONFIG.packageId}::settle::${SETTLE_WITH_CREDIT_FUNCTION}`,
     arguments: [
       objRef(MOCK_CONFIG.configId),
       objRef(MOCK_CONFIG.vaultRegistryId),

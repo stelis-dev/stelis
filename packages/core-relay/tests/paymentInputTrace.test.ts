@@ -64,7 +64,7 @@ function findSettleCommand(commands: PtbCommand[]): MoveCallCommand {
 }
 
 describe('paymentInputIntegrity extraction', () => {
-  it('extracts none_credit_only for settle_with_credit', () => {
+  it('extracts none_credit_only for credit-only settlement', () => {
     const { commands, inputs } = getCommands((tx) => {
       buildSettleWithCreditPtb(tx, {
         packageId: PKG,

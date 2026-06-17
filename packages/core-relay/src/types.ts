@@ -27,7 +27,7 @@ export interface OnchainConfig {
   protocolFlatFeeMist: bigint;
   /**
    * Monotonically increasing config version counter.
-   * Incremented on every update_config call.
+   * Incremented when an on-chain config change is applied.
    * Used by settle_core to detect config drift between quote time and settlement.
    */
   configVersion: bigint;
@@ -138,7 +138,7 @@ export interface SettleArgs {
    * The settlement swap path extracted from the PTB, used for L2 validation.
    *
    * Invariant: hops.length === 1. L2 validates this + ordered array equality
-   * against RelayerEnv.allowedSettlementSwapPaths[]. Omitted for settle_with_credit (no swap).
+   * against RelayerEnv.allowedSettlementSwapPaths[]. Omitted for credit-only settlement.
    */
   extractedSettlementSwapPath?: {
     tokenType: string;

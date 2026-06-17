@@ -27,7 +27,14 @@ import { buildSwapAndSettlePtb, buildSettleWithCreditPtb } from '../src/ptb/buil
 import { parseSettleArgs } from '../src/parseSettleArgs.js';
 import { convertSdkCommands } from '../src/convert.js';
 import { SETTLE_FIELD_SCHEMA } from '../src/settlePayloadContract.js';
-import type { SettlementSwapDirection } from '@stelis/contracts';
+import { validatePtbStructure, validateSettleArgs } from '../src/validate/static.js';
+import {
+  SETTLEMENT_SWAP_DIRECTION_FUNCTIONS,
+  SETTLE_FUNCTIONS,
+  SETTLE_WITH_CREDIT_FUNCTION,
+  type SettlementSwapDirection,
+} from '@stelis/contracts';
+import type { OnchainConfig, RelayerEnv } from '../src/types.js';
 
 // ─────────────────────────────────────────────
 // Fixtures
@@ -40,8 +47,40 @@ const POOL = '0x' + '4'.repeat(64);
 const PAYMENT_COIN = '0x' + '5'.repeat(64);
 const VAULT = '0x' + '7'.repeat(64);
 const RECIPIENT = '0x' + 'b'.repeat(64);
+const ROUNDTRIP_RECIPIENT = '0x' + 'c'.repeat(64);
 
 const PAYMENT_TYPE = `${PKG}::token::TOKEN`;
+
+const ONCHAIN_CONFIG: OnchainConfig = {
+  packageId: PKG,
+  configId: CONFIG,
+  maxClaimMist: 50_000_000n,
+  minSettleMist: 100_000n,
+  maxRelayerFeeMist: 500_000n,
+  protocolFlatFeeMist: 20_004n,
+  configVersion: 5n,
+  maxSpreadBps: 500n,
+};
+
+const RELAYER_ENV: RelayerEnv = {
+  network: 'testnet',
+  relayerAddress: ROUNDTRIP_RECIPIENT,
+  configId: CONFIG,
+  vaultRegistryId: REGISTRY,
+  packageId: PKG,
+  allowedSettlementSwapPaths: [
+    {
+      tokenType: PAYMENT_TYPE,
+      hops: [POOL],
+      settlementSwapDirection: 'baseForQuote',
+    },
+    {
+      tokenType: PAYMENT_TYPE,
+      hops: [POOL],
+      settlementSwapDirection: 'quoteForBase',
+    },
+  ],
+};
 
 const SHARED_PARAMS = {
   packageId: PKG,
@@ -101,13 +140,22 @@ function findMoveCall(rawCommands: unknown[]) {
 describe('buildSwapAndSettlePtb — type argument wiring per SettlementSwapDirection', () => {
   const cases: Array<{
     settlementSwapDirection: SettlementSwapDirection;
-    expectedFnSuffix: string;
+    expectedNewUserFunction: string;
+    expectedWithVaultFunction: string;
   }> = [
-    { settlementSwapDirection: 'baseForQuote', expectedFnSuffix: '_bfq' },
-    { settlementSwapDirection: 'quoteForBase', expectedFnSuffix: '_qfb' },
+    {
+      settlementSwapDirection: 'baseForQuote',
+      expectedNewUserFunction: SETTLEMENT_SWAP_DIRECTION_FUNCTIONS.baseForQuote.newUser,
+      expectedWithVaultFunction: SETTLEMENT_SWAP_DIRECTION_FUNCTIONS.baseForQuote.withVault,
+    },
+    {
+      settlementSwapDirection: 'quoteForBase',
+      expectedNewUserFunction: SETTLEMENT_SWAP_DIRECTION_FUNCTIONS.quoteForBase.newUser,
+      expectedWithVaultFunction: SETTLEMENT_SWAP_DIRECTION_FUNCTIONS.quoteForBase.withVault,
+    },
   ];
 
-  for (const { settlementSwapDirection, expectedFnSuffix } of cases) {
+  for (const { settlementSwapDirection, expectedNewUserFunction, expectedWithVaultFunction } of cases) {
     describe(`${settlementSwapDirection}`, () => {
       it(`new_user → Move call type args start with paymentTokenType`, () => {
         const { rawCommands } = getCommands((tx) => {
@@ -120,7 +168,7 @@ describe('buildSwapAndSettlePtb — type argument wiring per SettlementSwapDirec
           });
         });
         const call = findMoveCall(rawCommands);
-        expect(call.function).toBe(`swap_and_settle_new_user${expectedFnSuffix}`);
+        expect(call.function).toBe(expectedNewUserFunction);
         expect(call.typeArguments[0]).toBe(PAYMENT_TYPE);
         expect(call.typeArguments).toEqual([PAYMENT_TYPE]);
       });
@@ -138,7 +186,7 @@ describe('buildSwapAndSettlePtb — type argument wiring per SettlementSwapDirec
           });
         });
         const call = findMoveCall(rawCommands);
-        expect(call.function).toBe(`swap_and_settle_with_vault${expectedFnSuffix}`);
+        expect(call.function).toBe(expectedWithVaultFunction);
         expect(call.typeArguments[0]).toBe(PAYMENT_TYPE);
         expect(call.typeArguments).toEqual([PAYMENT_TYPE]);
       });
@@ -174,7 +222,7 @@ describe('buildSwapAndSettlePtb — type argument wiring per SettlementSwapDirec
 /** Distinct values for all 13 settle fields. Each bigint is unique. */
 const ROUNDTRIP_VALUES = {
   relayerClaim: 7_777_777n,
-  relayerRecipient: '0x' + 'cc'.repeat(32),
+  relayerRecipient: ROUNDTRIP_RECIPIENT,
   receiptId: new Uint8Array(32).fill(0xdd),
   nonce: 42n,
   simGasReported: 3_000_000n,
@@ -219,7 +267,7 @@ describe('builder → parser settle field roundtrip', () => {
     expect(parsed.orderIdHash).toEqual(expected.orderIdHash);
   }
 
-  it('swap_and_settle_new_user_bfq: all 13 settle fields round-trip', () => {
+  it(`${SETTLEMENT_SWAP_DIRECTION_FUNCTIONS.baseForQuote.newUser}: all 13 settle fields round-trip`, () => {
     const { normalizedCommands, inputs } = getCommands((tx) => {
       buildSwapAndSettlePtb(tx, {
         variant: 'new_user',
@@ -239,7 +287,7 @@ describe('builder → parser settle field roundtrip', () => {
     expectRoundtripAll(parsed);
   });
 
-  it('settle_with_credit: all 13 settle fields round-trip with zero slippage buffer', () => {
+  it(`${SETTLE_WITH_CREDIT_FUNCTION}: all 13 settle fields round-trip with zero slippage buffer`, () => {
     const { normalizedCommands, inputs } = getCommands((tx) => {
       buildSettleWithCreditPtb(tx, {
         packageId: PKG,
@@ -256,7 +304,7 @@ describe('builder → parser settle field roundtrip', () => {
     expect(parsed.extractedSettlementSwapPath).toBeUndefined();
   });
 
-  it('settle_with_credit: rejects non-zero slippage buffer at builder boundary', () => {
+  it(`${SETTLE_WITH_CREDIT_FUNCTION}: rejects non-zero slippage buffer at builder boundary`, () => {
     expect(() =>
       getCommands((tx) => {
         buildSettleWithCreditPtb(tx, {
@@ -274,4 +322,109 @@ describe('builder → parser settle field roundtrip', () => {
   it('SETTLE_FIELD_SCHEMA has exactly 13 fields', () => {
     expect(SETTLE_FIELD_SCHEMA).toHaveLength(13);
   });
+});
+
+describe('builder, parser, and static validation share every current settlement function', () => {
+  const cases = [
+    {
+      functionName: SETTLEMENT_SWAP_DIRECTION_FUNCTIONS.baseForQuote.newUser,
+      build: (tx: Transaction) =>
+        buildSwapAndSettlePtb(tx, {
+          variant: 'new_user',
+          settlementSwapDirection: 'baseForQuote',
+          paymentTokenType: PAYMENT_TYPE,
+          poolId: POOL,
+          packageId: PKG,
+          configId: CONFIG,
+          vaultRegistryId: REGISTRY,
+          paymentCoinId: PAYMENT_COIN,
+          swapAmount: 1_000_000n,
+          minSuiOut: 0n,
+          ...ROUNDTRIP_VALUES,
+        }),
+    },
+    {
+      functionName: SETTLEMENT_SWAP_DIRECTION_FUNCTIONS.quoteForBase.newUser,
+      build: (tx: Transaction) =>
+        buildSwapAndSettlePtb(tx, {
+          variant: 'new_user',
+          settlementSwapDirection: 'quoteForBase',
+          paymentTokenType: PAYMENT_TYPE,
+          poolId: POOL,
+          packageId: PKG,
+          configId: CONFIG,
+          vaultRegistryId: REGISTRY,
+          paymentCoinId: PAYMENT_COIN,
+          swapAmount: 1_000_000n,
+          minSuiOut: 0n,
+          ...ROUNDTRIP_VALUES,
+        }),
+    },
+    {
+      functionName: SETTLEMENT_SWAP_DIRECTION_FUNCTIONS.baseForQuote.withVault,
+      build: (tx: Transaction) =>
+        buildSwapAndSettlePtb(tx, {
+          variant: 'with_vault',
+          settlementSwapDirection: 'baseForQuote',
+          paymentTokenType: PAYMENT_TYPE,
+          poolId: POOL,
+          vaultId: VAULT,
+          useCreditAmount: 0n,
+          packageId: PKG,
+          configId: CONFIG,
+          vaultRegistryId: REGISTRY,
+          paymentCoinId: PAYMENT_COIN,
+          swapAmount: 1_000_000n,
+          minSuiOut: 0n,
+          ...ROUNDTRIP_VALUES,
+        }),
+    },
+    {
+      functionName: SETTLEMENT_SWAP_DIRECTION_FUNCTIONS.quoteForBase.withVault,
+      build: (tx: Transaction) =>
+        buildSwapAndSettlePtb(tx, {
+          variant: 'with_vault',
+          settlementSwapDirection: 'quoteForBase',
+          paymentTokenType: PAYMENT_TYPE,
+          poolId: POOL,
+          vaultId: VAULT,
+          useCreditAmount: 0n,
+          packageId: PKG,
+          configId: CONFIG,
+          vaultRegistryId: REGISTRY,
+          paymentCoinId: PAYMENT_COIN,
+          swapAmount: 1_000_000n,
+          minSuiOut: 0n,
+          ...ROUNDTRIP_VALUES,
+        }),
+    },
+    {
+      functionName: SETTLE_WITH_CREDIT_FUNCTION,
+      build: (tx: Transaction) =>
+        buildSettleWithCreditPtb(tx, {
+          packageId: PKG,
+          configId: CONFIG,
+          vaultRegistryId: REGISTRY,
+          vaultId: VAULT,
+          useCreditAmount: 500_000n,
+          ...CREDIT_ROUNDTRIP_VALUES,
+        }),
+    },
+  ] as const;
+
+  it('test cases cover exactly SETTLE_FUNCTIONS', () => {
+    expect(new Set(cases.map((entry) => entry.functionName))).toEqual(SETTLE_FUNCTIONS);
+  });
+
+  for (const entry of cases) {
+    it(`${entry.functionName}: builder output parses and validates`, () => {
+      const { rawCommands, normalizedCommands, inputs } = getCommands(entry.build);
+      const call = findMoveCall(rawCommands);
+      expect(call.function).toBe(entry.functionName);
+
+      expect(validatePtbStructure(normalizedCommands, RELAYER_ENV)).toEqual({ ok: true });
+      const parsed = parseSettleArgs(normalizedCommands, inputs, PKG);
+      expect(validateSettleArgs(parsed, ONCHAIN_CONFIG, RELAYER_ENV)).toEqual({ ok: true });
+    });
+  }
 });

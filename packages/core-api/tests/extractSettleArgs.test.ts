@@ -13,7 +13,11 @@
  */
 import { describe, it, expect } from 'vitest';
 import { ARG_INDEX_MAP } from '../src/prepare/extractSettleArgs.js';
-import { SETTLE_FUNCTIONS } from '@stelis/contracts';
+import {
+  SETTLE_FUNCTIONS,
+  SETTLE_WITH_CREDIT_FUNCTION,
+  SETTLEMENT_SWAP_DIRECTION_FUNCTIONS,
+} from '@stelis/contracts';
 
 describe('ARG_INDEX_MAP locking tests', () => {
   // ─────────────────────────────────────────────
@@ -57,13 +61,13 @@ describe('ARG_INDEX_MAP locking tests', () => {
   // (derived from builders.ts argument layout)
   // ─────────────────────────────────────────────
 
-  // swap_and_settle_new_user_bfq:
+  // New-user base-for-quote settlement:
   //   [config(0), registry(1), clock(2), pool(3), payment(4), swapAmt(5), minSuiOut(6),
   //    claim(7), recipient(8), receiptId(9), nonce(10), simGas(11),
   //    gasVariance(12), slippage(13), quotedRelayer(14), expectedProtocol(15), expectedConfig(16),
   //    quoteTs(17), policyHash(18), orderIdHash(19)]
-  it('swap_and_settle_new_user_bfq: claim=7, recipient=8, pools=[3], nonce=10, policyHash=18, orderIdHash=19', () => {
-    const m = ARG_INDEX_MAP.swap_and_settle_new_user_bfq!;
+  it('new-user base-for-quote settlement: claim=7, recipient=8, pools=[3], nonce=10, policyHash=18, orderIdHash=19', () => {
+    const m = ARG_INDEX_MAP[SETTLEMENT_SWAP_DIRECTION_FUNCTIONS.baseForQuote.newUser]!;
     expect(m.claim).toBe(7);
     expect(m.recipient).toBe(8);
     expect(m.pools).toEqual([3]);
@@ -72,11 +76,11 @@ describe('ARG_INDEX_MAP locking tests', () => {
     expect(m.orderIdHash).toBe(19);
   });
 
-  // swap_and_settle_with_vault_bfq:
+  // Vault-backed base-for-quote settlement:
   //   [config(0), registry(1), clock(2), vault(3), pool(4), payment(5), swapAmt(6), minSuiOut(7),
   //    claim(8), recipient(9), receiptId(10), nonce(11), ..., quotedRelayer(15), ..., policyHash(19), orderIdHash(20)]
-  it('swap_and_settle_with_vault_bfq: claim=8, recipient=9, pools=[4], nonce=11, policyHash=19, orderIdHash=20', () => {
-    const m = ARG_INDEX_MAP.swap_and_settle_with_vault_bfq!;
+  it('vault-backed base-for-quote settlement: claim=8, recipient=9, pools=[4], nonce=11, policyHash=19, orderIdHash=20', () => {
+    const m = ARG_INDEX_MAP[SETTLEMENT_SWAP_DIRECTION_FUNCTIONS.baseForQuote.withVault]!;
     expect(m.claim).toBe(8);
     expect(m.recipient).toBe(9);
     expect(m.pools).toEqual([4]);
@@ -85,13 +89,13 @@ describe('ARG_INDEX_MAP locking tests', () => {
     expect(m.orderIdHash).toBe(20);
   });
 
-  // settle_with_credit:
+  // Credit-only settlement:
   //   [config(0), registry(1), clock(2), vault(3), useCredit(4),
   //    claim(5), recipient(6), receiptId(7), nonce(8), simGas(9),
   //    gasVariance(10), slippage(11), quotedRelayer(12), expectedProtocol(13), expectedConfig(14),
   //    quoteTs(15), policyHash(16), orderIdHash(17)]
-  it('settle_with_credit: claim=5, recipient=6, pools=[], nonce=8, policyHash=16, orderIdHash=17', () => {
-    const m = ARG_INDEX_MAP.settle_with_credit!;
+  it('credit-only settlement: claim=5, recipient=6, pools=[], nonce=8, policyHash=16, orderIdHash=17', () => {
+    const m = ARG_INDEX_MAP[SETTLE_WITH_CREDIT_FUNCTION]!;
     expect(m.claim).toBe(5);
     expect(m.recipient).toBe(6);
     expect(m.pools).toEqual([]);
@@ -205,8 +209,8 @@ describe('extractSettleArgsFromBuiltTx — unit tests', () => {
     );
   });
 
-  it('settle_with_credit: extractedSettlementSwapPath is undefined (route skip)', () => {
-    // settle_with_credit args:
+  it('credit-only settlement: extractedSettlementSwapPath is undefined', () => {
+    // Credit-only args:
     // [config(0), registry(1), clock(2), vault(3), useCreditAmount(4),
     //  claim(5), recipient(6), receiptId(7), nonce(8), simGas(9),
     //  gasVariance(10), slippage(11), quotedRelayer(12), expectedProtocol(13), expectedConfig(14),
@@ -237,7 +241,7 @@ describe('extractSettleArgsFromBuiltTx — unit tests', () => {
         kind: 'MoveCall',
         packageId: '0x' + '11'.repeat(32),
         module: 'settle',
-        function: 'settle_with_credit',
+        function: SETTLE_WITH_CREDIT_FUNCTION,
         typeArguments: [],
         arguments: inputs.map((_, i) => makeInputRef(i)),
       },
@@ -257,7 +261,7 @@ describe('extractSettleArgsFromBuiltTx — unit tests', () => {
     expect(typeof result.quoteTimestampMs).toBe('bigint');
   });
 
-  it('swap_and_settle_new_user_bfq: extracts route with tokenType, hops, settlementSwapDirection', () => {
+  it('new-user base-for-quote settlement: extracts route with tokenType, hops, settlementSwapDirection', () => {
     // [config(0), registry(1), clock(2), pool(3), payment(4),
     //  swapAmt(5), minSuiOut(6), claim(7), recipient(8), receiptId(9), nonce(10), simGas(11),
     //  gasVariance(12), slippage(13), quotedRelayer(14), expectedProtocol(15), expectedConfig(16),
@@ -290,7 +294,7 @@ describe('extractSettleArgsFromBuiltTx — unit tests', () => {
         kind: 'MoveCall',
         packageId: '0x' + '11'.repeat(32),
         module: 'settle',
-        function: 'swap_and_settle_new_user_bfq',
+        function: SETTLEMENT_SWAP_DIRECTION_FUNCTIONS.baseForQuote.newUser,
         typeArguments: ['0xDEEP::deep::DEEP'],
         arguments: inputs.map((_, i) => makeInputRef(i)),
       },
@@ -333,33 +337,43 @@ describe('isNewUserSettleMoveCall — unit tests', () => {
     };
   }
 
-  it('returns true for swap_and_settle_new_user_bfq on the trusted Stelis package', () => {
-    const commands: PtbCommand[] = [buildSettleCmd(STELIS_PKG, 'swap_and_settle_new_user_bfq')];
+  it('returns true for new-user base-for-quote settlement on the trusted Stelis package', () => {
+    const commands: PtbCommand[] = [
+      buildSettleCmd(STELIS_PKG, SETTLEMENT_SWAP_DIRECTION_FUNCTIONS.baseForQuote.newUser),
+    ];
     expect(isNewUserSettleMoveCall(commands, STELIS_PKG)).toBe(true);
   });
 
-  it('returns true for swap_and_settle_new_user_qfb on the trusted Stelis package', () => {
-    const commands: PtbCommand[] = [buildSettleCmd(STELIS_PKG, 'swap_and_settle_new_user_qfb')];
+  it('returns true for new-user quote-for-base settlement on the trusted Stelis package', () => {
+    const commands: PtbCommand[] = [
+      buildSettleCmd(STELIS_PKG, SETTLEMENT_SWAP_DIRECTION_FUNCTIONS.quoteForBase.newUser),
+    ];
     expect(isNewUserSettleMoveCall(commands, STELIS_PKG)).toBe(true);
   });
 
-  it('returns false for swap_and_settle_with_vault_bfq (with-vault skips vault check)', () => {
-    const commands: PtbCommand[] = [buildSettleCmd(STELIS_PKG, 'swap_and_settle_with_vault_bfq')];
+  it('returns false for vault-backed base-for-quote settlement', () => {
+    const commands: PtbCommand[] = [
+      buildSettleCmd(STELIS_PKG, SETTLEMENT_SWAP_DIRECTION_FUNCTIONS.baseForQuote.withVault),
+    ];
     expect(isNewUserSettleMoveCall(commands, STELIS_PKG)).toBe(false);
   });
 
-  it('returns false for swap_and_settle_with_vault_qfb (with-vault skips vault check)', () => {
-    const commands: PtbCommand[] = [buildSettleCmd(STELIS_PKG, 'swap_and_settle_with_vault_qfb')];
+  it('returns false for vault-backed quote-for-base settlement', () => {
+    const commands: PtbCommand[] = [
+      buildSettleCmd(STELIS_PKG, SETTLEMENT_SWAP_DIRECTION_FUNCTIONS.quoteForBase.withVault),
+    ];
     expect(isNewUserSettleMoveCall(commands, STELIS_PKG)).toBe(false);
   });
 
-  it('returns false for settle_with_credit (credit skips vault check)', () => {
-    const commands: PtbCommand[] = [buildSettleCmd(STELIS_PKG, 'settle_with_credit')];
+  it('returns false for credit-only settlement', () => {
+    const commands: PtbCommand[] = [buildSettleCmd(STELIS_PKG, SETTLE_WITH_CREDIT_FUNCTION)];
     expect(isNewUserSettleMoveCall(commands, STELIS_PKG)).toBe(false);
   });
 
   it('returns false when the new-user fn name appears on a foreign package (package-bound)', () => {
-    const commands: PtbCommand[] = [buildSettleCmd(FOREIGN_PKG, 'swap_and_settle_new_user_bfq')];
+    const commands: PtbCommand[] = [
+      buildSettleCmd(FOREIGN_PKG, SETTLEMENT_SWAP_DIRECTION_FUNCTIONS.baseForQuote.newUser),
+    ];
     expect(isNewUserSettleMoveCall(commands, STELIS_PKG)).toBe(false);
   });
 
@@ -369,7 +383,7 @@ describe('isNewUserSettleMoveCall — unit tests', () => {
         kind: 'MoveCall',
         packageId: STELIS_PKG,
         module: 'fake_settle',
-        function: 'swap_and_settle_new_user_bfq',
+        function: SETTLEMENT_SWAP_DIRECTION_FUNCTIONS.baseForQuote.newUser,
         typeArguments: [],
         arguments: [],
       },

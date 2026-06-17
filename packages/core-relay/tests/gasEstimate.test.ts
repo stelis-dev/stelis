@@ -93,7 +93,7 @@ describe('computeRelayerCosts', () => {
 
   // ── Real-world scenario ──────────────────────────────────────────────────
 
-  it('typical settle_with_credit scenario', () => {
+  it('typical credit-only settlement scenario', () => {
     // simGas = 1_000_000 + 5_852_000 - 4_815_360 = 2_036_640
     // relayerClaim = 2_036_640 + 100_000 = 2_136_640
     const result = computeRelayerCosts(makeGas('1000000', '5852000', '4815360'));

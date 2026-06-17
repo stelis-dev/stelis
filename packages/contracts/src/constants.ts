@@ -62,7 +62,7 @@ export const SETTLEMENT_SWAP_DIRECTION_FUNCTIONS: Record<
 
 /**
  * Derive SettlementSwapDirection from a settle function name.
- * Returns undefined for settle_with_credit or unknown functions.
+ * Returns undefined for credit-only settlement or unknown functions.
  */
 export function settlementSwapDirectionFromFunctionName(
   fnName: string,

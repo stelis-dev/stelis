@@ -20,7 +20,11 @@ import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { toBase64, toBase58 } from '@mysten/sui/utils';
 import { bcs } from '@mysten/sui/bcs';
 import { GAS_VARIANCE_FIXED_MIST, sha256Bytes } from '@stelis/core-relay';
-import { SLIPPAGE_CAP_BPS } from '@stelis/contracts';
+import {
+  SETTLEMENT_SWAP_DIRECTION_FUNCTIONS,
+  SETTLE_WITH_CREDIT_FUNCTION,
+  SLIPPAGE_CAP_BPS,
+} from '@stelis/contracts';
 import { PREPARE_TTL_MS, buildExecutionPathKey as _buildExecutionPathKey } from '../src/handlers/prepare.js';
 import { computePolicyHash } from '../src/policyHash.js';
 import {
@@ -106,6 +110,10 @@ const DEFAULT_TX_SETTLE_VALUES = {
 
 interface BuildValidTxOptions {
   orderId?: string;
+  packageId?: string;
+  configId?: string;
+  vaultRegistryId?: string;
+  relayerRecipient?: string;
   /** Override any of the 13 settle-field pure u64/vec<u8> values. */
   settleOverrides?: Partial<{
     relayerClaim: bigint;
@@ -142,7 +150,7 @@ async function buildValidTx(
     },
   ]);
 
-  // settle_with_credit layout (new signature):
+  // Credit-only settlement layout:
   //   0: config, 1: registry, 2: clock, 3: vault, 4: useCreditAmount,
   //   5: relayerClaim, 6: relayerRecipient, 7: receiptId, 8: nonce,
   //   9: simGas, 10: gasVarianceFixedMist, 11: slippageBufferMist,
@@ -166,17 +174,21 @@ async function buildValidTx(
     tx.objectRef({ objectId: id, version: '1', digest: toBase58(digestBytes) });
 
   const settleValues = { ...DEFAULT_TX_SETTLE_VALUES, ...(opts?.settleOverrides ?? {}) };
+  const packageId = opts?.packageId ?? MOCK_CONFIG.packageId;
+  const configId = opts?.configId ?? MOCK_CONFIG.configId;
+  const vaultRegistryId = opts?.vaultRegistryId ?? MOCK_CONFIG.vaultRegistryId;
+  const relayerRecipient = opts?.relayerRecipient ?? MOCK_CONFIG.relayerAddress;
 
   tx.moveCall({
-    target: `${MOCK_CONFIG.packageId}::settle::settle_with_credit`,
+    target: `${packageId}::settle::${SETTLE_WITH_CREDIT_FUNCTION}`,
     arguments: [
-      objRef(MOCK_CONFIG.configId), // 0: config
-      objRef(MOCK_CONFIG.vaultRegistryId), // 1: registry
+      objRef(configId), // 0: config
+      objRef(vaultRegistryId), // 1: registry
       objRef('0x6'), // 2: clock
       objRef('0x' + '04'.repeat(32)), // 3: vault (dummy)
       tx.pure(bcs.u64().serialize(1_000n)), // 4: useCreditAmount
       tx.pure(bcs.u64().serialize(settleValues.relayerClaim)), // 5: relayerClaim
-      tx.pure(bcs.Address.serialize(MOCK_CONFIG.relayerAddress)), // 6: relayerRecipient
+      tx.pure(bcs.Address.serialize(relayerRecipient)), // 6: relayerRecipient
       tx.pure(bcs.vector(bcs.u8()).serialize([])), // 7: receiptId
       tx.pure(bcs.u64().serialize(settleValues.nonce)), // 8: nonce
       tx.pure(bcs.u64().serialize(settleValues.simGasReported)), // 9: simGasReported
@@ -212,11 +224,11 @@ async function buildAddressBalanceSwapTx(
     /**
      * Settle variant. Default is `'new_user'` so the existing
      * payment-input-contract test and vault-drift cases continue to use
-     * `swap_and_settle_new_user_bfq`. `'with_vault'`
-     * builds `swap_and_settle_with_vault_bfq` with the additional
+     * the new-user settlement function. `'with_vault'`
+     * builds the vault-backed settlement function with the additional
      * `vault` argument inserted at index 3 AND a trailing
      * `use_credit_amount: u64 = 0` at index 21 (the Move ABI shape
-     * — `packages/contracts/move/sources/settle.move::swap_and_settle_with_vault_bfq`),
+     * — the vault-backed Move entrypoint),
      * matching the production builder
      * (`packages/core-relay/src/ptb/builders.ts`). Used by the
      * with-vault no-query lock.
@@ -340,8 +352,8 @@ async function buildAddressBalanceSwapTx(
   tx.moveCall({
     target:
       variant === 'with_vault'
-        ? `${MOCK_CONFIG.packageId}::settle::swap_and_settle_with_vault_bfq`
-        : `${MOCK_CONFIG.packageId}::settle::swap_and_settle_new_user_bfq`,
+        ? `${MOCK_CONFIG.packageId}::settle::${SETTLEMENT_SWAP_DIRECTION_FUNCTIONS.baseForQuote.withVault}`
+        : `${MOCK_CONFIG.packageId}::settle::${SETTLEMENT_SWAP_DIRECTION_FUNCTIONS.baseForQuote.newUser}`,
     typeArguments: [SWAP_PAYMENT_TYPE],
     arguments: settleArguments,
   });
@@ -377,7 +389,7 @@ function makePreparedEntry(
     slotId: SLOT_ID,
     sponsorAddress: SPONSOR_ADDRESS,
     clientIp: CLIENT_IP,
-    executionPathKey: 'credit', // settle_with_credit (no-swap path for unit tests)
+    executionPathKey: 'credit', // credit-only path for unit tests
     orderId: null,
     mode: 'generic',
     ...overrides,
@@ -1615,6 +1627,69 @@ describe('handleSponsor', () => {
     expect(typeof driftLog!['subcode']).toBe('string'); // L2_PROTOCOL_FEE_MISMATCH or similar
     expect(driftLog!['receipt_id']).toBe(PAYMENT_ID);
   });
+
+  it.each([
+    {
+      label: 'wrong config object id',
+      buildOptions: { configId: '0x' + '12'.repeat(32) },
+      expectedStage: 'l2_settle_args',
+      expectedSubcode: 'L2_WRONG_CONFIG',
+    },
+    {
+      label: 'wrong registry object id',
+      buildOptions: { vaultRegistryId: '0x' + '13'.repeat(32) },
+      expectedStage: 'l2_settle_args',
+      expectedSubcode: 'L2_WRONG_REGISTRY',
+    },
+    {
+      label: 'wrong relayer recipient',
+      buildOptions: { relayerRecipient: '0x' + '14'.repeat(32) },
+      expectedStage: 'l2_settle_args',
+      expectedSubcode: 'L2_WRONG_RECIPIENT',
+    },
+    {
+      label: 'wrong package id',
+      buildOptions: { packageId: '0x' + '15'.repeat(32) },
+      expectedStage: 'l1_ptb_structure',
+      expectedSubcode: 'L1_NO_SETTLE',
+    },
+  ])(
+    'tx-bound $label → REPREPARE_REQUIRED, no abuse, SPONSOR_DRIFT_OBSERVED',
+    async ({ buildOptions, expectedStage, expectedSubcode }) => {
+      const { encodedTxBytes, txBytes, txHash } = await buildValidTx(
+        SPONSOR_ADDRESS,
+        buildOptions,
+      );
+      const prepared = makePreparedEntry(txHash);
+      const userSig = await buildValidSignature(txBytes);
+      const abuseBlocker = makeMockAbuseBlocker();
+      const sponsorPool = makeMockSponsorPool();
+      const ctx = makeMockContext({
+        prepareStore: makeMockPrepareStore(prepared, prepared),
+        abuseBlocker,
+        sponsorPool,
+      });
+
+      const err = await handleSponsor(
+        ctx,
+        { txBytes: encodedTxBytes, userSignature: userSig, receiptId: PAYMENT_ID },
+        CLIENT_IP,
+      ).catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(SponsorValidationError);
+      expect((err as SponsorValidationError).code).toBe('REPREPARE_REQUIRED');
+      expect(abuseBlocker.recordSponsorFailure).not.toHaveBeenCalled();
+      expect(sponsorPool.checkin).toHaveBeenCalledWith(SLOT_ID, PAYMENT_ID, expect.any(String));
+
+      const driftLog = consoleInfoSpy.mock.calls
+        .map((call) => JSON.parse(call[0] as string) as Record<string, unknown>)
+        .find((entry) => entry['event'] === 'SPONSOR_DRIFT_OBSERVED');
+      expect(driftLog).toBeDefined();
+      expect(driftLog!['stage']).toBe(expectedStage);
+      expect(driftLog!['subcode']).toBe(expectedSubcode);
+      expect(driftLog!['receipt_id']).toBe(PAYMENT_ID);
+    },
+  );
 
   // ── 17c: drift classification — L2 env drift → REPREPARE_REQUIRED ─
   //
@@ -3234,7 +3309,7 @@ describe('handleSponsor', () => {
     });
 
     it('credit PTB → vault re-query is NOT invoked (predicate skips non-new_user)', async () => {
-      // settle_with_credit PTB built by buildValidTx; the new-user predicate is false.
+      // Credit-only PTB built by buildValidTx; the new-user predicate is false.
       const { encodedTxBytes, txBytes, txHash } = await buildValidTx(SPONSOR_ADDRESS);
       const prepared = makePreparedEntry(txHash);
       const userSig = await buildValidSignature(txBytes);
@@ -3261,7 +3336,7 @@ describe('handleSponsor', () => {
     });
 
     it('with_vault PTB → vault re-query is NOT invoked (handler-level lock for swap_and_settle_with_vault_*)', async () => {
-      // swap_and_settle_with_vault_bfq PTB; the new-user predicate is false.
+      // Vault-backed PTB; the new-user predicate is false.
       // Handler-level lock complements the unit-level
       // `isNewUserSettleMoveCall` predicate test in extractSettleArgs.test.ts:
       // verifies that the runner-wired generic post-consume path skips the

@@ -48,7 +48,7 @@ function readWorkspaceFile(relPath: string): string {
  * ignored.
  */
 function extractMoveAbortConstants(src: string): Array<{ name: string; value: number }> {
-  const re = /const\s+([A-Z][A-Za-z0-9_]*)\s*:\s*u64\s*=\s*(\d+)\s*;/g;
+  const re = /const\s+(E[A-Z][A-Za-z0-9_]*)\s*:\s*u64\s*=\s*(\d+)\s*;/g;
   const out: Array<{ name: string; value: number }> = [];
   let m;
   while ((m = re.exec(src)) !== null) {

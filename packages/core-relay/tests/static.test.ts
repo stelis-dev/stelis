@@ -5,7 +5,12 @@ import {
   validateSettleArgs,
 } from '../src/validate/static.js';
 import type { PtbCommand, MoveCallCommand } from '@stelis/contracts';
-import { DEEPBOOK_IDS } from '@stelis/contracts';
+import {
+  DEEPBOOK_IDS,
+  SETTLE_MODULE,
+  SETTLE_WITH_CREDIT_FUNCTION,
+  SETTLEMENT_SWAP_DIRECTION_FUNCTIONS,
+} from '@stelis/contracts';
 import type { SettleArgs, OnchainConfig, RelayerEnv } from '../src/types.js';
 
 const ENV: RelayerEnv = {
@@ -29,26 +34,26 @@ const CONFIG: OnchainConfig = {
 
 // ─── Helper factories ─────────────────────────────────────────────────────────
 
-/** New user: swap_and_settle_new_user_bfq */
+/** New-user settlement MoveCall. */
 function makeNewUserCall(overrides?: Partial<MoveCallCommand>): MoveCallCommand {
   return {
     kind: 'MoveCall',
     packageId: '0xPACKAGE',
-    module: 'settle',
-    function: 'swap_and_settle_new_user_bfq',
+    module: SETTLE_MODULE,
+    function: SETTLEMENT_SWAP_DIRECTION_FUNCTIONS.baseForQuote.newUser,
     typeArguments: [],
     arguments: [],
     ...overrides,
   };
 }
 
-/** Existing user: swap_and_settle_with_vault_bfq */
+/** Vault-backed settlement MoveCall. */
 function makeWithVaultCall(overrides?: Partial<MoveCallCommand>): MoveCallCommand {
   return {
     kind: 'MoveCall',
     packageId: '0xPACKAGE',
-    module: 'settle',
-    function: 'swap_and_settle_with_vault_bfq',
+    module: SETTLE_MODULE,
+    function: SETTLEMENT_SWAP_DIRECTION_FUNCTIONS.baseForQuote.withVault,
     typeArguments: [],
     arguments: [],
     ...overrides,
@@ -86,12 +91,12 @@ function makeDeepBookSwap(): MoveCallCommand {
 describe('Layer 1: validatePtbStructure', () => {
   // ── Pass cases ────────────────────────────────────────────────────────────
 
-  it('pass — swap_and_settle_new_user_bfq alone', () => {
+  it('pass — new-user settlement alone', () => {
     const commands: PtbCommand[] = [makeNewUserCall()];
     expect(validatePtbStructure(commands, ENV)).toEqual({ ok: true });
   });
 
-  it('pass — swap_and_settle_with_vault_bfq alone', () => {
+  it('pass — vault-backed settlement alone', () => {
     const commands: PtbCommand[] = [makeWithVaultCall()];
     expect(validatePtbStructure(commands, ENV)).toEqual({ ok: true });
   });
@@ -145,7 +150,7 @@ describe('Layer 1: validatePtbStructure', () => {
     if (!result.ok) expect(result.code).toBe('L1_NO_SETTLE');
   });
 
-  it('fail — only external MoveCall, no swap_and_settle', () => {
+  it('fail — only external MoveCall, no settlement call', () => {
     const commands: PtbCommand[] = [makeExternalCall()];
     const result = validatePtbStructure(commands, ENV);
     expect(result.ok).toBe(false);
@@ -154,7 +159,7 @@ describe('Layer 1: validatePtbStructure', () => {
 
   // ── Fail: multiple settle ─────────────────────────────────────────────────
 
-  it('fail — two swap_and_settle_new_user_bfq calls', () => {
+  it('fail — two new-user settlement calls', () => {
     const commands: PtbCommand[] = [makeNewUserCall(), makeNewUserCall()];
     const result = validatePtbStructure(commands, ENV);
     expect(result.ok).toBe(false);
@@ -755,27 +760,27 @@ describe('P1: validateUserCommands', () => {
 
   // ── Fail: settle forbidden ────────────────────────────────────────────────
 
-  it('fail — swap_and_settle_new_user_bfq rejected (P1_USER_SETTLE_FORBIDDEN)', () => {
+  it('fail — new-user settlement rejected (P1_USER_SETTLE_FORBIDDEN)', () => {
     const commands: PtbCommand[] = [makeNewUserCall()];
     const result = validateUserCommands(commands, ENV);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.code).toBe('P1_USER_SETTLE_FORBIDDEN');
   });
 
-  it('fail — swap_and_settle_with_vault_bfq rejected (P1_USER_SETTLE_FORBIDDEN)', () => {
+  it('fail — vault-backed settlement rejected (P1_USER_SETTLE_FORBIDDEN)', () => {
     const commands: PtbCommand[] = [makeWithVaultCall()];
     const result = validateUserCommands(commands, ENV);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.code).toBe('P1_USER_SETTLE_FORBIDDEN');
   });
 
-  it('fail — settle_with_credit rejected (P1_USER_SETTLE_FORBIDDEN)', () => {
+  it('fail — credit-only settlement rejected (P1_USER_SETTLE_FORBIDDEN)', () => {
     const commands: PtbCommand[] = [
       {
         kind: 'MoveCall',
         packageId: '0xPACKAGE',
-        module: 'settle',
-        function: 'settle_with_credit',
+        module: SETTLE_MODULE,
+        function: SETTLE_WITH_CREDIT_FUNCTION,
         typeArguments: [],
         arguments: [],
       },

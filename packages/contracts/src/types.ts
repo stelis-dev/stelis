@@ -15,9 +15,9 @@ export type SuiNetwork = 'mainnet' | 'testnet';
 /**
  * SettleProfile: identifies which settle path a PTB will take.
  *
- *   credit_general — settle_with_credit (with or without user commands)
- *   with_vault     — swap_and_settle_with_vault_* (any settlement swap direction)
- *   new_user       — swap_and_settle_new_user_*   (any settlement swap direction)
+ *   credit_general — credit-only settlement, with or without user commands
+ *   with_vault     — vault-backed swap settlement, any settlement swap direction
+ *   new_user       — first-use vault creation with swap settlement, any settlement swap direction
  *
  * rank: 0 (cheapest) → 2 (most expensive)
  */

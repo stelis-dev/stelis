@@ -2,7 +2,8 @@
  * Settle ABI lock test.
  *
  * Pins three generated views to a single golden anchor:
- *   1. `settle_core` Move parameter list (packages/contracts/move/sources/settle.move).
+ *   1. Production settlement entry point parameter lists
+ *      (packages/contracts/move/sources/settle.move).
  *   2. `SETTLE_FIELD_SCHEMA` + `VARIANT_LAYOUTS` TS reference
  *      (packages/core-relay/src/settlePayloadContract.ts).
  *   3. The 5 production settlement entry points — presence, non-test status,
@@ -24,6 +25,7 @@ import {
   variantClassFromFnName,
   type SettleVariantClass,
 } from '../src/settlePayloadContract.js';
+import { SETTLE_WITH_CREDIT_FUNCTION, SETTLEMENT_SWAP_DIRECTION_FUNCTIONS } from '@stelis/contracts';
 
 interface GoldenField {
   offset: number;
@@ -43,13 +45,16 @@ interface GoldenVariantLayout {
 
 interface Golden {
   sources: { move: string; typescript: string };
-  settleCore: {
-    moveFunction: string;
-    prefixParamCount: number;
-    suffixParamCount: number;
-  };
   settleBlock: { fieldCount: number; fields: GoldenField[] };
-  productionEntryPoints: Array<{ name: string; variantClass: SettleVariantClass }>;
+  productionEntryPoints: Array<{
+    contractKey:
+      | 'baseForQuote.newUser'
+      | 'baseForQuote.withVault'
+      | 'quoteForBase.newUser'
+      | 'quoteForBase.withVault'
+      | 'credit';
+    variantClass: SettleVariantClass;
+  }>;
   variantLayouts: Record<SettleVariantClass, GoldenVariantLayout>;
 }
 
@@ -119,33 +124,20 @@ function hasPublicFunction(src: string, funcName: string): boolean {
   return re.test(src);
 }
 
-// ─────────────────────────────────────────────
-// settle_core 13-field settle block
-// ─────────────────────────────────────────────
-
-describe('Settle ABI lock — settle_core signature', () => {
-  const coreParams = extractMoveFunctionParams(moveSrc, golden.settleCore.moveFunction);
-  const expectedTotal =
-    golden.settleCore.prefixParamCount +
-    golden.settleBlock.fieldCount +
-    golden.settleCore.suffixParamCount;
-
-  it(`${golden.settleCore.moveFunction} has ${expectedTotal} parameters (${golden.settleCore.prefixParamCount} prefix + ${golden.settleBlock.fieldCount} settle block + ${golden.settleCore.suffixParamCount} suffix)`, () => {
-    expect(coreParams.length).toBe(expectedTotal);
-  });
-
-  const blockStart = golden.settleCore.prefixParamCount;
-  const blockParams = coreParams.slice(blockStart, blockStart + golden.settleBlock.fieldCount);
-
-  for (const g of golden.settleBlock.fields) {
-    it(`settle_core param[${blockStart + g.offset}] is ${g.moveName} : ${g.moveType}`, () => {
-      const p = blockParams[g.offset];
-      expect(p, `settle_core param at offset ${g.offset} missing`).toBeDefined();
-      expect(p.name, `settle_core param name at offset ${g.offset}`).toBe(g.moveName);
-      expect(p.moveType, `settle_core param type at offset ${g.offset}`).toBe(g.moveType);
-    });
+function resolveProductionEntryName(entry: Golden['productionEntryPoints'][number]): string {
+  switch (entry.contractKey) {
+    case 'baseForQuote.newUser':
+      return SETTLEMENT_SWAP_DIRECTION_FUNCTIONS.baseForQuote.newUser;
+    case 'baseForQuote.withVault':
+      return SETTLEMENT_SWAP_DIRECTION_FUNCTIONS.baseForQuote.withVault;
+    case 'quoteForBase.newUser':
+      return SETTLEMENT_SWAP_DIRECTION_FUNCTIONS.quoteForBase.newUser;
+    case 'quoteForBase.withVault':
+      return SETTLEMENT_SWAP_DIRECTION_FUNCTIONS.quoteForBase.withVault;
+    case 'credit':
+      return SETTLE_WITH_CREDIT_FUNCTION;
   }
-});
+}
 
 // ─────────────────────────────────────────────
 // SETTLE_FIELD_SCHEMA TS reference
@@ -179,32 +171,64 @@ describe('Settle ABI lock — production entry points', () => {
   it(`settle.move has ${golden.productionEntryPoints.length} production entry points`, () => {
     expect(golden.productionEntryPoints.length).toBeGreaterThan(0);
     for (const entry of golden.productionEntryPoints) {
+      const entryName = resolveProductionEntryName(entry);
       expect(
-        hasPublicFunction(moveSrc, entry.name),
-        `production entry '${entry.name}' is not a public fun in settle.move`,
+        hasPublicFunction(moveSrc, entryName),
+        `production entry '${entry.contractKey}' is not a public fun in settle.move`,
       ).toBe(true);
       expect(
-        isTestOnlyFunction(moveSrc, entry.name),
-        `production entry '${entry.name}' is annotated as #[test_only]`,
+        isTestOnlyFunction(moveSrc, entryName),
+        `production entry '${entry.contractKey}' is annotated as #[test_only]`,
       ).toBe(false);
     }
   });
 
   for (const entry of golden.productionEntryPoints) {
-    describe(`entry ${entry.name} (${entry.variantClass})`, () => {
+    describe(`entry ${entry.contractKey} (${entry.variantClass})`, () => {
+      const entryName = resolveProductionEntryName(entry);
+
       it('variantClassFromFnName returns expected class', () => {
-        expect(variantClassFromFnName(entry.name)).toBe(entry.variantClass);
+        expect(variantClassFromFnName(entryName)).toBe(entry.variantClass);
       });
 
       it(`relayer_claim parameter position equals VARIANT_LAYOUTS.${entry.variantClass}.settleStartIndex`, () => {
-        const params = extractMoveFunctionParams(moveSrc, entry.name);
+        const params = extractMoveFunctionParams(moveSrc, entryName);
         const relayerClaimIdx = params.findIndex((p) => p.name === 'relayer_claim');
         expect(
           relayerClaimIdx,
-          `'relayer_claim' not found in ${entry.name} parameters`,
+          `'relayer_claim' not found in ${entry.contractKey} parameters`,
         ).toBeGreaterThanOrEqual(0);
         const expectedIdx = golden.variantLayouts[entry.variantClass].settleStartIndex;
         expect(relayerClaimIdx).toBe(expectedIdx);
+      });
+
+      for (const g of golden.settleBlock.fields) {
+        it(`settle block param[${g.offset}] is ${g.moveName} : ${g.moveType}`, () => {
+          const params = extractMoveFunctionParams(moveSrc, entryName);
+          const blockStart = golden.variantLayouts[entry.variantClass].settleStartIndex;
+          const p = params[blockStart + g.offset];
+          expect(
+            p,
+            `${entry.contractKey} settle block param at offset ${g.offset} missing`,
+          ).toBeDefined();
+          expect(p.name, `${entry.contractKey} param name at offset ${g.offset}`).toBe(
+            g.moveName,
+          );
+          expect(p.moveType, `${entry.contractKey} param type at offset ${g.offset}`).toBe(
+            g.moveType,
+          );
+        });
+      }
+
+      it('entrypoint parameter count matches variant layout', () => {
+        const params = extractMoveFunctionParams(moveSrc, entryName);
+        const layout = golden.variantLayouts[entry.variantClass];
+        const expectedTotal =
+          layout.settleStartIndex +
+          golden.settleBlock.fieldCount +
+          (layout.hasTailCredit ? 1 : 0) +
+          1; // Move-only ctx suffix, not part of the PTB argument layout.
+        expect(params.length).toBe(expectedTotal);
       });
     });
   }
@@ -222,21 +246,22 @@ describe('Settle ABI lock — no Coin<DEEP> input in swap entries', () => {
 
   for (const entry of golden.productionEntryPoints) {
     if (entry.variantClass === 'credit') continue; // credit-only has no payment_coin / swap
+    const entryName = resolveProductionEntryName(entry);
 
-    it(`${entry.name}: param after 'payment_coin' is 'swap_amount: u64' and no Coin<DEEP> anywhere`, () => {
-      const params = extractMoveFunctionParams(moveSrc, entry.name);
+    it(`${entry.contractKey}: param after 'payment_coin' is 'swap_amount: u64' and no Coin<DEEP> anywhere`, () => {
+      const params = extractMoveFunctionParams(moveSrc, entryName);
       const paymentIdx = params.findIndex((p) => p.name === 'payment_coin');
-      expect(paymentIdx, `'payment_coin' not found in ${entry.name}`).toBeGreaterThanOrEqual(0);
+      expect(paymentIdx, `'payment_coin' not found in ${entry.contractKey}`).toBeGreaterThanOrEqual(0);
 
       const next = params[paymentIdx + 1];
-      expect(next, `no parameter after 'payment_coin' in ${entry.name}`).toBeDefined();
-      expect(next.name, `param after 'payment_coin' in ${entry.name}`).toBe('swap_amount');
-      expect(next.moveType, `param type after 'payment_coin' in ${entry.name}`).toBe('u64');
+      expect(next, `no parameter after 'payment_coin' in ${entry.contractKey}`).toBeDefined();
+      expect(next.name, `param after 'payment_coin' in ${entry.contractKey}`).toBe('swap_amount');
+      expect(next.moveType, `param type after 'payment_coin' in ${entry.contractKey}`).toBe('u64');
 
       const deepCoinParams = params.filter((p) => DEEP_COIN_TYPE.test(p.moveType));
       expect(
         deepCoinParams.map((p) => p.name),
-        `${entry.name} must not accept any Coin<...::deep::DEEP> parameter (zero_deep_fee_only invariant)`,
+        `${entry.contractKey} must not accept any Coin<...::deep::DEEP> parameter (zero_deep_fee_only invariant)`,
       ).toEqual([]);
     });
   }

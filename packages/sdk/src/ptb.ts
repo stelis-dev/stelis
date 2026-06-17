@@ -3,8 +3,7 @@
  *
  * withdraw() — user-initiated vault withdrawal (SDK operation).
  *
- * Settle builders (swap_and_settle, settle_with_credit) are in
- * @stelis/core-relay/ptb/builders — server-side only.
+ * Settle builders are in @stelis/core-relay/ptb/builders — server-side only.
  */
 import { Transaction } from '@mysten/sui/transactions';
 

@@ -2,8 +2,8 @@
  * Generic prepare build pipeline for /prepare.
  *
  * Implements the multi-stage build strategy:
- *   Credit probe: for credit_general candidates, dry-run a credit-safe
- *             settle_with_credit PTB before payment-token resolution.
+ *   Credit probe: for credit_general candidates, dry-run a credit-only
+ *             settlement PTB before payment-token resolution.
  *   Pass 1:   Build with maxClaimMist → dry-run → extract actual gas
  *   Path decision: the pre-swap credit probe either selects final credit with
  *             zero slippage or leaves pass 1 / 1.5 / 2 on the swap path.

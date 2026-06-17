@@ -284,7 +284,7 @@ describe('roundTripPtb: real builder → parser → store entry adapter', () => 
 
   // ── credit-only ──
 
-  it('settle_with_credit — PTB args round-trip on credit-only path', () => {
+  it('credit-only settlement — PTB args round-trip', () => {
     const tx = buildCreditOnlyPtb();
     const parsed = parseFromTx(tx);
 

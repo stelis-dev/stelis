@@ -27,7 +27,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Transaction } from '@mysten/sui/transactions';
 import { toBase64 } from '@mysten/sui/utils';
 import { GAS_VARIANCE_FIXED_MIST } from '@stelis/core-relay';
-import { SLIPPAGE_CAP_BPS } from '@stelis/contracts';
+import { SETTLE_MODULE, SETTLEMENT_SWAP_DIRECTION_FUNCTIONS, SLIPPAGE_CAP_BPS } from '@stelis/contracts';
 import { PREPARE_TTL_MS } from '../src/handlers/prepare.js';
 import { computePolicyHash } from '../src/policyHash.js';
 
@@ -62,8 +62,8 @@ vi.mock('@mysten/sui/transactions', async (importOriginal) => {
               $kind: 'MoveCall',
               MoveCall: {
                 package: '0xPACKAGE',
-                module: 'settle',
-                function: 'swap_and_settle_new_user_bfq',
+                module: SETTLE_MODULE,
+                function: SETTLEMENT_SWAP_DIRECTION_FUNCTIONS.baseForQuote.newUser,
                 typeArguments: ['0xDEEP::deep::DEEP'],
                 arguments: [],
               },

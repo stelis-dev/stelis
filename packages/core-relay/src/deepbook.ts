@@ -263,9 +263,9 @@ export interface QuantityInQuote {
  *   baseForQuote → get_base_quantity_in;  input = pos 0, actualOutput = pos 1
  *   quoteForBase → get_quote_quantity_in; input = pos 1, actualOutput = pos 0
  *
- * `pay_with_deep` is hardcoded to `false` to match the input-fee mode used
- * by `swap_and_settle_*` (zero DEEP coin). The public API intentionally
- * does not expose a fee-mode parameter.
+ * `pay_with_deep` is hardcoded to `false` to match Stelis settlement swap
+ * input-fee mode (zero DEEP coin). The public API intentionally does not
+ * expose a fee-mode parameter.
  *
  * Tuple shape (verified against deployed testnet ABI):
  *   (u64, u64, u64) = (base_value, quote_value, deep_required)

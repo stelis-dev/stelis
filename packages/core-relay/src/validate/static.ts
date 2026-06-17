@@ -6,7 +6,7 @@
  * The app layer parses the PTB and passes PtbCommand[] and SettleArgs.
  */
 import { MAX_COMMANDS } from '../constants.js';
-import { SETTLE_MODULE, SETTLE_FUNCTIONS } from '@stelis/contracts';
+import { SETTLE_MODULE, SETTLE_FUNCTIONS, SETTLE_WITH_CREDIT_FUNCTION } from '@stelis/contracts';
 import type { PtbCommand, MoveCallCommand } from '@stelis/contracts';
 import type { OnchainConfig, RelayerEnv, SettleArgs, ValidationResult } from '../types.js';
 import { ok, fail } from '../types.js';
@@ -299,7 +299,7 @@ export function validateSettleArgs(
   if (!args.extractedSettlementSwapPath && args.slippageBufferMist !== 0n) {
     return fail(
       'L2_CREDIT_SLIPPAGE_NONZERO',
-      `settle_with_credit carries slippage_buffer_mist ${args.slippageBufferMist}; expected 0`,
+      `${SETTLE_WITH_CREDIT_FUNCTION} carries slippage_buffer_mist ${args.slippageBufferMist}; expected 0`,
     );
   }
 

@@ -34,7 +34,7 @@ import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { bcs } from '@mysten/sui/bcs';
 import { toBase64, toBase58 } from '@mysten/sui/utils';
 import { GAS_VARIANCE_FIXED_MIST } from '@stelis/core-relay';
-import { SLIPPAGE_CAP_BPS } from '@stelis/contracts';
+import { SETTLE_WITH_CREDIT_FUNCTION, SLIPPAGE_CAP_BPS } from '@stelis/contracts';
 import { hashTargets } from '../src/studio/promotionTargetPolicy.js';
 
 // ─────────────────────────────────────────────
@@ -128,7 +128,7 @@ const GENERIC_MOCK_CONFIG = {
 const GENERIC_QUOTED_RELAYER_FEE = GENERIC_MOCK_CONFIG.maxRelayerFeeMist;
 
 /**
- * Build a real, BCS-valid `settle_with_credit` transaction with sender +
+ * Build a real, BCS-valid credit-only settlement transaction with sender +
  * gas-owner pre-set. The caller picks the policyHash variant +
  * gas-payment digest filler so the same builder produces both the
  * "prepared" tx and a deterministically-different "tampered" tx.
@@ -165,10 +165,10 @@ async function buildCreditTx(opts: {
 
   const policyHashBytes = Buffer.from(opts.policyHashHex.replace('0x', ''), 'hex');
 
-  // Argument layout matches packages/contracts/move/sources/settle.move::settle_with_credit
-  // and the canonical `ARG_INDEX_MAP` in @stelis/core-relay.
+  // Argument layout matches the credit-only Move entrypoint and the canonical
+  // `ARG_INDEX_MAP` in @stelis/core-relay.
   tx.moveCall({
-    target: `${GENERIC_MOCK_CONFIG.packageId}::settle::settle_with_credit`,
+    target: `${GENERIC_MOCK_CONFIG.packageId}::settle::${SETTLE_WITH_CREDIT_FUNCTION}`,
     arguments: [
       objRef(GENERIC_MOCK_CONFIG.configId), // 0: config
       objRef(GENERIC_MOCK_CONFIG.vaultRegistryId), // 1: registry

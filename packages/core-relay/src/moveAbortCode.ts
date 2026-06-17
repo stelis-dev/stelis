@@ -55,7 +55,7 @@ export const VAULT_ABORT = {
 export type VaultAbortName = keyof typeof VAULT_ABORT;
 
 // ─────────────────────────────────────────────
-// config.move — admin / config guard aborts (2-9)
+// config.move — admin / config guard aborts (2-18)
 // ─────────────────────────────────────────────
 
 export const CONFIG_ABORT = {
@@ -67,6 +67,15 @@ export const CONFIG_ABORT = {
   EInvalidRelayerFeeCap: 7,
   EInvalidSpreadBps: 8,
   EPendingAdminExists: 9,
+  EPendingConfigExists: 10,
+  ENoPendingConfig: 11,
+  EConfigUpdateNotReady: 12,
+  EPendingTreasuryExists: 13,
+  ENoPendingTreasury: 14,
+  ETreasuryUpdateNotReady: 15,
+  EPendingPauseExists: 16,
+  ENoPendingPause: 17,
+  EPauseUpdateNotReady: 18,
 } as const satisfies Record<string, number>;
 
 export type ConfigAbortName = keyof typeof CONFIG_ABORT;

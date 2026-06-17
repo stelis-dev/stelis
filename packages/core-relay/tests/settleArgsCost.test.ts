@@ -10,9 +10,9 @@
  * the underlying parser against real PTB command shapes.
  *
  * Covers:
- *   P-1: swap_and_settle_new_user_bfq (1-hop) → correct fee extraction
- *   P-2: swap_and_settle_with_vault_bfq (1-hop) → correct fee extraction
- *   P-3: settle_with_credit → correct fee extraction
+ *   P-1: new-user swap settlement → correct fee extraction
+ *   P-2: vault-backed swap settlement → correct fee extraction
+ *   P-3: credit-only settlement → correct fee extraction
  *   P-4: wrong packageId → null return
  *   P-5: unrelated TX (no settle call) → null return
  *
@@ -77,8 +77,8 @@ function getTxData(buildFn: (tx: Transaction) => void): {
 // ─────────────────────────────────────────────
 
 describe('extractCostFromTxData — real PTB command/input structures', () => {
-  // P-1: swap_and_settle_new_user_bfq (1-hop)
-  it('P-1: extracts fees from swap_and_settle_new_user_bfq', () => {
+  // P-1: new-user swap settlement
+  it('P-1: extracts fees from new-user swap settlement', () => {
     const { commands, inputs } = getTxData((tx) => {
       buildSwapAndSettlePtb(tx, {
         variant: 'new_user',
@@ -99,8 +99,8 @@ describe('extractCostFromTxData — real PTB command/input structures', () => {
     expect(result!.expectedProtocolFeeMist).toBe(EXPECTED_PROTOCOL_FEE);
   });
 
-  // P-2: swap_and_settle_with_vault_bfq (1-hop)
-  it('P-2: extracts fees from swap_and_settle_with_vault_bfq', () => {
+  // P-2: vault-backed swap settlement
+  it('P-2: extracts fees from vault-backed swap settlement', () => {
     const { commands, inputs } = getTxData((tx) => {
       buildSwapAndSettlePtb(tx, {
         variant: 'with_vault',
@@ -123,8 +123,8 @@ describe('extractCostFromTxData — real PTB command/input structures', () => {
     expect(result!.expectedProtocolFeeMist).toBe(EXPECTED_PROTOCOL_FEE);
   });
 
-  // P-3: settle_with_credit
-  it('P-3: extracts fees from settle_with_credit', () => {
+  // P-3: credit-only settlement
+  it('P-3: extracts fees from credit-only settlement', () => {
     const { commands, inputs } = getTxData((tx) => {
       buildSettleWithCreditPtb(tx, {
         ...COMMON_SETTLE_PARAMS,

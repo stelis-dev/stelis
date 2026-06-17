@@ -4,6 +4,7 @@ import { toBase64 } from '@mysten/sui/utils';
 import { SUI_CLOCK_OBJECT_ID } from '../src/constants.js';
 import { ARG_INDEX_MAP } from '../src/parseSettleArgs.js';
 import { buildSettleWithCreditPtb } from '../src/ptb/builders.js';
+import { SETTLE_WITH_CREDIT_FUNCTION } from '@stelis/contracts';
 import {
   extractSettleTransactionFieldsFromData,
   extractSettleTransactionFieldsFromTxBytes,
@@ -51,7 +52,7 @@ function buildResolvedCreditTransaction(): Transaction {
     tx.sharedObjectRef({ objectId, initialSharedVersion: '1', mutable: true });
 
   tx.moveCall({
-    target: `${PKG}::settle::settle_with_credit`,
+    target: `${PKG}::settle::${SETTLE_WITH_CREDIT_FUNCTION}`,
     arguments: [
       sharedObject(CONFIG),
       sharedObject(REGISTRY),
@@ -131,7 +132,7 @@ describe('settle transaction fields', () => {
 
     const fields = extractSettleTransactionFieldsFromData(commands, inputs, PKG);
 
-    expect(fields.settleFunction).toBe('settle_with_credit');
+    expect(fields.settleFunction).toBe(SETTLE_WITH_CREDIT_FUNCTION);
     expect(fields.relayerClaimMist).toBe(SETTLE_PARAMS.relayerClaim);
     expect(fields.quotedRelayerFeeMist).toBe(SETTLE_PARAMS.quotedRelayerFeeMist);
     expect(fields.expectedProtocolFeeMist).toBe(SETTLE_PARAMS.expectedProtocolFeeMist);
@@ -197,7 +198,7 @@ describe('settle transaction fields', () => {
 
   it('fails extraction when a u64 settle field is malformed', () => {
     const { commands, inputs } = getTxData(buildCreditTransaction());
-    const indices = ARG_INDEX_MAP.settle_with_credit!;
+    const indices = ARG_INDEX_MAP[SETTLE_WITH_CREDIT_FUNCTION]!;
     const patchedInputs = patchPureInputBytes(
       commands,
       inputs,

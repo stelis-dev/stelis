@@ -11,7 +11,7 @@
  */
 import { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions';
 import { SUI_CLOCK_OBJECT_ID } from '../constants.js';
-import { SETTLEMENT_SWAP_DIRECTION_FUNCTIONS } from '@stelis/contracts';
+import { SETTLEMENT_SWAP_DIRECTION_FUNCTIONS, SETTLE_WITH_CREDIT_FUNCTION } from '@stelis/contracts';
 import { SETTLE_FIELD_SCHEMA, type SettleFieldValues } from '../settlePayloadContract.js';
 import type { SettlementSwapDirection } from '@stelis/contracts';
 
@@ -95,7 +95,7 @@ interface SwapAndSettleSharedParams {
   orderIdHash: Uint8Array;
 }
 
-/** Existing user: swap_and_settle_with_vault_{profile} + optional credit */
+/** Existing user: vault-backed swap settlement plus optional credit */
 export type SwapAndSettleWithVaultParams = SwapAndSettleCommonParams & {
   vaultId: string;
   useCreditAmount?: bigint;
@@ -187,7 +187,7 @@ export function buildSwapAndSettlePtb(tx: Transaction, params: SwapAndSettlePara
 }
 
 // ─────────────────────────────────────────────
-// settle_with_credit() PTB builder
+// Credit-only settlement PTB builder
 // ─────────────────────────────────────────────
 
 export interface SettleWithCreditPtbParams {
@@ -218,13 +218,13 @@ export interface SettleWithCreditPtbParams {
 }
 
 /**
- * Builds a settle_with_credit MoveCall: no swap, vault credit only.
+ * Builds the credit-only settlement MoveCall: no swap, vault credit only.
  */
 export function buildSettleWithCreditPtb(tx: Transaction, params: SettleWithCreditPtbParams): void {
   validateSettleInput(params);
   if (params.slippageBufferMist !== 0n) {
     throw new Error(
-      `settle_with_credit requires slippageBufferMist=0, got ${params.slippageBufferMist}`,
+      `${SETTLE_WITH_CREDIT_FUNCTION} requires slippageBufferMist=0, got ${params.slippageBufferMist}`,
     );
   }
 
@@ -239,7 +239,7 @@ export function buildSettleWithCreditPtb(tx: Transaction, params: SettleWithCred
   const settleArgs = buildSettlePureArgs(tx, params);
 
   tx.moveCall({
-    target: `${params.packageId}::settle::settle_with_credit`,
+    target: `${params.packageId}::settle::${SETTLE_WITH_CREDIT_FUNCTION}`,
     arguments: [...prefixArgs, ...settleArgs],
   });
 }

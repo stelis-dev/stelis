@@ -11,7 +11,12 @@ import { describe, it, expect } from 'vitest';
 import { Transaction } from '@mysten/sui/transactions';
 import { toBase64 } from '@mysten/sui/utils';
 import { convertSdkCommands } from '@stelis/core-relay/browser';
-import { SETTLE_MODULE, SETTLEMENT_SWAP_DIRECTION_FUNCTIONS, SUI_TYPE } from '@stelis/contracts';
+import {
+  SETTLE_MODULE,
+  SETTLE_WITH_CREDIT_FUNCTION,
+  SETTLEMENT_SWAP_DIRECTION_FUNCTIONS,
+  SUI_TYPE,
+} from '@stelis/contracts';
 import type { PtbCommand, MoveCallCommand, OtherCommand } from '@stelis/contracts';
 import {
   verifyPrefix,
@@ -217,8 +222,8 @@ describe('S-16: verifySuffix', () => {
     expect(() => verifySuffix(suffix, PKG)).not.toThrow();
   });
 
-  it('allows settle_with_credit (credit-only settlement, no swap)', () => {
-    const suffix: PtbCommand[] = [settle(PKG, 'settle_with_credit')];
+  it('allows credit-only settlement without swap', () => {
+    const suffix: PtbCommand[] = [settle(PKG, SETTLE_WITH_CREDIT_FUNCTION)];
     expect(() => verifySuffix(suffix, PKG)).not.toThrow();
   });
 });

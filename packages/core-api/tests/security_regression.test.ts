@@ -313,7 +313,7 @@ describe('executionPathKey canonical construction', () => {
     expect(buildExecutionPathKey(er)).toBe('0xDEEP::deep::DEEP:0xPOOL1:baseForQuote');
   });
 
-  it('settle_with_credit path (extractedSettlementSwapPath=undefined) yields "credit"', () => {
+  it('credit-only path yields "credit"', () => {
     // buildExecutionPathKey handles undefined — same branch as prepare.ts
     expect(buildExecutionPathKey(undefined)).toBe('credit');
   });
