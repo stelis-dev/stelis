@@ -18,6 +18,7 @@ Use this package when an agent runtime needs to:
 - inspect and use promotion endpoints when a developer JWT is available
 
 Stelis does not custody keys, sign for users, or build arbitrary Sui transactions in this MCP server. The caller must provide `txKindBytes` before prepare and a user signature before sponsor.
+The caller-provided `txKindBytes` must satisfy the [User TransactionKind rules](../../docs/api.md#user-transactionkind-rules).
 
 ## Install
 
@@ -58,6 +59,15 @@ The server follows the Stelis API agent tier model:
 Agents read `supportedSettlementSwapPaths` from `stelis_get_relay_config` and choose a `paymentTokenType` from that list. The host has one active settlement swap path per `paymentTokenType`; MCP tools do not accept a pool ID or path ID.
 
 The server never stores developer JWTs, user signatures, transaction bytes, or private keys.
+
+## Generic Tool Flow
+
+1. Call `stelis_get_relay_config` and choose a `paymentTokenType` from `supportedSettlementSwapPaths`.
+2. Build serialized `TransactionKind` bytes outside this MCP server. The bytes must satisfy the [User TransactionKind rules](../../docs/api.md#user-transactionkind-rules).
+3. Ask the user wallet to sign the prepare authorization message described in [docs/api.md](../../docs/api.md#post-relayprepare).
+4. Call `stelis_prepare_sponsored_transaction` with `txKindBytes`, `senderAddress`, `paymentTokenType`, `txKindBytesHash`, `prepareAuthorizationTimestampMs`, `prepareAuthorizationRequestNonce`, and `prepareAuthorizationSignature`.
+5. Ask the user wallet to sign the returned `txBytes`.
+6. Call `stelis_submit_signed_transaction` with the exact returned `txBytes`, `receiptId`, and `userSignature`.
 
 ## Host Errors
 

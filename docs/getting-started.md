@@ -4,6 +4,18 @@ This document gives the current local starting path for running the repository.
 
 It describes only commands and files currently present in this repository.
 
+## Choose Your Starting Path
+
+| Reader | Start here |
+| --- | --- |
+| App or service developer | [`packages/sdk/README.md`](../packages/sdk/README.md) |
+| Agent runtime integrator | [`packages/mcp-server/README.md`](../packages/mcp-server/README.md), then [`api.md → User TransactionKind rules`](./api.md#user-transactionkind-rules) |
+| Host operator | [`packages/app-api/README.md`](../packages/app-api/README.md), [`operations.md`](./operations.md), and [`parameters.md`](./parameters.md) |
+| Web app operator | [`packages/app-web/README.md`](../packages/app-web/README.md) or [`packages/app-admin/README.md`](../packages/app-admin/README.md) |
+| Contract reviewer | [`packages/contracts/move/README.md`](../packages/contracts/move/README.md), then [`invariants.md`](./invariants.md) |
+
+For the full documentation map, use [`index.md`](./index.md).
+
 ## Install
 
 ```bash

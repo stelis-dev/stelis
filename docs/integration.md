@@ -12,6 +12,8 @@ This document describes the generic sponsored transaction flow.
 6. Ask the user wallet or signer to sign returned `txBytes`.
 7. Call `POST /relay/sponsor` with `txBytes`, `userSignature`, and `receiptId`.
 
+The `txKindBytes` value must satisfy the [`User TransactionKind rules`](./api.md#user-transactionkind-rules). The short rule is: user-supplied transaction-kind bytes contain the user's action and no Stelis settlement call; the host appends the settlement call later.
+
 ```mermaid
 sequenceDiagram
     participant App

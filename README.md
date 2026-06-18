@@ -10,7 +10,7 @@ Stelis separates those concerns. On Sui, transactions still execute with SUI gas
 
 This matches how payment systems normally feel: processing costs are part of settlement, not a second currency the payer must acquire before every action. Sui already points in this direction with gasless stablecoin transfers. Stelis extends the same settlement framing beyond transfers to app actions, service actions, and agent actions that need programmable execution.
 
-Payment-token support is explicit. A host configures settlement-ready assets with viable SUI settlement routes, live liquidity, and route policy. That keeps the model broad across token assets while preserving operational control.
+Payment-token support is explicit. A host configures settlement-ready assets with viable SUI settlement swap paths, live liquidity, and host policy. That keeps the model broad across token assets while preserving operational control.
 
 Stelis uses Sui primitives to make the model concrete. Programmable Transaction Blocks compose the user action and settlement path in one execution flow. Sponsored gas separates the sender from the gas payer. Object ownership keeps vault credit user-owned.
 
@@ -34,6 +34,8 @@ The product surfaces are a TypeScript SDK for apps and services, an MCP server f
 ## Documentation
 
 Start with the [documentation map](./docs/index.md).
+
+For user transaction constraints, see [User TransactionKind rules](./docs/api.md#user-transactionkind-rules) and [relay invariants](./docs/invariants.md#relay-policy).
 
 For the package layout, product package policy, and dependency rules, see [repository structure](./docs/repository-structure.md).
 

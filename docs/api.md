@@ -41,8 +41,8 @@ Returns runtime capability:
 - `integrityPolicyVersion`
 
 Clients treat `supportedSettlementSwapPaths` as the host's supported payment token list and settlement swap path list.
-Each `paymentTokenType` appears once. `POST /relay/prepare` selects that token's single active settlement swap path with `paymentTokenType`; clients do not send a pool ID or path ID.
-`relayerRecipient` is an address, not the API host role or a sponsor signing account.
+Each `paymentTokenType` appears once and maps to one host-configured SUI-adjacent DeepBook one-hop settlement swap path. `POST /relay/prepare` selects that token's active settlement swap path with `paymentTokenType`; clients do not send a pool ID or path ID.
+The settlement swap path includes the DeepBook pool and `swapDirection` used by the host. `relayerRecipient` is an address, not the API host role or a sponsor signing account.
 
 ## POST /relay/prepare
 
@@ -63,6 +63,37 @@ Optional fields:
 - `slippageBps`
 - `gasMarginBps`
 - `orderId`
+
+Minimal JSON body:
+
+```json
+{
+  "txKindBytes": "<base64 TransactionKind bytes>",
+  "senderAddress": "0x...",
+  "paymentTokenType": "0x...::coin::COIN",
+  "txKindBytesHash": "<64 lowercase hex chars>",
+  "prepareAuthorizationTimestampMs": 1760000000000,
+  "prepareAuthorizationRequestNonce": "<client nonce>",
+  "prepareAuthorizationSignature": "<personal-message signature>"
+}
+```
+
+### User TransactionKind rules
+
+`txKindBytes` is a user-supplied `User TransactionKind`, not the final relayer-built transaction. The host validates it before sponsor slot checkout, nonce reservation, on-chain reads, or transaction building.
+
+The user-supplied `User TransactionKind` must satisfy these rules:
+
+- It contains zero Stelis settlement calls. The host appends exactly one settlement call later.
+- It contains at most `MAX_COMMANDS = 16` commands.
+- It does not reference `GasCoin` in command arguments.
+- It does not include `Publish` or `Upgrade`.
+- It does not call unauthorized Stelis package functions. `vault::withdraw` is allowed.
+- It does not include `FundsWithdrawal(Sponsor)`.
+- A malformed same-token `FundsWithdrawal(Sender)` is rejected with `UNACCOUNTABLE_WITHDRAWAL`.
+- A bounded same-token `FundsWithdrawal(Sender)` is allowed and is subtracted from address-balance funding.
+
+Funding resolution considers both coin object provenance and `FundsWithdrawal(Sender)` address-balance accounting. The current funding source outcomes are `coin_object`, `address_balance`, and `mixed_topup`. The current funding failure codes are `INSUFFICIENT_BALANCE` and `PAYMENT_COIN_CONFLICT`.
 
 The response includes transaction bytes for user signing and a `receiptId` for sponsor submission.
 The response cost fields include `relayerClaim`, which is the gas-recovery claim embedded in the settlement arguments. It is not the full relayer payout; on-chain settlement pays `relayerClaim + quotedRelayerFeeMist` to `relayerRecipient`.
@@ -101,9 +132,20 @@ Required fields:
 - `userSignature`
 - `receiptId`
 
+Minimal JSON body:
+
+```json
+{
+  "txBytes": "<base64 transaction bytes returned by prepare>",
+  "userSignature": "<transaction signature>",
+  "receiptId": "0x..."
+}
+```
+
 The route validates the prepared record, checks the transaction again, sponsor-signs, and submits.
 
 The submitted `txBytes` must match the prepared record bound to `receiptId`. The route verifies the user's transaction signature, checks that `tx.sender` matches the sender proven at prepare time, consumes the prepared record once, and then re-parses settlement fields from the hash-bound transaction bytes.
+The submitted `txBytes` is the final relayer-built transaction. It must contain exactly one allowed settlement call. This final transaction validation is separate from the user-supplied `User TransactionKind` validation performed during `POST /relay/prepare`.
 The `relayerClaim` returned by this route is the transaction-derived gas-recovery claim from the settlement arguments.
 
 ## Studio Promotion Routes

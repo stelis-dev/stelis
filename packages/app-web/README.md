@@ -63,7 +63,6 @@ The app fails fast at runtime if either is missing. Network is auto-detected fro
 
 ## Handoff
 
-- Need SDK integration guidance: [`../sdk/README.md`](../sdk/README.md)
 - Need the current HTTP route and field reference: [`../../docs/api.md`](../../docs/api.md)
 - Need package-level integration guidance: [`../sdk/README.md`](../sdk/README.md)
 - Need prepare-sign-sponsor flow guidance: [`../../docs/integration.md`](../../docs/integration.md)

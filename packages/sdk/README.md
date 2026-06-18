@@ -28,6 +28,7 @@ Consume the shipped SDK as-is. Modifying the SDK, contracts, or host/core source
 
 - Need to run your own relay host? Start with [docs/getting-started.md](../../docs/getting-started.md).
 - Need to call a deployed host directly without the SDK? Start with [docs/api.md](../../docs/api.md).
+- Need the transaction constraints enforced before prepare? Start with [docs/api.md → User TransactionKind rules](../../docs/api.md#user-transactionkind-rules).
 - Integrating against the hosted Studio promotion flow? Pair this README with [docs/payment-platform.md](../../docs/payment-platform.md).
 - Operating a host with Studio mode enabled? Use [docs/operations.md → Studio Mode Operations](../../docs/operations.md#studio-mode-operations).
 - Need product-owned payment token support because your selected host is missing your token? Move to [docs/payment-platform.md](../../docs/payment-platform.md) and [docs/operations.md -> Payment Token Settlement Swap Path Onboarding Procedure](../../docs/operations.md#token-pool-onboarding-procedure).
@@ -515,10 +516,13 @@ advanced flows.
 
 Important constraints still apply:
 
-- the PTB must contain exactly one Stelis settlement entry
+- the transaction passed to `executeSponsored()` must not contain a Stelis settlement call; the SDK and host append exactly one settlement call later
 - `publish` and `upgrade` commands from any package are still forbidden in sponsored flows
 - user-controlled arguments must not reference `GasCoin`
+- `FundsWithdrawal(Sponsor)` is forbidden, and same-token `FundsWithdrawal(Sender)` is handled by the host's payment-token funding rules
 - do not modify PTB after SDK takes over execution
+
+For the complete constraint list, see [docs/api.md → User TransactionKind rules](../../docs/api.md#user-transactionkind-rules).
 
 Stelis does not treat Payment Kit as a special protocol dependency.
 Payment Kit is one example of the broader rule: external Move-based flows can be
@@ -621,7 +625,7 @@ npm run test --workspace=@stelis/sdk
 Choose `@stelis/sdk` when:
 
 - you are integrating Stelis into a dApp
-- you want the sponsored and sponsored flow handled for you
+- you want the sponsored execution flow handled for you
 - you do not want to maintain settlement PTB assembly yourself
 
 Choose monorepo source helpers instead when:

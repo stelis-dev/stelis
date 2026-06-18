@@ -70,13 +70,20 @@ The IDs are used in code comments, tests, and package README files. They are sho
 
 | ID | Rule | Enforced by |
 | --- | --- | --- |
-| R-1 | A sponsored settlement transaction must contain exactly one allowed settlement call. | Relay validation |
+| R-1 | A final relayer-built transaction must contain exactly one allowed settlement call. | Relay validation |
 | R-2 | Sponsored transactions must not contain publish or upgrade commands. | Relay validation |
 | R-3 | The relayer recipient address in settlement arguments must match host configuration. | Relay validation |
 | R-7 | Settlement swap path identity must be present in the host's allowed settlement swap path list. | Relay validation |
 | R-8 | Settlement swap path hop order must match the allowed settlement swap path exactly. | Relay validation |
-| R-9 | Payment-token coins must not be consumed twice or overlap unsafely inside one transaction. | Relay validation |
+| R-9 | Payment-token funding must combine coin object provenance with `FundsWithdrawal(Sender)` address-balance accounting. It must not double-count the same funds inside one transaction. | Relay validation |
 | R-10 | Promotion-sponsored Move calls must match `STUDIO_ALLOWED_TARGETS`. | Promotion validation |
+| R-11 | A user-supplied generic `User TransactionKind` must contain zero settlement calls. | Relay validation |
+| R-12 | A user-supplied generic `User TransactionKind` must contain at most `MAX_COMMANDS = 16` commands. | Relay validation |
+| R-13 | A user-supplied generic `User TransactionKind` must not reference `GasCoin` in command arguments. | Relay validation |
+| R-14 | A user-supplied generic `User TransactionKind` must not include `FundsWithdrawal(Sponsor)`. | Relay validation |
+| R-15 | A malformed same-token `FundsWithdrawal(Sender)` in a user-supplied generic `User TransactionKind` is rejected with `UNACCOUNTABLE_WITHDRAWAL`. | Relay validation |
+| R-16 | A bounded same-token `FundsWithdrawal(Sender)` in a user-supplied generic `User TransactionKind` is allowed and subtracted from address-balance funding. | Relay validation |
+| R-17 | Each supported `paymentTokenType` maps to one host-configured SUI-adjacent DeepBook one-hop settlement swap path. | Relay configuration and validation |
 
 ## Code References
 

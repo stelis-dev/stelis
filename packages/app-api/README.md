@@ -16,6 +16,7 @@ This host runtime does not publish or upgrade contracts. After contracts are dep
 - Host Operator: start with [docs/getting-started.md](../../docs/getting-started.md), then [docs/operations.md](../../docs/operations.md).
 - Promotion operator: start with [docs/operations.md → Studio Mode Operations](../../docs/operations.md#studio-mode-operations).
 - API route and field reference: [docs/api.md](../../docs/api.md).
+- User transaction constraints: [docs/api.md → User TransactionKind rules](../../docs/api.md#user-transactionkind-rules).
 
 This README is an entry point for the package. It does not replace the route and field reference in `docs/api.md`.
 
@@ -55,6 +56,7 @@ For operator policy, sponsor management, Studio mode, and incident handling, use
 ## Related Documents
 
 - [docs/api.md](../../docs/api.md) - current relay and studio route reference
+- [docs/api.md → User TransactionKind rules](../../docs/api.md#user-transactionkind-rules) - generic prepare transaction constraints
 - [docs/getting-started.md](../../docs/getting-started.md) - self-hosted entry path
 - [docs/operations.md](../../docs/operations.md) - baseline Host Operator runbook
 - [docs/operations.md → Studio Mode Operations](../../docs/operations.md#studio-mode-operations) - Studio Operator runbook section

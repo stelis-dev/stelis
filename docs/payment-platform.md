@@ -41,5 +41,5 @@ These routes require a developer JWT. The promotion budget pays gas directly. Pr
 | --- | --- |
 | App or service developer | wallet UX, user signing, backend identity, and fulfillment |
 | Agent runtime | tool orchestration and user approval policy |
-| Host operator | deployed API host, sponsor funding, route config, and operations |
+| Host operator | deployed API host, sponsor funding, settlement swap path config, and operations |
 | Stelis packages | SDK, MCP server, API host, web apps, internal validation packages, and Move package |

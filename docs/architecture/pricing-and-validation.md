@@ -22,7 +22,7 @@ Before signing, the sponsor checks:
 
 1. the prepared transaction can still be found and consumed once;
 2. the submitted transaction bytes match the prepared record;
-3. settlement arguments still match current config and route policy;
+3. settlement arguments still match current config and host policy;
 4. preflight simulation succeeds;
 5. non-loss math passes;
 6. the sponsor slot can sign and submit.
@@ -38,7 +38,7 @@ Client guidance:
 - `LEASE_EXPIRED`: prepare again.
 - `REPREPARE_REQUIRED`: prepare again because server-side binding or config changed.
 - `ABUSE_BLOCKED`: back off until the server-provided retry time.
-- validation errors: fix the transaction or route choice before retrying.
+- validation errors: fix the transaction or settlement swap path choice before retrying.
 
 ## Validation Layers
 

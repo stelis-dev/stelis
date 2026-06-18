@@ -18,7 +18,7 @@ Pure TypeScript relay validation and quote library - framework-independent.
 
 ## Purpose
 
-Performs 3-layer validation before the relayer sponsors a user's
+Performs validation for user-supplied transaction-kind bytes and the final relayer-built
 Programmable Transaction Block (PTB):
 
 ```mermaid
@@ -122,6 +122,8 @@ SETTLEMENT_SWAP_DIRECTION_FUNCTIONS.quoteForBase.withVault; // 'swap_and_settle_
 
 ## L1 Validation Policy
 
+For user-supplied transaction-kind bytes, see [User TransactionKind rules](../../docs/api.md#user-transactionkind-rules). The P1 rules reject settlement calls before the host appends one. The L1 rules below validate the final relayer-built transaction, which must contain exactly one allowed settlement call.
+
 | Command                                         | Policy                                      |
 | ----------------------------------------------- | ------------------------------------------- |
 | `{pkg}::settle::swap_and_settle_new_user_bfq`   | ✅ Exactly 1 required (settlement swap direction `baseForQuote`) |
@@ -138,12 +140,14 @@ SETTLEMENT_SWAP_DIRECTION_FUNCTIONS.quoteForBase.withVault; // 'swap_and_settle_
 
 | Layer | Code                          | Description                                                       |
 | ----- | ----------------------------- | ----------------------------------------------------------------- |
-| P1    | `P1_TOO_MANY_COMMANDS`        | User PTB command count exceeds the cap                            |
-| P1    | `P1_GASCOIN_FORBIDDEN`        | User PTB references GasCoin                                       |
-| P1    | `P1_USER_SETTLE_FORBIDDEN`    | User PTB calls a settlement entrypoint                            |
-| P1    | `P1_UNAUTHORIZED_STELIS_CALL` | User PTB calls a non-entrypoint Stelis function                   |
-| P1    | `P1_FORBIDDEN_COMMAND`        | User PTB contains Publish/Upgrade                                 |
-| L1    | `L1_NO_SETTLE`                | No swap_and_settle call found                                     |
+| P1    | `P1_TOO_MANY_COMMANDS`        | User TransactionKind command count exceeds the cap                |
+| P1    | `P1_GASCOIN_FORBIDDEN`        | User TransactionKind references GasCoin                           |
+| P1    | `P1_USER_SETTLE_FORBIDDEN`    | User TransactionKind calls a settlement entrypoint                |
+| P1    | `P1_UNAUTHORIZED_STELIS_CALL` | User TransactionKind calls a non-entrypoint Stelis function       |
+| P1    | `P1_FORBIDDEN_COMMAND`        | User TransactionKind contains Publish/Upgrade                     |
+| P1    | `P1_SPONSOR_WITHDRAWAL_FORBIDDEN` | User TransactionKind contains FundsWithdrawal(Sponsor)        |
+| P1    | `UNACCOUNTABLE_WITHDRAWAL`    | User TransactionKind contains same-token FundsWithdrawal(Sender) that cannot be safely accounted |
+| L1    | `L1_NO_SETTLE`                | No settle or swap_and_settle call found                           |
 | L1    | `L1_MULTIPLE_SETTLE`          | More than one swap_and_settle call                                |
 | L1    | `L1_FORBIDDEN_COMMAND`        | Contains Publish/Upgrade                                          |
 | L1    | `L1_UNAUTHORIZED_STELIS_CALL` | Stelis package call other than swap*and_settle*\*                 |
@@ -159,7 +163,7 @@ SETTLEMENT_SWAP_DIRECTION_FUNCTIONS.quoteForBase.withVault; // 'swap_and_settle_
 | L2    | `L2_SETTLEMENT_SWAP_PATH_INTEGRITY`          | Settlement swap path metadata is malformed                        |
 | L2    | `L2_NO_SETTLEMENT_SWAP_PATHS_CONFIGURED`     | No configured settlement swap paths are available                 |
 | L2    | `L2_UNAUTHORIZED_SETTLEMENT_SWAP_PATH`       | Requested settlement swap path is not configured                  |
-| L2    | `L2_POLICY_HASH_MISMATCH`     | Submitted policy hash does not match route policy                 |
+| L2    | `L2_POLICY_HASH_MISMATCH`     | Submitted policy hash does not match host policy                  |
 | L2    | `L2_ORDER_ID_HASH_MISMATCH`   | Submitted order ID hash does not match expected hash              |
 | L3    | `L3_NONLOSS_VIOLATION`        | relayerClaim < simGas + gasVarianceFixedMist + slippageBufferMist |
 | L3    | `L3_GAS_BUDGET_EXCEEDED`      | gasBudget > maxClaimMist                                          |

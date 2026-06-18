@@ -41,6 +41,7 @@ These packages are private workspace packages. They exist to keep shared code in
 | --- | --- |
 | Package layout and dependency rules | [`repository-structure.md`](./repository-structure.md) |
 | HTTP routes | [`api.md`](./api.md) |
+| User TransactionKind constraints | [`api.md → User TransactionKind rules`](./api.md#user-transactionkind-rules) and [`invariants.md → Relay Policy`](./invariants.md#relay-policy) |
 | SDK, MCP, and promotion integration | [`integration.md`](./integration.md) |
 | Product terms and payment flows | [`payment-platform.md`](./payment-platform.md) |
 | Contract and relay rules | [`invariants.md`](./invariants.md) |
@@ -54,7 +55,7 @@ These packages are private workspace packages. They exist to keep shared code in
 
 - [`architecture/onchain-settlement.md`](./architecture/onchain-settlement.md)
 - [`architecture/pricing-and-validation.md`](./architecture/pricing-and-validation.md)
-- [`architecture/routing-and-boundaries.md`](./architecture/routing-and-boundaries.md)
+- [`architecture/settlement-swap-path-boundaries.md`](./architecture/settlement-swap-path-boundaries.md)
 - [`architecture/sponsor-pools.md`](./architecture/sponsor-pools.md)
 - [`architecture/prepare-sponsor-session.md`](./architecture/prepare-sponsor-session.md)
 

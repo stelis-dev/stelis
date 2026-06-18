@@ -8,8 +8,11 @@ This document summarizes the current security boundaries that are visible in the
 | --- | --- |
 | User assets | User vault assets are owned on-chain by the user. |
 | Sponsor gas | User commands must not reference `GasCoin`. |
+| User TransactionKind | Generic `/relay/prepare` accepts only a user-supplied `User TransactionKind` with zero settlement calls and at most `MAX_COMMANDS = 16` commands. |
+| Final relayer-built transaction | The host-built transaction must contain exactly one allowed settlement call. |
+| Payment-token funding | The host combines coin object provenance with `FundsWithdrawal(Sender)` address-balance accounting. |
 | Prepare authorization | Generic prepare requires a sender personal-message signature over the transaction-kind hash and request fields. |
-| Settlement swap path | Relay validation accepts only configured settlement swap paths. |
+| Settlement swap path | Relay validation accepts only configured settlement swap paths. Each supported `paymentTokenType` maps to one SUI-adjacent DeepBook one-hop settlement swap path. |
 | Prepare records | Prepare records are single-use and time-limited. |
 | Promotion calls | Promotion-sponsored Move calls must match `STUDIO_ALLOWED_TARGETS`. |
 | Admin routes | `/api/*` routes require an admin session. |
@@ -20,9 +23,11 @@ Move contracts enforce vault ownership, settlement input checks, relayer claim c
 
 Relay validation adds off-chain checks before the sponsor signs:
 
-- transaction shape checks
+- user-supplied `User TransactionKind` checks
+- final relayer-built transaction shape checks
 - settlement argument checks
 - settlement swap path authorization
+- payment-token funding checks using coin object provenance and `FundsWithdrawal(Sender)` address-balance accounting
 - non-loss math
 - policy-hash binding
 - gas-owner and sponsor checks

@@ -29,7 +29,7 @@ flowchart LR
 
 - [`architecture/onchain-settlement.md`](./architecture/onchain-settlement.md)
 - [`architecture/pricing-and-validation.md`](./architecture/pricing-and-validation.md)
-- [`architecture/routing-and-boundaries.md`](./architecture/routing-and-boundaries.md)
+- [`architecture/settlement-swap-path-boundaries.md`](./architecture/settlement-swap-path-boundaries.md)
 - [`architecture/sponsor-pools.md`](./architecture/sponsor-pools.md)
 - [`architecture/prepare-sponsor-session.md`](./architecture/prepare-sponsor-session.md)
 

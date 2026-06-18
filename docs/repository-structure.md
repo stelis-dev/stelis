@@ -158,8 +158,8 @@ Do not add exports just for symmetry. Add an export only when a verified consume
 
 | Document | Owns |
 | --- | --- |
-| [`README.md`](../README.md) | Public project entry point and product package routing |
-| [`docs/index.md`](./index.md) | Documentation map and reader routing |
+| [`README.md`](../README.md) | Public project entry point and product package navigation |
+| [`docs/index.md`](./index.md) | Documentation map and reader navigation |
 | `docs/repository-structure.md` | Package layout, product package policy, and dependency direction |
 | `docs/api.md` | Mounted HTTP route groups and current request/response fields |
 | `docs/integration.md` | SDK, MCP, and promotion integration flow |
@@ -168,7 +168,7 @@ Do not add exports just for symmetry. Add an export only when a verified consume
 | `docs/security.md` | Security boundaries visible in the current code |
 | `docs/parameters.md` | Public constants and required environment variables |
 | `docs/operations.md` | Host, Studio, sponsor, and admin operation notes |
-| `docs/architecture.md` | Architecture map and topic routing |
+| `docs/architecture.md` | Architecture map and topic navigation |
 | Package README files | Package-local commands, environment variables, exports, and usage notes |
 
 This documentation set includes only examples, scripts, and audit workflows that match files present in this repository.

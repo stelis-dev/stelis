@@ -503,4 +503,4 @@ The current contract uses distinct stage names such as `quote_rpc_failed`,
 - Security defenses and WAF requirement: [`security.md`](../security.md#web2-security-policy-api-and-infrastructure)
 - Non-loss math and profile budgets: [`pricing-and-validation.md`](./pricing-and-validation.md)
 - On-chain objects and settlement entry points: [`onchain-settlement.md`](./onchain-settlement.md)
-- Route policy and multi-token expansion: [`routing-and-boundaries.md`](./routing-and-boundaries.md)
+- Settlement swap path policy and multi-token expansion: [`settlement-swap-path-boundaries.md`](./settlement-swap-path-boundaries.md)

@@ -263,7 +263,7 @@ Full invariant list: [invariants.md](../../../docs/invariants.md)
 | E (Economy)        | 8     | Non-loss economic model                                                                 |
 | P (Pause)          | 3     | Pause security                                                                          |
 | A (Admin)          | 7     | Admin safety rails                                                                      |
-| R (Relay)          | 10    | Off-chain relayer validation                                                            |
+| R (Relay)          | 17    | Off-chain relayer validation                                                            |
 
 ## When Not to Start Here
 

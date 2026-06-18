@@ -1,8 +1,8 @@
-# Routing and Boundaries
+# Settlement Swap Path Boundaries
 
-This document describes current route configuration and package boundaries.
+This document describes current settlement swap path configuration and package boundaries.
 
-## Route Configuration
+## Settlement Swap Path Configuration
 
 `@stelis/app-api` reads `packages/app-api/settlement-swap-paths.json` at boot.
 
