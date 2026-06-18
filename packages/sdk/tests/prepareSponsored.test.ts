@@ -15,10 +15,12 @@ import { StelisSDK } from '../src/sdk.js';
 import type { RelayerConfig, PrepareResponse } from '../src/types.js';
 import { STELIS_CONTRACT_IDS } from '@stelis/contracts';
 
-const { mockExtractSettleFields, mockValidateSettleFields } = vi.hoisted(() => ({
-  mockExtractSettleFields: vi.fn(),
-  mockValidateSettleFields: vi.fn(),
-}));
+const { mockExtractSettleFields, mockValidateSettleFields, mockValidateGenericUserTx } =
+  vi.hoisted(() => ({
+    mockExtractSettleFields: vi.fn(),
+    mockValidateSettleFields: vi.fn(),
+    mockValidateGenericUserTx: vi.fn(),
+  }));
 
 // ── Module-level mock: queryUserCredit ─────────────────────────────────────────
 let _creditResult = { vaultObjectId: null as string | null, credit: '0', needsCreate: false };
@@ -50,6 +52,7 @@ vi.mock('@stelis/core-relay/browser', async (importOriginal) => {
     ...actual,
     extractSettleTransactionFieldsFromTxBytes: mockExtractSettleFields,
     validateSettleTransactionFields: mockValidateSettleFields,
+    validateGenericUserTransactionKind: mockValidateGenericUserTx,
   };
 });
 
@@ -171,6 +174,8 @@ describe('StelisSDK.prepareSponsored — prepare delegation', () => {
     mockExtractSettleFields.mockReturnValue({});
     mockValidateSettleFields.mockReset();
     mockValidateSettleFields.mockReturnValue({ ok: true });
+    mockValidateGenericUserTx.mockReset();
+    mockValidateGenericUserTx.mockReturnValue({ ok: true });
     prepareAuthorizationSigner.mockClear();
     _creditResult = { vaultObjectId: null, credit: '0', needsCreate: false };
     mockFetch.mockReset();
@@ -202,6 +207,40 @@ describe('StelisSDK.prepareSponsored — prepare delegation', () => {
     expect(prepareArgs['prepareAuthorizationRequestNonce']).toMatch(/^[0-9a-f]+$/);
     expect(prepareArgs['prepareAuthorizationSignature']).toBe('prepare-signature');
     expect(prepareAuthorizationSigner).toHaveBeenCalledWith(expect.any(Uint8Array));
+    expect(mockValidateGenericUserTx).toHaveBeenCalledTimes(1);
+    expect(mockValidateGenericUserTx.mock.calls[0][1]).toEqual({
+      network: RELAYER_CONFIG.network,
+      relayerAddress: RELAYER_CONFIG.relayerRecipient,
+      configId: STELIS_CONTRACT_IDS.testnet!.configId,
+      vaultRegistryId: STELIS_CONTRACT_IDS.testnet!.vaultRegistryId,
+      packageId: STELIS_CONTRACT_IDS.testnet!.packageId,
+    });
+    expect(mockValidateGenericUserTx.mock.calls[0][2]).toBe(DEEP_TYPE);
+  });
+
+  it('rejects locally when the shared user TransactionKind validator fails', async () => {
+    mockValidateGenericUserTx.mockReturnValueOnce({
+      ok: false,
+      code: 'P1_SPONSOR_WITHDRAWAL_FORBIDDEN',
+      message: 'sponsor withdrawal forbidden',
+    });
+    const sdk = await createSDK();
+
+    await expect(
+      sdk.prepareSponsored(new Transaction(), {
+        client: makeMockSuiClient(),
+        addr: ADDR,
+        paymentToken: { type: DEEP_TYPE },
+        prepareAuthorizationSigner,
+      }),
+    ).rejects.toMatchObject({
+      code: 'P1_SPONSOR_WITHDRAWAL_FORBIDDEN',
+      message: 'sponsor withdrawal forbidden',
+      status: 422,
+    });
+
+    expect(mockPrepare).not.toHaveBeenCalled();
+    expect(prepareAuthorizationSigner).not.toHaveBeenCalled();
   });
 
   // ── 2: Returns txBytes from prepare response ────────────────────────
@@ -394,6 +433,12 @@ describe('StelisSDK.prepareSponsored — preflight checks', () => {
   beforeEach(() => {
     mockPrepare.mockReset();
     mockPrepare.mockResolvedValue(MOCK_PREPARE_RESPONSE);
+    mockExtractSettleFields.mockReset();
+    mockExtractSettleFields.mockReturnValue({});
+    mockValidateSettleFields.mockReset();
+    mockValidateSettleFields.mockReturnValue({ ok: true });
+    mockValidateGenericUserTx.mockReset();
+    mockValidateGenericUserTx.mockReturnValue({ ok: true });
     _creditResult = { vaultObjectId: null, credit: '0', needsCreate: false };
     mockFetch.mockReset();
   });

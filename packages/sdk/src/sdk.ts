@@ -25,12 +25,11 @@ import { assertNoGasPreset } from '@stelis/core-relay/browser';
 import {
   computeRelayerCosts,
   DEFAULT_GAS_MARGIN_BPS,
-  convertSdkCommands,
   encodePrepareAuthorizationMessage,
   extractSettleTransactionFieldsFromTxBytes,
   sha256Bytes,
   validateSettleTransactionFields,
-  validateUserCommands,
+  validateGenericUserTransactionKind,
 } from '@stelis/core-relay/browser';
 import { STELIS_CONTRACT_IDS, DEEPBOOK_IDS, requireContractId } from '@stelis/contracts';
 import { fetchRelayConfig, parseRelayerConfig } from './connection.js';
@@ -487,8 +486,8 @@ export class StelisSDK {
     const kindBytes = await tx.build({ client: opts.client, onlyTransactionKind: true });
     const txKindBytes = toBase64(kindBytes);
     const userTx = Transaction.fromKind(kindBytes);
-    const userCommandValidation = validateUserCommands(
-      convertSdkCommands(userTx.getData().commands as unknown[]),
+    const userCommandValidation = validateGenericUserTransactionKind(
+      userTx,
       {
         network: this._relayerConfig.network,
         relayerAddress: this._relayerConfig.relayerRecipient,
@@ -496,6 +495,7 @@ export class StelisSDK {
         vaultRegistryId: this._vaultRegistryId,
         packageId: this._packageId,
       },
+      opts.paymentToken.type,
     );
     if (!userCommandValidation.ok) {
       throw new StelisApiException(
