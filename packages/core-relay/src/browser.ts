@@ -52,6 +52,7 @@ export {
   validateSettleArgs,
   isMoveCall,
 } from './validate/static.js';
+export { validateGenericUserTransactionKind } from './validate/transactionKind.js';
 export { validateNonlossSponsor } from './validate/nonloss.js';
 export type { SponsorNonlossContext } from './validate/nonloss.js';
 

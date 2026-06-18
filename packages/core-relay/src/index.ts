@@ -17,6 +17,7 @@ export * from './browser.js';
 // Main-barrel-only defaults/errors consumed by core-api server code.
 export { DEFAULT_SLIPPAGE_BPS } from './deepbook.js';
 export { SlippageQueryError } from './deepbookErrors.js';
+export { validateGenericSettlementTransaction } from './validate/transactionKind.js';
 
 // Vault object-field extractors are needed by core-api host context, but have
 // no verified browser/SDK consumer.
