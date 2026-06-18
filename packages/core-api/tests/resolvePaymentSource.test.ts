@@ -555,6 +555,96 @@ describe('resolvePaymentSource — prefixAbConsumed (R-9 AB accounting)', () => 
   });
 });
 
+describe('resolvePaymentSource — object and address-balance funding lock', () => {
+  it('selects coin_object when usable coin objects cover the amount after address-balance withdrawal', async () => {
+    const sui = makeMockSui([{ objectId: COIN_A, balance: '8000' }], '10000');
+    const result = await resolvePaymentSource(
+      sui,
+      '0xowner',
+      'TOKEN',
+      7000n,
+      'TKN',
+      makePrefixUsage({ prefixAbConsumed: 9000n }),
+    );
+
+    expect(result.source).toBe('coin_object');
+    expect(result.usableCoinTotal).toBe(8000n);
+    expect(result.addressBalance).toBe(0n);
+    expect(result.redeemDelta).toBe(0n);
+  });
+
+  it('selects address_balance when remaining address balance covers the amount', async () => {
+    const sui = makeMockSui([], '10000');
+    const result = await resolvePaymentSource(
+      sui,
+      '0xowner',
+      'TOKEN',
+      8000n,
+      'TKN',
+      makePrefixUsage({ prefixAbConsumed: 2000n }),
+    );
+
+    expect(result.source).toBe('address_balance');
+    expect(result.usableCoinTotal).toBe(0n);
+    expect(result.addressBalance).toBe(8000n);
+    expect(result.redeemDelta).toBe(8000n);
+  });
+
+  it('selects mixed_topup when usable coin objects and remaining address balance cover together', async () => {
+    const sui = makeMockSui([{ objectId: COIN_A, balance: '3000' }], '10000');
+    const result = await resolvePaymentSource(
+      sui,
+      '0xowner',
+      'TOKEN',
+      6000n,
+      'TKN',
+      makePrefixUsage({ prefixAbConsumed: 6000n }),
+    );
+
+    expect(result.source).toBe('mixed_topup');
+    expect(result.usableCoinTotal).toBe(3000n);
+    expect(result.addressBalance).toBe(4000n);
+    expect(result.redeemDelta).toBe(3000n);
+  });
+
+  it('returns INSUFFICIENT_BALANCE when no object or remaining address balance covers the amount', async () => {
+    const sui = makeMockSui([], '10000');
+
+    await expect(
+      resolvePaymentSource(
+        sui,
+        '0xowner',
+        'TOKEN',
+        3000n,
+        'TKN',
+        makePrefixUsage({ prefixAbConsumed: 8000n }),
+      ),
+    ).rejects.toMatchObject({
+      code: 'INSUFFICIENT_BALANCE',
+    });
+  });
+
+  it('returns PAYMENT_COIN_CONFLICT when payment coin objects are unavailable and address balance is unavailable', async () => {
+    const sui = makeMockSui([{ objectId: COIN_A, balance: '5000' }], '10000');
+
+    await expect(
+      resolvePaymentSource(
+        sui,
+        '0xowner',
+        'TOKEN',
+        4000n,
+        'TKN',
+        makePrefixUsage({
+          consumed: new Set([COIN_A]),
+          prefixAbConsumed: 10000n,
+        }),
+      ),
+    ).rejects.toMatchObject({
+      code: 'PAYMENT_COIN_CONFLICT',
+    });
+  });
+});
+
 // ── Merge credit: mergeConsumedIds integration tests ──────────────────────
 
 describe('resolvePaymentSource — mergeDestToSources (carrier-aware merge credit)', () => {

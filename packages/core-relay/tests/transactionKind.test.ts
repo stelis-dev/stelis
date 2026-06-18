@@ -124,9 +124,12 @@ describe('validateGenericUserTransactionKind', () => {
     if (!result.ok) expect(result.code).toBe('P1_GASCOIN_FORBIDDEN');
   });
 
-  it('rejects forbidden non-MoveCall commands', () => {
+  it.each([
+    ['Publish', { $kind: 'Publish', Publish: {} }],
+    ['Upgrade', { $kind: 'Upgrade', Upgrade: {} }],
+  ])('rejects forbidden non-MoveCall command %s', (_kind, command) => {
     const result = validateGenericUserTransactionKind(
-      txWithData([{ $kind: 'Publish', Publish: {} }]),
+      txWithData([command]),
       ENV,
       PAYMENT_TYPE,
     );
@@ -211,5 +214,15 @@ describe('validateGenericSettlementTransaction', () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.code).toBe('L1_NO_SETTLE');
+  });
+
+  it('rejects final transactions with multiple settlement calls', () => {
+    const result = validateGenericSettlementTransaction(
+      txWithData([settleCall(), settleCall()]),
+      ENV,
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe('L1_MULTIPLE_SETTLE');
   });
 });
