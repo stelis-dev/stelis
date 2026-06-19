@@ -50,7 +50,7 @@ export function ConnectCredit({
         // SUI balance fetch failed — non-critical for sandbox display
       }
 
-      // ── Payment token balance (Object balance + AccountBalance) ─
+      // ── Payment token balance (coin objects + address balance) ─
       try {
         const bal = await client.getBalance({
           owner: account.address,

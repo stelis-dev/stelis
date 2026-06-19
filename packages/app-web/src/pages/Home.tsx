@@ -49,11 +49,11 @@ export function HomePage() {
               <span style={{ fontSize: 20, lineHeight: 1 }}>🔒</span>
               <div>
                 <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 2 }}>
-                  Owned-object protection
+                  User-owned vault protection
                 </div>
                 <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-                  User balances live in Sui owned objects. No third party can take ownership. Users
-                  can withdraw directly anytime.
+                  Vault credit lives in a user-owned Sui object. Payment-token funding can use coin
+                  objects or address balance, and users can withdraw vault credit directly anytime.
                 </div>
               </div>
             </div>

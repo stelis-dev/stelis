@@ -11,7 +11,7 @@ const STATUS_PROBE_INTERVAL_MS = 30_000;
 
 type ServiceStatus = 'operational' | 'degraded' | 'outage' | 'loading';
 
-interface PoolInfo {
+interface SettlementSwapPathInfo {
   paymentTokenSymbol: string;
   paymentTokenType: string;
   effectiveFeeRateBps: number;
@@ -19,7 +19,7 @@ interface PoolInfo {
 
 interface RelayerConfig {
   network: string;
-  supportedSettlementSwapPaths: PoolInfo[];
+  supportedSettlementSwapPaths: SettlementSwapPathInfo[];
 }
 
 interface Incident {
@@ -137,15 +137,21 @@ function MetricCard({
   );
 }
 
-function PoolRow({ pool, network }: { pool: PoolInfo; network: string }) {
+function SettlementSwapPathRow({
+  settlementSwapPath,
+  network,
+}: {
+  settlementSwapPath: SettlementSwapPathInfo;
+  network: string;
+}) {
   const feeLabel =
-    pool.effectiveFeeRateBps === 0
+    settlementSwapPath.effectiveFeeRateBps === 0
       ? 'Whitelisted (0% fee)'
-      : `Input fee: ${formatBpsPercent(pool.effectiveFeeRateBps)}`;
+      : `Input fee: ${formatBpsPercent(settlementSwapPath.effectiveFeeRateBps)}`;
   return (
     <div className="token-row">
       <div className="token-info">
-        <span className="token-symbol">{pool.paymentTokenSymbol}</span>
+        <span className="token-symbol">{settlementSwapPath.paymentTokenSymbol}</span>
         <span className="token-network">
           {network} · {feeLabel}
         </span>
@@ -205,13 +211,17 @@ export function StatusPage() {
         </p>
       </section>
 
-      {/* Token / route support — dynamic from /relay/config */}
+      {/* Token and settlement swap path support — dynamic from /relay/config */}
       <section className="status-section">
         <h2 className="section-title">Supported Tokens &amp; Settlement Swap Paths</h2>
         <div className="token-list">
           {config ? (
             config.supportedSettlementSwapPaths.map((settlementSwapPath, i) => (
-              <PoolRow key={i} pool={settlementSwapPath} network={config.network} />
+              <SettlementSwapPathRow
+                key={i}
+                settlementSwapPath={settlementSwapPath}
+                network={config.network}
+              />
             ))
           ) : (
             <div className="token-row" style={{ color: 'var(--text-muted)', fontSize: 13 }}>
@@ -233,7 +243,10 @@ export function StatusPage() {
         <div className="endpoint-status-list">
           {[
             { path: 'GET /relay/status', desc: 'Health check' },
-            { path: 'GET /relay/config', desc: 'Relayer config (pools, network)' },
+            {
+              path: 'GET /relay/config',
+              desc: 'Relayer config (settlement swap paths, network)',
+            },
             {
               path: 'POST /relay/prepare',
               desc: 'Build sponsored TX (dry-run + cost, 422 on simulation rejection)',

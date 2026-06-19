@@ -5,7 +5,7 @@
  * §1: Sponsor Operations — refill controls and thresholds
  * §2: Fee Config — relayer + on-chain fee parameters
  * §3: Studio Settings — JWT/API key config status (studio-only)
- * §4: Supported Pairs — payment token routing
+ * §4: Supported Settlement Swap Paths — payment token settlement
  * §5: On-chain IDs — contract reference (rarely changes)
  *
  */
@@ -314,10 +314,10 @@ export function ConfigPage() {
         </>
       )}
 
-      {/* ═══════════════ §4: Supported Pairs ═══════════════ */}
+      {/* ═══════════════ §4: Supported Settlement Swap Paths ═══════════════ */}
       {data?.supportedSettlementSwapPaths && data.supportedSettlementSwapPaths.length > 0 && (
         <div className="admin-card">
-          <div className="admin-card-title">Supported Pairs</div>
+          <div className="admin-card-title">Supported Settlement Swap Paths</div>
           <table className="admin-table">
             <thead>
               <tr>
@@ -411,7 +411,7 @@ export function ConfigPage() {
                 [
                   'DEEPBOOK_PACKAGE_ID',
                   data.onChainIds.deepbookPackageId,
-                  'DeepBook v3 package ID for swap routing',
+                  'DeepBook v3 package ID for settlement swap execution',
                 ] as const,
               ].map(([label, value, tooltip]) => (
                 <tr key={label}>

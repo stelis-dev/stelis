@@ -7,8 +7,8 @@
  * app-web's RELAYER_BASE in relayerEndpoint.ts).
  *
  * Cross-package contract types used by this file (sponsor operations admin
- * payload family + transport pool config) come from `@stelis/contracts` as
- * `import type` only. `DashboardPage.tsx` imports one runtime
+ * payload family + settlement swap path response data) come from
+ * `@stelis/contracts` as `import type` only. `DashboardPage.tsx` imports one runtime
  * withdraw-message helper from `@stelis/contracts`, while this client
  * keeps its request helpers local and intentionally type-only with
  * respect to `@stelis/contracts`.
