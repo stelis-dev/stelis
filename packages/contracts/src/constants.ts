@@ -205,9 +205,9 @@ export interface StelisContractIds {
  */
 export const STELIS_CONTRACT_IDS: Record<SuiNetwork, StelisContractIds | null> = {
   testnet: {
-    packageId: '0x6b8cc567b426eb77174ee1bda7e918ea6b669bd47f4a7532aab274be3609eb57',
-    configId: '0x3e3e850c64f45ffd8c626d3df0f05cecea3d24fd0ec098ce1a01e8961c9400f3',
-    vaultRegistryId: '0x7ab82fd063f42f6c2f08e2c351722f55482c4d9b529e2262f7c578ecabbb8e0b',
+    packageId: '0xf5e47d8c1f7c842b3369ef77ea4bab19eafa71780a118e3fe3eaef9e76885d64',
+    configId: '0x73793aa89f04420355738213b0a98d2a41a568588a42927e33a69f885b22fdb1',
+    vaultRegistryId: '0x63ce68518baf0988418e9c49d147b349bb9d683f012ba100530980fd68e31e36',
   },
   mainnet: null,
 };
