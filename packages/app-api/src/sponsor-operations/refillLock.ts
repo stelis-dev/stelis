@@ -18,9 +18,7 @@ import { SPONSOR_OPERATIONS_KEY_PREFIX } from './redisState.js';
 
 export const refillLockKey = (slotAddress: string): string =>
   `${SPONSOR_OPERATIONS_KEY_PREFIX}refill-lock:${slotAddress}`;
-export const sponsorRefillAccountDispatchLockKey = (
-  sponsorRefillAccountAddress: string,
-): string =>
+export const sponsorRefillAccountDispatchLockKey = (sponsorRefillAccountAddress: string): string =>
   `${SPONSOR_OPERATIONS_KEY_PREFIX}sponsor-refill-account-dispatch-lock:${sponsorRefillAccountAddress}`;
 
 /**

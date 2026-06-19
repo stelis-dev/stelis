@@ -218,7 +218,9 @@ interface DeepbookFeeParameters {
 
 function scaledFeeRateToBpsCeil(rate: bigint, feeScaling: bigint): number {
   if (feeScaling <= 0n) {
-    throw new Error(`[SETTLEMENT_SWAP_PATHS_JSON] DeepBook fee scaling must be positive, got ${feeScaling}`);
+    throw new Error(
+      `[SETTLEMENT_SWAP_PATHS_JSON] DeepBook fee scaling must be positive, got ${feeScaling}`,
+    );
   }
   if (rate <= 0n) return 0;
   const bps = (rate * 10000n + feeScaling - 1n) / feeScaling;
@@ -247,7 +249,9 @@ async function queryDeepbookConstantU64(
 ): Promise<bigint> {
   const rv = await runConstantsViewCall(client, deepbookPackageId, viewFn);
   if (!rv || rv.length < 1) {
-    throw new Error(`[SETTLEMENT_SWAP_PATHS_JSON] DeepBook constants::${viewFn}() returned no value`);
+    throw new Error(
+      `[SETTLEMENT_SWAP_PATHS_JSON] DeepBook constants::${viewFn}() returned no value`,
+    );
   }
   return decodeBcsU64(rv[0].bcs);
 }
@@ -262,10 +266,14 @@ async function queryDeepbookFeeParameters(
   ]);
 
   if (feeScaling <= 0n) {
-    throw new Error(`[SETTLEMENT_SWAP_PATHS_JSON] DeepBook constants::float_scaling() must be positive`);
+    throw new Error(
+      `[SETTLEMENT_SWAP_PATHS_JSON] DeepBook constants::float_scaling() must be positive`,
+    );
   }
   if (inputFeePenaltyMultiplier <= 0n) {
-    throw new Error(`[SETTLEMENT_SWAP_PATHS_JSON] DeepBook constants::fee_penalty_multiplier() must be positive`);
+    throw new Error(
+      `[SETTLEMENT_SWAP_PATHS_JSON] DeepBook constants::fee_penalty_multiplier() must be positive`,
+    );
   }
 
   return { feeScaling, inputFeePenaltyMultiplier };
@@ -284,13 +292,17 @@ async function getPoolTypeInfo(client: SuiGrpcClient, poolId: string): Promise<P
   const typeStr = resp.object.type;
 
   if (!typeStr) {
-    throw new Error(`[SETTLEMENT_SWAP_PATHS_JSON] Pool ${poolId}: object not found or type unavailable.`);
+    throw new Error(
+      `[SETTLEMENT_SWAP_PATHS_JSON] Pool ${poolId}: object not found or type unavailable.`,
+    );
   }
 
   // Parse: 0x...::pool::Pool<BaseType, QuoteType>
   const match = typeStr.match(/::pool::Pool<(.+),\s*(.+)>$/);
   if (!match || match.length < 3) {
-    throw new Error(`[SETTLEMENT_SWAP_PATHS_JSON] Pool ${poolId}: cannot parse type params from "${typeStr}"`);
+    throw new Error(
+      `[SETTLEMENT_SWAP_PATHS_JSON] Pool ${poolId}: cannot parse type params from "${typeStr}"`,
+    );
   }
 
   return {
@@ -411,7 +423,9 @@ async function queryCoinMetadata(
   }
 
   if (typeof meta.symbol !== 'string' || meta.symbol.length === 0) {
-    throw new Error(`[SETTLEMENT_SWAP_PATHS_JSON] CoinMetadata for ${coinType}: symbol is missing or empty`);
+    throw new Error(
+      `[SETTLEMENT_SWAP_PATHS_JSON] CoinMetadata for ${coinType}: symbol is missing or empty`,
+    );
   }
   if (typeof meta.decimals !== 'number' || !Number.isInteger(meta.decimals) || meta.decimals < 0) {
     throw new Error(
@@ -669,7 +683,9 @@ function decodeBcsU64(bcs: unknown): bigint {
 function decodeBcsBool(bcs: unknown): boolean {
   const buf = bcs instanceof Uint8Array ? bcs : new Uint8Array(bcs as ArrayBuffer);
   if (buf.length !== 1) {
-    throw new Error(`[SETTLEMENT_SWAP_PATHS_JSON] BCS bool decode: expected 1 byte, got ${buf.length}`);
+    throw new Error(
+      `[SETTLEMENT_SWAP_PATHS_JSON] BCS bool decode: expected 1 byte, got ${buf.length}`,
+    );
   }
   return buf[0] !== 0;
 }

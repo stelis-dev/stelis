@@ -2,10 +2,10 @@
  * [app-web] Runtime environment — fail-fast on missing required env.
  *
  * Network is resolved from the API via AppConfigContext, not from env.
- * Only VITE_STELIS_RELAYER_URL and VITE_SUI_RPC_URL remain as build-time env.
+ * Only VITE_STELIS_RELAYER_URL remains as a required build-time env.
  */
 
-function readRequiredEnv(key: 'VITE_STELIS_RELAYER_URL' | 'VITE_SUI_RPC_URL'): string {
+function readRequiredEnv(key: 'VITE_STELIS_RELAYER_URL'): string {
   const raw = import.meta.env[key];
   const value = typeof raw === 'string' ? raw.trim() : '';
   if (value) return value;
@@ -23,5 +23,4 @@ function parseRelayBase(raw: string): string {
   return normalized;
 }
 
-export const APP_WEB_SUI_RPC_URL = readRequiredEnv('VITE_SUI_RPC_URL');
 export const APP_WEB_RELAYER_BASE = parseRelayBase(readRequiredEnv('VITE_STELIS_RELAYER_URL'));

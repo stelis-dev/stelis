@@ -35,9 +35,6 @@ Create a `.env` file in this package directory:
 # Network (testnet/mainnet) is auto-detected from the API via GET /relay/config.
 VITE_STELIS_RELAYER_URL=https://your-relayer.example.com/relay
 
-# Required: Sui RPC URL for the target network
-VITE_SUI_RPC_URL=https://fullnode.testnet.sui.io:443
-
 # Optional: repository docs base URL used by /docs deep links (GitHub links hidden if omitted)
 VITE_REPO_DOCS_BASE_URL=https://github.com/stelis-dev/stelis/blob/main
 
@@ -46,8 +43,8 @@ VITE_REPO_DOCS_BASE_URL=https://github.com/stelis-dev/stelis/blob/main
 # VITE_STELIS_UI_MODE=relay
 ```
 
-`VITE_STELIS_RELAYER_URL` and `VITE_SUI_RPC_URL` are required.
-The app fails fast at runtime if either is missing. Network is auto-detected from the relayer API.
+`VITE_STELIS_RELAYER_URL` is required. The app fails fast at runtime if it is missing.
+Network is auto-detected from the relayer API, and the sample page selects the matching public Sui RPC endpoint internally.
 
 ## Pages
 
@@ -81,6 +78,7 @@ npm run build --workspace=@stelis/app-web
 The output is written to `packages/app-web/dist/`.
 Run `npm run preview --workspace=@stelis/app-web` to preview the production bundle locally.
 The output is a static SPA suitable for static hosting such as GitHub Pages or a CDN.
+The static bundle uses relative asset URLs, so it can run from either a domain root or a GitHub Pages project path.
 
 ## Environment Setup
 
@@ -94,6 +92,8 @@ See [`.env.example`](./.env.example) for all available variables.
 
 ## Static Deployment
 
+This package is the public sample-page deployment target. Do not publish `@stelis/app-admin` to GitHub Pages.
+
 Build this app from the workspace root with the dependency order shown above so npm can resolve workspace packages.
 
 Required build-time variables:
@@ -101,9 +101,10 @@ Required build-time variables:
 | Variable                  | Required | Example                                          |
 | ------------------------- | -------- | ------------------------------------------------ |
 | `VITE_STELIS_RELAYER_URL` | ✅       | `https://your-app-api.vercel.app/relay`          |
-| `VITE_SUI_RPC_URL`        | ✅       | `https://fullnode.testnet.sui.io:443`            |
 | `VITE_REPO_DOCS_BASE_URL` | optional | `https://github.com/stelis-dev/stelis/blob/main` |
 
 > **Important**: `VITE_STELIS_RELAYER_URL` must point to your `app-api` deployment URL with the `/relay` suffix.
+
+The sample page selects `https://fullnode.testnet.sui.io:443` or `https://fullnode.mainnet.sui.io:443` from the network returned by `GET /relay/config`.
 
 > **CORS**: The `/relay/*` API is open to all origins (`Access-Control-Allow-Origin: *`). No additional CORS configuration is needed on `app-api`.

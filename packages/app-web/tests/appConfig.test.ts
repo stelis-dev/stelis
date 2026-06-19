@@ -48,8 +48,9 @@ describe('AppConfigContext bootstrap contract', () => {
   });
 });
 
-describe('runtimeEnv must not export APP_WEB_NETWORK', () => {
+describe('runtimeEnv keeps network-derived values out of build env', () => {
   const runtimeSrc = fs.readFileSync(path.resolve(__dirname, '../src/runtimeEnv.ts'), 'utf-8');
+  const suiRpcSrc = fs.readFileSync(path.resolve(__dirname, '../src/suiRpc.ts'), 'utf-8');
 
   it('does NOT export APP_WEB_NETWORK', () => {
     expect(runtimeSrc).not.toContain('APP_WEB_NETWORK');
@@ -59,9 +60,18 @@ describe('runtimeEnv must not export APP_WEB_NETWORK', () => {
     expect(runtimeSrc).not.toContain('VITE_NETWORK');
   });
 
-  it('still exports APP_WEB_SUI_RPC_URL and APP_WEB_RELAYER_BASE', () => {
-    expect(runtimeSrc).toContain('export const APP_WEB_SUI_RPC_URL');
+  it('does NOT reference VITE_SUI_RPC_URL', () => {
+    expect(runtimeSrc).not.toContain('VITE_SUI_RPC_URL');
+  });
+
+  it('still exports APP_WEB_RELAYER_BASE', () => {
     expect(runtimeSrc).toContain('export const APP_WEB_RELAYER_BASE');
+  });
+
+  it('maps Sui RPC endpoints from the API-reported network', () => {
+    expect(suiRpcSrc).toContain('https://fullnode.testnet.sui.io:443');
+    expect(suiRpcSrc).toContain('https://fullnode.mainnet.sui.io:443');
+    expect(suiRpcSrc).toContain('AppWebNetwork');
   });
 });
 
@@ -126,5 +136,19 @@ describe('ConfigGate is narrow (not app-wide)', () => {
 
   it('does NOT wrap Status with ConfigGate', () => {
     expect(appSrc).not.toMatch(/<ConfigGate>\s*<Status/);
+  });
+});
+
+describe('Static hosting contract', () => {
+  const viteConfigSrc = fs.readFileSync(path.resolve(__dirname, '../vite.config.ts'), 'utf-8');
+  const readmeSrc = fs.readFileSync(path.resolve(__dirname, '../README.md'), 'utf-8');
+
+  it('uses relative asset URLs for GitHub Pages project paths', () => {
+    expect(viteConfigSrc).toContain("base: './'");
+  });
+
+  it('documents that app-web is the public sample-page target', () => {
+    expect(readmeSrc).toContain('public sample-page deployment target');
+    expect(readmeSrc).toContain('Do not publish `@stelis/app-admin` to GitHub Pages');
   });
 });

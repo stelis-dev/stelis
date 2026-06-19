@@ -76,7 +76,9 @@ export function isSwapDemoSupported(settlementSwapPath: SingleHopSettlementSwapP
  * sandbox demo.
  * Returns null when the demo is supported.
  */
-export function getSwapDemoRejectMessage(settlementSwapPath: SingleHopSettlementSwapPath): string | null {
+export function getSwapDemoRejectMessage(
+  settlementSwapPath: SingleHopSettlementSwapPath,
+): string | null {
   const reason = swapDemoRejectReason(settlementSwapPath);
   if (reason === null) return null;
   if (reason === 'unsupported_hop_count') {

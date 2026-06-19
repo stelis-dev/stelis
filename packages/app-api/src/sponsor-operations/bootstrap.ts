@@ -80,9 +80,7 @@ function hasUnresolvedRefill(slot: SlotRead | null): boolean {
   return slot.state === 'awaiting_confirmation' && slot.refillAttemptedAmountMist !== null;
 }
 
-function refillConfirmationThreshold(
-  deps: BootstrapSponsorOperationsDeps,
-): bigint {
+function refillConfirmationThreshold(deps: BootstrapSponsorOperationsDeps): bigint {
   return deps.refillTargetMist ?? deps.warnThresholdMist;
 }
 

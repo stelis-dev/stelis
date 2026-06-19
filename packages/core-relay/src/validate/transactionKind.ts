@@ -18,10 +18,7 @@ export function validateGenericUserTransactionKind(
   paymentTokenType: string,
 ): ValidationResult {
   const data = tx.getData();
-  const commandResult = validateUserCommands(
-    convertSdkCommands(data.commands as unknown[]),
-    env,
-  );
+  const commandResult = validateUserCommands(convertSdkCommands(data.commands as unknown[]), env);
   if (!commandResult.ok) return commandResult;
 
   if (containsSponsorWithdrawal(tx)) {

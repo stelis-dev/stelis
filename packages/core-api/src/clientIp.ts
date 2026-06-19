@@ -55,9 +55,7 @@ export function resolveClientIp(
     );
   }
 
-  const chain = xff
-    .split(',')
-    .map((part) => part.trim());
+  const chain = xff.split(',').map((part) => part.trim());
   if (chain.some((part) => normalizeIp(part) === null)) {
     throw new ClientIpResolutionError(
       'Client IP could not be resolved from the trusted proxy chain',

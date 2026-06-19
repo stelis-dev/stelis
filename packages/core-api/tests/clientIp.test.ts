@@ -66,11 +66,10 @@ describe('clientIp helper', () => {
   });
 
   it('fails closed when the XFF chain is shorter than the configured hop count', () => {
-    expect(
-      () =>
-        resolveClientIp(headers('203.0.113.10'), {
-          trustedProxyHops: 1,
-        }),
+    expect(() =>
+      resolveClientIp(headers('203.0.113.10'), {
+        trustedProxyHops: 1,
+      }),
     ).toThrow(ClientIpResolutionError);
   });
 

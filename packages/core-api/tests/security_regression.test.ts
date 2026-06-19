@@ -362,7 +362,10 @@ describe('SPONSOR_FAILURE_RECORDED structured log', () => {
       '1.2.3.4',
       subject,
       'ONCHAIN_REVERT',
-      expect.objectContaining({ subcode: 'INSUFFICIENT_SETTLE_INPUT', executionPathKey: 'deep:pool1:' }),
+      expect.objectContaining({
+        subcode: 'INSUFFICIENT_SETTLE_INPUT',
+        executionPathKey: 'deep:pool1:',
+      }),
     );
   });
 

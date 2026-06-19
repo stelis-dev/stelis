@@ -498,11 +498,7 @@ export class StelisSDK {
       opts.paymentToken.type,
     );
     if (!userCommandValidation.ok) {
-      throw new StelisApiException(
-        userCommandValidation.code,
-        userCommandValidation.message,
-        422,
-      );
+      throw new StelisApiException(userCommandValidation.code, userCommandValidation.message, 422);
     }
     const txKindBytesHash = bytesToHex(await sha256Bytes(kindBytes));
     const prepareAuthorizationTimestampMs = Date.now();
@@ -593,11 +589,7 @@ export class StelisSDK {
       orderIdHash,
     });
     if (!settleFieldValidation.ok) {
-      throw new StelisApiException(
-        settleFieldValidation.code,
-        settleFieldValidation.message,
-        409,
-      );
+      throw new StelisApiException(settleFieldValidation.code, settleFieldValidation.message, 409);
     }
 
     // Notify gas estimate callback — totalCost in MIST + 'SUI'

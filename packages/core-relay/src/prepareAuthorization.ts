@@ -53,13 +53,16 @@ function normalizeHashHex(value: string, field: string): string {
 function canonicalPrepareAuthorizationFields(
   fields: PrepareAuthorizationFields,
 ): CanonicalPrepareAuthorizationMessage {
-  const orderId = fields.orderId === undefined ? null : requireNonEmptyString(fields.orderId, 'orderId');
+  const orderId =
+    fields.orderId === undefined ? null : requireNonEmptyString(fields.orderId, 'orderId');
 
   return {
     version: 1,
     network: fields.network,
     packageId: normalizeSuiAddress(requireNonEmptyString(fields.packageId, 'packageId')),
-    senderAddress: normalizeSuiAddress(requireNonEmptyString(fields.senderAddress, 'senderAddress')),
+    senderAddress: normalizeSuiAddress(
+      requireNonEmptyString(fields.senderAddress, 'senderAddress'),
+    ),
     txKindBytesHash: normalizeHashHex(
       requireNonEmptyString(fields.txKindBytesHash, 'txKindBytesHash'),
       'txKindBytesHash',
@@ -83,9 +86,7 @@ export function serializePrepareAuthorizationMessage(fields: PrepareAuthorizatio
 /**
  * UTF-8 encode the canonical prepare authorization message.
  */
-export function encodePrepareAuthorizationMessage(
-  fields: PrepareAuthorizationFields,
-): Uint8Array {
+export function encodePrepareAuthorizationMessage(fields: PrepareAuthorizationFields): Uint8Array {
   return new TextEncoder().encode(serializePrepareAuthorizationMessage(fields));
 }
 

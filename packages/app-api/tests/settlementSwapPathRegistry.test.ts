@@ -83,15 +83,13 @@ describe('parseSettlementSwapPathRegistryJson', () => {
   });
 
   it('throws on old flat-array input', () => {
-    expect(() => parseSettlementSwapPathRegistryJson(['0xabc123'], 'testnet')).toThrow(
-      'object',
-    );
+    expect(() => parseSettlementSwapPathRegistryJson(['0xabc123'], 'testnet')).toThrow('object');
   });
 
   it('throws on missing network section', () => {
-    expect(() =>
-      parseSettlementSwapPathRegistryJson({ mainnet: ['0xabc123'] }, 'testnet'),
-    ).toThrow('testnet');
+    expect(() => parseSettlementSwapPathRegistryJson({ mainnet: ['0xabc123'] }, 'testnet')).toThrow(
+      'testnet',
+    );
   });
 
   it('throws on unsupported network section', () => {
@@ -124,9 +122,7 @@ describe('parseSettlementSwapPathRegistryJson', () => {
   it('rejects nested path-array format', () => {
     expect(() =>
       parseSettlementSwapPathRegistryJson(settlementSwapPathRegistryJson([['0xa']]), 'testnet'),
-    ).toThrow(
-      'flat array of DeepBook pool IDs',
-    );
+    ).toThrow('flat array of DeepBook pool IDs');
   });
 
   it('throws on non-string pool ID', () => {

@@ -62,9 +62,9 @@ cp .env.example .env
 Required:
 
 - `VITE_STELIS_API_URL` (app-api base URL)
-- `VITE_SUI_RPC_URL` (Sui RPC endpoint)
 
 Network (`testnet` / `mainnet`) is auto-detected from `GET /relay/config`.
+The dashboard selects the matching public Sui RPC endpoint internally.
 
 ## Related Documents
 

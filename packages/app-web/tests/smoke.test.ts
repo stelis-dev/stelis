@@ -86,13 +86,31 @@ describe('Sandbox SDK wiring', () => {
     const { isSwapDemoSupported } = await import('../src/pages/sandbox/constants');
     const oneHop = {
       hops: [
-        { poolId: '0x1', baseType: 'DEEP', quoteType: 'SUI', swapDirection: 'baseForQuote', feeBps: 0 },
+        {
+          poolId: '0x1',
+          baseType: 'DEEP',
+          quoteType: 'SUI',
+          swapDirection: 'baseForQuote',
+          feeBps: 0,
+        },
       ],
     };
     const invalidHopCount = {
       hops: [
-        { poolId: '0x1', baseType: 'DEEP', quoteType: 'USDC', swapDirection: 'quoteForBase', feeBps: 0 },
-        { poolId: '0x2', baseType: 'DEEP', quoteType: 'SUI', swapDirection: 'baseForQuote', feeBps: 0 },
+        {
+          poolId: '0x1',
+          baseType: 'DEEP',
+          quoteType: 'USDC',
+          swapDirection: 'quoteForBase',
+          feeBps: 0,
+        },
+        {
+          poolId: '0x2',
+          baseType: 'DEEP',
+          quoteType: 'SUI',
+          swapDirection: 'baseForQuote',
+          feeBps: 0,
+        },
       ],
     };
     expect(isSwapDemoSupported(oneHop as never)).toBe(true);
@@ -107,7 +125,13 @@ describe('Sandbox SDK wiring', () => {
     const { isSwapDemoSupported } = await import('../src/pages/sandbox/constants');
     const feeBearing = {
       hops: [
-        { poolId: '0x1', baseType: 'TOKEN', quoteType: 'SUI', swapDirection: 'baseForQuote', feeBps: 20 },
+        {
+          poolId: '0x1',
+          baseType: 'TOKEN',
+          quoteType: 'SUI',
+          swapDirection: 'baseForQuote',
+          feeBps: 20,
+        },
       ],
     };
     expect(isSwapDemoSupported(feeBearing as never)).toBe(false);
@@ -117,18 +141,42 @@ describe('Sandbox SDK wiring', () => {
     const { swapDemoRejectReason } = await import('../src/pages/sandbox/constants');
     const whitelisted1Hop = {
       hops: [
-        { poolId: '0x1', baseType: 'DEEP', quoteType: 'SUI', swapDirection: 'baseForQuote', feeBps: 0 },
+        {
+          poolId: '0x1',
+          baseType: 'DEEP',
+          quoteType: 'SUI',
+          swapDirection: 'baseForQuote',
+          feeBps: 0,
+        },
       ],
     };
     const invalidHopCount = {
       hops: [
-        { poolId: '0x1', baseType: 'DEEP', quoteType: 'USDC', swapDirection: 'quoteForBase', feeBps: 0 },
-        { poolId: '0x2', baseType: 'DEEP', quoteType: 'SUI', swapDirection: 'baseForQuote', feeBps: 0 },
+        {
+          poolId: '0x1',
+          baseType: 'DEEP',
+          quoteType: 'USDC',
+          swapDirection: 'quoteForBase',
+          feeBps: 0,
+        },
+        {
+          poolId: '0x2',
+          baseType: 'DEEP',
+          quoteType: 'SUI',
+          swapDirection: 'baseForQuote',
+          feeBps: 0,
+        },
       ],
     };
     const feeBearing = {
       hops: [
-        { poolId: '0x1', baseType: 'TOKEN', quoteType: 'SUI', swapDirection: 'baseForQuote', feeBps: 20 },
+        {
+          poolId: '0x1',
+          baseType: 'TOKEN',
+          quoteType: 'SUI',
+          swapDirection: 'baseForQuote',
+          feeBps: 20,
+        },
       ],
     };
     expect(swapDemoRejectReason(whitelisted1Hop as never)).toBeNull();
@@ -140,13 +188,31 @@ describe('Sandbox SDK wiring', () => {
     const { getSwapDemoRejectMessage } = await import('../src/pages/sandbox/constants');
     const invalidHopCount = {
       hops: [
-        { poolId: '0x1', baseType: 'DEEP', quoteType: 'USDC', swapDirection: 'quoteForBase', feeBps: 0 },
-        { poolId: '0x2', baseType: 'DEEP', quoteType: 'SUI', swapDirection: 'baseForQuote', feeBps: 0 },
+        {
+          poolId: '0x1',
+          baseType: 'DEEP',
+          quoteType: 'USDC',
+          swapDirection: 'quoteForBase',
+          feeBps: 0,
+        },
+        {
+          poolId: '0x2',
+          baseType: 'DEEP',
+          quoteType: 'SUI',
+          swapDirection: 'baseForQuote',
+          feeBps: 0,
+        },
       ],
     };
     const feeBearing = {
       hops: [
-        { poolId: '0x1', baseType: 'TOKEN', quoteType: 'SUI', swapDirection: 'baseForQuote', feeBps: 20 },
+        {
+          poolId: '0x1',
+          baseType: 'TOKEN',
+          quoteType: 'SUI',
+          swapDirection: 'baseForQuote',
+          feeBps: 20,
+        },
       ],
     };
     const invalidHopCountMsg = getSwapDemoRejectMessage(invalidHopCount as never);
@@ -162,12 +228,24 @@ describe('Sandbox SDK wiring', () => {
     const { getSandboxSwapTarget } = await import('../src/pages/sandbox/constants');
     const bfqPool = {
       hops: [
-        { poolId: '0x1', baseType: 'DEEP', quoteType: 'SUI', swapDirection: 'baseForQuote', feeBps: 0 },
+        {
+          poolId: '0x1',
+          baseType: 'DEEP',
+          quoteType: 'SUI',
+          swapDirection: 'baseForQuote',
+          feeBps: 0,
+        },
       ],
     };
     const qfbPool = {
       hops: [
-        { poolId: '0x1', baseType: 'SUI', quoteType: 'USDC', swapDirection: 'quoteForBase', feeBps: 0 },
+        {
+          poolId: '0x1',
+          baseType: 'SUI',
+          quoteType: 'USDC',
+          swapDirection: 'quoteForBase',
+          feeBps: 0,
+        },
       ],
     };
     expect(getSandboxSwapTarget(bfqPool as never)).toBe('swap_exact_quote_for_base');
@@ -178,8 +256,20 @@ describe('Sandbox SDK wiring', () => {
     const { getSandboxSwapTarget } = await import('../src/pages/sandbox/constants');
     const invalidHopCount = {
       hops: [
-        { poolId: '0x1', baseType: 'DEEP', quoteType: 'USDC', swapDirection: 'quoteForBase', feeBps: 0 },
-        { poolId: '0x2', baseType: 'DEEP', quoteType: 'SUI', swapDirection: 'baseForQuote', feeBps: 0 },
+        {
+          poolId: '0x1',
+          baseType: 'DEEP',
+          quoteType: 'USDC',
+          swapDirection: 'quoteForBase',
+          feeBps: 0,
+        },
+        {
+          poolId: '0x2',
+          baseType: 'DEEP',
+          quoteType: 'SUI',
+          swapDirection: 'baseForQuote',
+          feeBps: 0,
+        },
       ],
     };
     expect(() => getSandboxSwapTarget(invalidHopCount as never)).toThrow('exactly 1 hop');

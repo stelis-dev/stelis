@@ -155,7 +155,9 @@ describe('probeAndWriteSponsorRefillAccountState', () => {
       healthy: '0',
       refillsRemaining: '',
     });
-    expect(stub.sponsorRefillAccountWrites[0].lastError).toContain('must be a non-negative decimal integer string');
+    expect(stub.sponsorRefillAccountWrites[0].lastError).toContain(
+      'must be a non-negative decimal integer string',
+    );
   });
 
   it('trims multibyte sponsor-refill-account lastError payloads to 512 UTF-8 bytes', async () => {
@@ -177,9 +179,9 @@ describe('probeAndWriteSponsorRefillAccountState', () => {
     );
 
     expect(stub.sponsorRefillAccountWrites[0].lastError).toBe(TRIMMED_MULTIBYTE_ERROR);
-    expect(new TextEncoder().encode(stub.sponsorRefillAccountWrites[0].lastError ?? '').length).toBeLessThanOrEqual(
-      512,
-    );
+    expect(
+      new TextEncoder().encode(stub.sponsorRefillAccountWrites[0].lastError ?? '').length,
+    ).toBeLessThanOrEqual(512);
   });
 
   it('emits and resolves when writeFailureMode is swallow', async () => {

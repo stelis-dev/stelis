@@ -185,10 +185,7 @@ function rpcConfigJson(
   return JSON.stringify({ testnet, mainnet });
 }
 
-function parseTestnetRpcConfig(
-  testnet: unknown,
-  envLookup?: (name: string) => string | undefined,
-) {
+function parseTestnetRpcConfig(testnet: unknown, envLookup?: (name: string) => string | undefined) {
   return parseEndpointConfigJson(rpcConfigJson(testnet), 'testnet', envLookup);
 }
 
@@ -433,10 +430,7 @@ describe('parseEndpointConfigJson', () => {
   });
 
   it('parses multiple endpoints from the selected network section', () => {
-    const result = parseTestnetRpcConfig([
-      { url: 'https://a.com' },
-      { url: 'https://b.com' },
-    ]);
+    const result = parseTestnetRpcConfig([{ url: 'https://a.com' }, { url: 'https://b.com' }]);
     expect(result).toEqual([{ url: 'https://a.com' }, { url: 'https://b.com' }]);
   });
 
@@ -502,9 +496,7 @@ describe('parseEndpointConfigJson', () => {
   });
 
   it('throws on old flat-array JSON', () => {
-    expect(() => parseEndpointConfigJson('[{"url":"https://a.com"}]', 'testnet')).toThrow(
-      'object',
-    );
+    expect(() => parseEndpointConfigJson('[{"url":"https://a.com"}]', 'testnet')).toThrow('object');
   });
 
   it('throws on missing network section', () => {
@@ -583,9 +575,7 @@ describe('parseEndpointConfigJson', () => {
 
   it('rejects non-local HTTP endpoints even when local mode is explicit', () => {
     expect(() =>
-      parseTestnetRpcConfig([
-        { url: 'http://provider.example', localDevelopmentEndpoint: true },
-      ]),
+      parseTestnetRpcConfig([{ url: 'http://provider.example', localDevelopmentEndpoint: true }]),
     ).toThrow('localhost');
   });
 

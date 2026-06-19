@@ -11,9 +11,7 @@ export interface SettlementSwapPathStatus {
   refresh: () => void;
 }
 
-export function useSettlementSwapPathStatus(
-  settlementSwapPathIndex = 0,
-): SettlementSwapPathStatus {
+export function useSettlementSwapPathStatus(settlementSwapPathIndex = 0): SettlementSwapPathStatus {
   const client = useCurrentClient();
   const { sdk } = useSDK();
   const [midPrice, setMidPrice] = useState<number | null>(null);

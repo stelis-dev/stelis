@@ -109,7 +109,8 @@ function patchPureInputBytes(
   bytes: Uint8Array,
 ): unknown[] {
   const command = commands.find(
-    (cmd) => typeof cmd === 'object' && cmd !== null && (cmd as { $kind?: string }).$kind === 'MoveCall',
+    (cmd) =>
+      typeof cmd === 'object' && cmd !== null && (cmd as { $kind?: string }).$kind === 'MoveCall',
   ) as { MoveCall: { arguments: unknown[] } } | undefined;
   if (!command) throw new Error('test setup failed: MoveCall command not found');
 

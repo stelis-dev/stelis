@@ -145,7 +145,10 @@ export interface SingleHopSettlementSwapPath {
  * This is a JSON transport projection of `SingleHopSettlementSwapPath`.
  * Any new field added there that needs HTTP transport must also be added here.
  */
-export type SingleHopSettlementSwapPathResponse = Omit<SingleHopSettlementSwapPath, 'lotSize' | 'minSize'> & {
+export type SingleHopSettlementSwapPathResponse = Omit<
+  SingleHopSettlementSwapPath,
+  'lotSize' | 'minSize'
+> & {
   /** JSON-safe u64 (must satisfy Number.isSafeInteger — fail-closed at parse). */
   lotSize: number;
   /** JSON-safe u64 (must satisfy Number.isSafeInteger — fail-closed at parse). */

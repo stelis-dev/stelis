@@ -150,7 +150,6 @@ Optional Studio configuration:
 `@stelis/app-web` requires:
 
 - `VITE_STELIS_RELAYER_URL`
-- `VITE_SUI_RPC_URL`
 
 Optional `@stelis/app-web` configuration:
 
@@ -160,7 +159,8 @@ Optional `@stelis/app-web` configuration:
 `@stelis/app-admin` requires:
 
 - `VITE_STELIS_API_URL`
-- `VITE_SUI_RPC_URL`
+
+Both static apps select the public Sui RPC endpoint from the network returned by `GET /relay/config`.
 
 ## MCP Server Environment
 

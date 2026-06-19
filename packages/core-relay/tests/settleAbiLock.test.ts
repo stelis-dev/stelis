@@ -25,7 +25,10 @@ import {
   variantClassFromFnName,
   type SettleVariantClass,
 } from '../src/settlePayloadContract.js';
-import { SETTLE_WITH_CREDIT_FUNCTION, SETTLEMENT_SWAP_DIRECTION_FUNCTIONS } from '@stelis/contracts';
+import {
+  SETTLE_WITH_CREDIT_FUNCTION,
+  SETTLEMENT_SWAP_DIRECTION_FUNCTIONS,
+} from '@stelis/contracts';
 
 interface GoldenField {
   offset: number;
@@ -211,9 +214,7 @@ describe('Settle ABI lock — production entry points', () => {
             p,
             `${entry.contractKey} settle block param at offset ${g.offset} missing`,
           ).toBeDefined();
-          expect(p.name, `${entry.contractKey} param name at offset ${g.offset}`).toBe(
-            g.moveName,
-          );
+          expect(p.name, `${entry.contractKey} param name at offset ${g.offset}`).toBe(g.moveName);
           expect(p.moveType, `${entry.contractKey} param type at offset ${g.offset}`).toBe(
             g.moveType,
           );
@@ -251,7 +252,9 @@ describe('Settle ABI lock — no Coin<DEEP> input in swap entries', () => {
     it(`${entry.contractKey}: param after 'payment_coin' is 'swap_amount: u64' and no Coin<DEEP> anywhere`, () => {
       const params = extractMoveFunctionParams(moveSrc, entryName);
       const paymentIdx = params.findIndex((p) => p.name === 'payment_coin');
-      expect(paymentIdx, `'payment_coin' not found in ${entry.contractKey}`).toBeGreaterThanOrEqual(0);
+      expect(paymentIdx, `'payment_coin' not found in ${entry.contractKey}`).toBeGreaterThanOrEqual(
+        0,
+      );
 
       const next = params[paymentIdx + 1];
       expect(next, `no parameter after 'payment_coin' in ${entry.contractKey}`).toBeDefined();

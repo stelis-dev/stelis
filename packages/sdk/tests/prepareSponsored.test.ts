@@ -15,12 +15,13 @@ import { StelisSDK } from '../src/sdk.js';
 import type { RelayerConfig, PrepareResponse } from '../src/types.js';
 import { STELIS_CONTRACT_IDS } from '@stelis/contracts';
 
-const { mockExtractSettleFields, mockValidateSettleFields, mockValidateGenericUserTx } =
-  vi.hoisted(() => ({
+const { mockExtractSettleFields, mockValidateSettleFields, mockValidateGenericUserTx } = vi.hoisted(
+  () => ({
     mockExtractSettleFields: vi.fn(),
     mockValidateSettleFields: vi.fn(),
     mockValidateGenericUserTx: vi.fn(),
-  }));
+  }),
+);
 
 // ── Module-level mock: queryUserCredit ─────────────────────────────────────────
 let _creditResult = { vaultObjectId: null as string | null, credit: '0', needsCreate: false };

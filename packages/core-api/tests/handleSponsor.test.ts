@@ -25,7 +25,10 @@ import {
   SETTLE_WITH_CREDIT_FUNCTION,
   SLIPPAGE_CAP_BPS,
 } from '@stelis/contracts';
-import { PREPARE_TTL_MS, buildExecutionPathKey as _buildExecutionPathKey } from '../src/handlers/prepare.js';
+import {
+  PREPARE_TTL_MS,
+  buildExecutionPathKey as _buildExecutionPathKey,
+} from '../src/handlers/prepare.js';
 import { computePolicyHash } from '../src/policyHash.js';
 import {
   handleSponsor,
@@ -1656,10 +1659,7 @@ describe('handleSponsor', () => {
   ])(
     'tx-bound $label → REPREPARE_REQUIRED, no abuse, SPONSOR_DRIFT_OBSERVED',
     async ({ buildOptions, expectedStage, expectedSubcode }) => {
-      const { encodedTxBytes, txBytes, txHash } = await buildValidTx(
-        SPONSOR_ADDRESS,
-        buildOptions,
-      );
+      const { encodedTxBytes, txBytes, txHash } = await buildValidTx(SPONSOR_ADDRESS, buildOptions);
       const prepared = makePreparedEntry(txHash);
       const userSig = await buildValidSignature(txBytes);
       const abuseBlocker = makeMockAbuseBlocker();

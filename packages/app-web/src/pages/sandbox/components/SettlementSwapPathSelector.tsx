@@ -30,11 +30,7 @@ export function SettlementSwapPathSelector({
           const next = e.target.value;
           if (!/^(?:0|[1-9]\d*)$/.test(next)) return;
           const parsed = Number(next);
-          if (
-            !Number.isSafeInteger(parsed) ||
-            parsed < 0 ||
-            parsed >= settlementSwapPaths.length
-          ) {
+          if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed >= settlementSwapPaths.length) {
             return;
           }
           onSettlementSwapPathChange(parsed);

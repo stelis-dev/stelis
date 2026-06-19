@@ -158,9 +158,7 @@ export async function verifySettleEventAgainstExpected(
       ? sha256Hex(expectedOrder.orderId)
       : normalizeHex(expectedOrder.orderIdHash as string);
   if (expectedOrderIdHash !== onChainOrderIdHash) {
-    mismatches.push(
-      `orderIdHash: expected ${expectedOrderIdHash}, on-chain ${onChainOrderIdHash}`,
-    );
+    mismatches.push(`orderIdHash: expected ${expectedOrderIdHash}, on-chain ${onChainOrderIdHash}`);
   }
 
   const normalizedExpectedUser = expected.user.toLowerCase();

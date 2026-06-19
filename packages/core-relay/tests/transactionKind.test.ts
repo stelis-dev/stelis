@@ -1,9 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Transaction } from '@mysten/sui/transactions';
-import {
-  SETTLE_MODULE,
-  SETTLEMENT_SWAP_DIRECTION_FUNCTIONS,
-} from '@stelis/contracts';
+import { SETTLE_MODULE, SETTLEMENT_SWAP_DIRECTION_FUNCTIONS } from '@stelis/contracts';
 import type { RelayerEnv } from '../src/types.js';
 import {
   validateGenericSettlementTransaction,
@@ -93,13 +90,21 @@ describe('validateGenericUserTransactionKind', () => {
     });
 
     const tooManyCommands = Array.from({ length: 17 }, () => moveCall());
-    const result = validateGenericUserTransactionKind(txWithData(tooManyCommands), ENV, PAYMENT_TYPE);
+    const result = validateGenericUserTransactionKind(
+      txWithData(tooManyCommands),
+      ENV,
+      PAYMENT_TYPE,
+    );
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.code).toBe('P1_TOO_MANY_COMMANDS');
   });
 
   it('rejects user-supplied settlement calls', () => {
-    const result = validateGenericUserTransactionKind(txWithData([settleCall()]), ENV, PAYMENT_TYPE);
+    const result = validateGenericUserTransactionKind(
+      txWithData([settleCall()]),
+      ENV,
+      PAYMENT_TYPE,
+    );
 
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.code).toBe('P1_USER_SETTLE_FORBIDDEN');
@@ -128,11 +133,7 @@ describe('validateGenericUserTransactionKind', () => {
     ['Publish', { $kind: 'Publish', Publish: {} }],
     ['Upgrade', { $kind: 'Upgrade', Upgrade: {} }],
   ])('rejects forbidden non-MoveCall command %s', (_kind, command) => {
-    const result = validateGenericUserTransactionKind(
-      txWithData([command]),
-      ENV,
-      PAYMENT_TYPE,
-    );
+    const result = validateGenericUserTransactionKind(txWithData([command]), ENV, PAYMENT_TYPE);
 
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.code).toBe('P1_FORBIDDEN_COMMAND');

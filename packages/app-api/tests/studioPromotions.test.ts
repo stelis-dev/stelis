@@ -154,9 +154,10 @@ describe('studio promotion routes', () => {
       });
       expect(res.status).toBe(200);
       expect(vi.mocked(ctx.relay.abuseBlocker.checkIp)).toHaveBeenCalledWith('127.0.0.1');
-      expect(vi.mocked(ctx.relay.abuseBlocker.checkSubject)).toHaveBeenCalledWith(
-        { kind: 'studio_user', userId: 'user-1' },
-      );
+      expect(vi.mocked(ctx.relay.abuseBlocker.checkSubject)).toHaveBeenCalledWith({
+        kind: 'studio_user',
+        userId: 'user-1',
+      });
       expect(vi.mocked(ctx.relay.rateLimiter.check).mock.calls.map((c) => c[0])).toEqual([
         'promo_list:client-ip:127.0.0.1',
         'promo_list:developer-user:user-1',
@@ -258,9 +259,10 @@ describe('studio promotion routes', () => {
       });
       expect(res.status).toBe(200);
       expect(vi.mocked(ctx.relay.abuseBlocker.checkIp)).toHaveBeenCalledWith('127.0.0.1');
-      expect(vi.mocked(ctx.relay.abuseBlocker.checkSubject)).toHaveBeenCalledWith(
-        { kind: 'studio_user', userId: 'user-1' },
-      );
+      expect(vi.mocked(ctx.relay.abuseBlocker.checkSubject)).toHaveBeenCalledWith({
+        kind: 'studio_user',
+        userId: 'user-1',
+      });
       expect(vi.mocked(ctx.relay.rateLimiter.check).mock.calls.map((c) => c[0])).toEqual([
         'promo_detail:client-ip:127.0.0.1',
         'promo_detail:developer-user:user-1',

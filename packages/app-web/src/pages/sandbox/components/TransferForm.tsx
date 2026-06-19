@@ -3,7 +3,10 @@ import { useCurrentAccount, useCurrentClient, useDAppKit } from '@mysten/dapp-ki
 import { Transaction } from '@mysten/sui/transactions';
 import { useSDK } from '../hooks/useSDK';
 import { TransactionStatus } from './TransactionStatus';
-import { checkSettlementSwapPathLiquidity, type SettlementSwapPathLiquidityStatus } from '@stelis/sdk';
+import {
+  checkSettlementSwapPathLiquidity,
+  type SettlementSwapPathLiquidityStatus,
+} from '@stelis/sdk';
 import { getSelectedSettlementSwapPath } from '../constants';
 import { SANDBOX_CARD_STYLE } from './cardStyles';
 import { parseDecimalToSmallestUnit, parsePercentToBps } from '../amount';

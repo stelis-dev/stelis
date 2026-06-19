@@ -197,9 +197,7 @@ describe('StelisSDK.executeSuiFirst', () => {
     sdk = await createSDK();
     // Spy on Transaction.prototype.build to avoid real gRPC calls in unit tests
     const validKindBytes = await new Transaction().build({ onlyTransactionKind: true });
-    buildSpy = vi
-      .spyOn(Transaction.prototype, 'build')
-      .mockResolvedValue(validKindBytes);
+    buildSpy = vi.spyOn(Transaction.prototype, 'build').mockResolvedValue(validKindBytes);
   });
 
   afterEach(() => {

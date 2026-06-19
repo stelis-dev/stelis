@@ -155,7 +155,11 @@ describe('buildSwapAndSettlePtb — type argument wiring per SettlementSwapDirec
     },
   ];
 
-  for (const { settlementSwapDirection, expectedNewUserFunction, expectedWithVaultFunction } of cases) {
+  for (const {
+    settlementSwapDirection,
+    expectedNewUserFunction,
+    expectedWithVaultFunction,
+  } of cases) {
     describe(`${settlementSwapDirection}`, () => {
       it(`new_user → Move call type args start with paymentTokenType`, () => {
         const { rawCommands } = getCommands((tx) => {
@@ -204,7 +208,9 @@ describe('buildSwapAndSettlePtb — type argument wiring per SettlementSwapDirec
         const parsed = parseSettleArgs(normalizedCommands, inputs, PKG);
         expect(parsed.extractedSettlementSwapPath).toBeDefined();
         expect(parsed.extractedSettlementSwapPath!.tokenType).toBe(PAYMENT_TYPE);
-        expect(parsed.extractedSettlementSwapPath!.settlementSwapDirection).toBe(settlementSwapDirection);
+        expect(parsed.extractedSettlementSwapPath!.settlementSwapDirection).toBe(
+          settlementSwapDirection,
+        );
         expect(parsed.extractedSettlementSwapPath!.hops).toEqual([POOL]);
       });
     });

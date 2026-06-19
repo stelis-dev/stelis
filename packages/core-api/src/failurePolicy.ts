@@ -234,8 +234,7 @@ export const FAILURE_TABLE: Readonly<Record<FailureCode, FailurePolicy>> = {
     httpStatus: 400,
     abuseImpact: SKIP_BOTH,
     bodyFields: NO_BODY_EXTRAS,
-    notes:
-      'Client IP resolution failed before abuse-block and rate-limit keys were selected.',
+    notes: 'Client IP resolution failed before abuse-block and rate-limit keys were selected.',
   },
 
   // ── /relay/prepare authorization ─────────────────────────────────

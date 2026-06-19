@@ -177,7 +177,9 @@ describe('parseDeveloperJwtTrustConfig', () => {
       publicKeyPem: TEST_PUBLIC_KEY_PEM,
       claimPaths: { userId: 'sub', senderAddress: 'addr' },
     });
-    expect(() => parseDeveloperJwtTrustConfig(json)).toThrow('ES256 requires an EC P-256 public key');
+    expect(() => parseDeveloperJwtTrustConfig(json)).toThrow(
+      'ES256 requires an EC P-256 public key',
+    );
   });
 
   it('rejects ES256 config with a non-P-256 EC public key', () => {
@@ -188,7 +190,9 @@ describe('parseDeveloperJwtTrustConfig', () => {
       publicKeyPem: TEST_P384_PUBLIC_KEY_PEM,
       claimPaths: { userId: 'sub', senderAddress: 'addr' },
     });
-    expect(() => parseDeveloperJwtTrustConfig(json)).toThrow('ES256 requires an EC P-256 public key');
+    expect(() => parseDeveloperJwtTrustConfig(json)).toThrow(
+      'ES256 requires an EC P-256 public key',
+    );
   });
 
   it('accepts ES256 config with a P-256 public key', () => {

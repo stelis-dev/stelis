@@ -58,10 +58,7 @@ export function emptyBuildRpcAccumulator(): BuildRpcAccumulator {
   };
 }
 
-export function absorbPassRpcStats(
-  acc: BuildRpcAccumulator,
-  passStats: PreparePassRpcStats,
-): void {
+export function absorbPassRpcStats(acc: BuildRpcAccumulator, passStats: PreparePassRpcStats): void {
   acc.midPriceCalls += passStats.midPriceCalls;
   acc.midPriceTotalMs += passStats.midPriceTotalMs;
 }

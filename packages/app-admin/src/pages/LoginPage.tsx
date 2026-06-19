@@ -15,8 +15,7 @@ import {
 } from '@mysten/dapp-kit-react';
 import { SuiGrpcClient } from '@mysten/sui/grpc';
 import { getWallets } from '@mysten/wallet-standard';
-import { APP_ADMIN_SUI_RPC_URL } from '../runtimeEnv';
-import type { AppAdminNetwork } from '../runtimeEnv';
+import { getSuiRpcUrl, type AppAdminNetwork } from '../suiRpc';
 
 import type { SuiSignPersonalMessageFeature } from '../types';
 
@@ -181,7 +180,7 @@ export function LoginPage() {
       createClient: (n) =>
         new SuiGrpcClient({
           network: n,
-          baseUrl: APP_ADMIN_SUI_RPC_URL,
+          baseUrl: getSuiRpcUrl(n),
         }),
     });
   }, [network]);

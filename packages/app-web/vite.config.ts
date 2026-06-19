@@ -50,6 +50,8 @@ export default defineConfig(({ mode }) => {
   const proxyTarget = relayerUrl.replace(/\/relay\/?$/, '');
 
   return {
+    // Relative asset URLs let the static bundle run from GitHub Pages project paths.
+    base: './',
     envFile: false,
     plugins: [react()],
     server: {

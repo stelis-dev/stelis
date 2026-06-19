@@ -556,9 +556,7 @@ describe('relay routes', () => {
         }),
       });
       expect(res.status).toBe(429);
-      expect(mockCtx.relay.rateLimiter.check).toHaveBeenCalledWith(
-        'prepare:client-ip:127.0.0.1',
-      );
+      expect(mockCtx.relay.rateLimiter.check).toHaveBeenCalledWith('prepare:client-ip:127.0.0.1');
     });
 
     it('does not check sender address abuse at the HTTP route before authorization', async () => {
@@ -934,9 +932,7 @@ describe('relay routes', () => {
         body: JSON.stringify(validBody),
       });
       expect(res.status).toBe(429);
-      expect(mockCtx.relay.rateLimiter.check).toHaveBeenCalledWith(
-        'sponsor:client-ip:127.0.0.1',
-      );
+      expect(mockCtx.relay.rateLimiter.check).toHaveBeenCalledWith('sponsor:client-ip:127.0.0.1');
     });
 
     it('returns 503 BLOCK_CHECK_UNAVAILABLE when block check throws BlockCheckUnavailableError', async () => {

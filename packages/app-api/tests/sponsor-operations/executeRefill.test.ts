@@ -68,6 +68,9 @@ describe('executeSponsorSlotRefill', () => {
         address: { $kind: 'Input', Input: 1, type: 'pure' },
       },
     });
-    expect(data.inputs[1]).toEqual({ $kind: 'Pure', Pure: { bytes: addressBytes(sponsorAddress) } });
+    expect(data.inputs[1]).toEqual({
+      $kind: 'Pure',
+      Pure: { bytes: addressBytes(sponsorAddress) },
+    });
   });
 });

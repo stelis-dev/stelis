@@ -33,8 +33,14 @@ function makeStubState(initialSlots: Record<string, SlotRead | null> = {}): {
         slots.set(address, {
           address,
           state: fields.state ?? previous?.state ?? null,
-          balanceMist: fields.balanceMist === undefined ? (previous?.balanceMist ?? null) : fields.balanceMist || null,
-          lastError: fields.lastError === undefined ? (previous?.lastError ?? null) : fields.lastError || null,
+          balanceMist:
+            fields.balanceMist === undefined
+              ? (previous?.balanceMist ?? null)
+              : fields.balanceMist || null,
+          lastError:
+            fields.lastError === undefined
+              ? (previous?.lastError ?? null)
+              : fields.lastError || null,
           lastObservedAtMs: previous?.lastObservedAtMs ?? null,
           writeSeq: previous?.writeSeq ?? null,
           pendingRefillDigest:
@@ -95,9 +101,11 @@ function makeStubLock(opts: { acquireReturns?: Array<RefillLockHandle | null> } 
   };
 }
 
-function makeStubSponsorRefillAccountDispatchLock(opts: {
-  acquireReturns?: Array<SponsorRefillAccountDispatchLockHandle | null>;
-} = {}): {
+function makeStubSponsorRefillAccountDispatchLock(
+  opts: {
+    acquireReturns?: Array<SponsorRefillAccountDispatchLockHandle | null>;
+  } = {},
+): {
   lock: SponsorRefillAccountDispatchLock;
   acquireCalls: string[];
   releaseCalls: SponsorRefillAccountDispatchLockHandle[];
@@ -764,9 +772,7 @@ describe('createSponsorOperationsRefillWorker — lifecycle', () => {
     });
 
     worker.requestRefill(SLOT);
-    await waitUntil(() =>
-      stub.slotWrites.some((write) => write.fields.state === 'refill_failed'),
-    );
+    await waitUntil(() => stub.slotWrites.some((write) => write.fields.state === 'refill_failed'));
 
     expect(executeRefill).not.toHaveBeenCalled();
     expect(unavailableDispatchLock.releaseCalls).toHaveLength(0);

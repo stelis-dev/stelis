@@ -8,7 +8,7 @@ import { createDAppKit, DAppKitProvider } from '@mysten/dapp-kit-react';
 import { SuiGrpcClient } from '@mysten/sui/grpc';
 import { type ReactNode, useMemo } from 'react';
 import { useAppConfig, type AppWebNetwork } from '../../../AppConfigContext';
-import { APP_WEB_SUI_RPC_URL } from '../../../runtimeEnv';
+import { getSuiRpcUrl } from '../../../suiRpc';
 
 function buildDAppKit(network: AppWebNetwork) {
   return createDAppKit({
@@ -16,7 +16,7 @@ function buildDAppKit(network: AppWebNetwork) {
     createClient: (n) =>
       new SuiGrpcClient({
         network: n,
-        baseUrl: APP_WEB_SUI_RPC_URL,
+        baseUrl: getSuiRpcUrl(n),
       }),
   });
 }

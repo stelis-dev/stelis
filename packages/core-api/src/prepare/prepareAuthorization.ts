@@ -80,7 +80,9 @@ export async function verifyPrepareAuthorization(
       encodePrepareAuthorizationMessage(fields),
       params.prepareAuthorizationSignature,
     );
-    if (normalizeSuiAddress(recovered.toSuiAddress()) !== normalizeSuiAddress(params.senderAddress)) {
+    if (
+      normalizeSuiAddress(recovered.toSuiAddress()) !== normalizeSuiAddress(params.senderAddress)
+    ) {
       throw new Error('signer mismatch');
     }
   } catch {

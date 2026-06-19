@@ -35,7 +35,6 @@ npm install
 ```bash
 VITE_STELIS_RELAYER_URL=http://localhost:3200/relay \
 VITE_STELIS_API_URL=http://localhost:3200 \
-VITE_SUI_RPC_URL=https://fullnode.testnet.sui.io:443 \
 npm run build
 ```
 

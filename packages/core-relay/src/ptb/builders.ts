@@ -11,7 +11,10 @@
  */
 import { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions';
 import { SUI_CLOCK_OBJECT_ID } from '../constants.js';
-import { SETTLEMENT_SWAP_DIRECTION_FUNCTIONS, SETTLE_WITH_CREDIT_FUNCTION } from '@stelis/contracts';
+import {
+  SETTLEMENT_SWAP_DIRECTION_FUNCTIONS,
+  SETTLE_WITH_CREDIT_FUNCTION,
+} from '@stelis/contracts';
 import { SETTLE_FIELD_SCHEMA, type SettleFieldValues } from '../settlePayloadContract.js';
 import type { SettlementSwapDirection } from '@stelis/contracts';
 

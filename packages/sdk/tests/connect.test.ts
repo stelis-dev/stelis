@@ -193,7 +193,8 @@ describe('StelisSDK — integrityPolicyVersion handshake', () => {
 
   it('config with unsafe-integer lotSize is rejected at connect', async () => {
     const config = makeConfig();
-    (config.supportedSettlementSwapPaths[0] as Record<string, unknown>).lotSize = Number.MAX_SAFE_INTEGER + 1;
+    (config.supportedSettlementSwapPaths[0] as Record<string, unknown>).lotSize =
+      Number.MAX_SAFE_INTEGER + 1;
     stubConfig(config);
     await expect(StelisSDK.connect('http://primary/api')).rejects.toThrow(
       'lotSize or minSize must be non-negative safe integers',
@@ -270,7 +271,8 @@ describe('parseRelayerConfig — settlement swap path integrity fail-closed', ()
 
   it('rejects invalid settlementSwapDirection value', async () => {
     const bad = makeConfig();
-    (bad.supportedSettlementSwapPaths[0] as Record<string, unknown>).settlementSwapDirection = '_2hop';
+    (bad.supportedSettlementSwapPaths[0] as Record<string, unknown>).settlementSwapDirection =
+      '_2hop';
     stubConfig(bad);
     await expect(
       StelisSDK.connect('http://primary/api', { pinnedPackageId: CANONICAL_PKG }),
@@ -279,7 +281,8 @@ describe('parseRelayerConfig — settlement swap path integrity fail-closed', ()
 
   it('rejects swapDirection ↔ settlementSwapDirection mismatch (baseForQuote direction with quoteForBase hop)', async () => {
     const bad = makeConfig();
-    (bad.supportedSettlementSwapPaths[0].hops[0] as Record<string, unknown>).swapDirection = 'quoteForBase';
+    (bad.supportedSettlementSwapPaths[0].hops[0] as Record<string, unknown>).swapDirection =
+      'quoteForBase';
     stubConfig(bad);
     await expect(
       StelisSDK.connect('http://primary/api', { pinnedPackageId: CANONICAL_PKG }),
@@ -314,7 +317,8 @@ describe('parseRelayerConfig — settlement swap path integrity fail-closed', ()
 
   it('rejects invalid swapDirection value', async () => {
     const bad = makeConfig();
-    (bad.supportedSettlementSwapPaths[0].hops[0] as Record<string, unknown>).swapDirection = 'invalidFn';
+    (bad.supportedSettlementSwapPaths[0].hops[0] as Record<string, unknown>).swapDirection =
+      'invalidFn';
     stubConfig(bad);
     await expect(
       StelisSDK.connect('http://primary/api', { pinnedPackageId: CANONICAL_PKG }),

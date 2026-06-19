@@ -8,11 +8,7 @@ import type { SponsorFailureMeta } from './store/abuseBlockTypes.js';
 import { logStructuredEvent } from './structuredEventLog.js';
 import { SPONSOR_DRIFT_OBSERVED } from './observability/events.js';
 import { FAILURE_TABLE, type FailurePolicy } from './failurePolicy.js';
-export {
-  ADMISSION_FAILURE_CODES,
-  FAILURE_TABLE,
-  PROMOTION_ABUSE_CODES,
-} from './failurePolicy.js';
+export { ADMISSION_FAILURE_CODES, FAILURE_TABLE, PROMOTION_ABUSE_CODES } from './failurePolicy.js';
 export type {
   AbuseImpact,
   AdmissionFailureCode,

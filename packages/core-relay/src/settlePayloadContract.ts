@@ -18,7 +18,10 @@
  *
  * Not exported via index.ts / browser.ts (internal-only module).
  */
-import { SETTLEMENT_SWAP_DIRECTION_FUNCTIONS, SETTLE_WITH_CREDIT_FUNCTION } from '@stelis/contracts';
+import {
+  SETTLEMENT_SWAP_DIRECTION_FUNCTIONS,
+  SETTLE_WITH_CREDIT_FUNCTION,
+} from '@stelis/contracts';
 
 // ─────────────────────────────────────────────
 // Settle field schema

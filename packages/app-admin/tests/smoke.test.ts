@@ -244,6 +244,15 @@ describe('API client', () => {
   });
 });
 
+describe('Sui RPC selection', () => {
+  it('maps API-reported networks to public Sui RPC endpoints', async () => {
+    const { getSuiRpcUrl } = await import('../src/suiRpc');
+
+    expect(getSuiRpcUrl('testnet')).toBe('https://fullnode.testnet.sui.io:443');
+    expect(getSuiRpcUrl('mainnet')).toBe('https://fullnode.mainnet.sui.io:443');
+  });
+});
+
 // ── Component export smoke tests ───────────────────────────────────────────
 
 describe('Component exports', () => {

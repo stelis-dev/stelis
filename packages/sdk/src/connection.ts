@@ -4,7 +4,10 @@
  * Standalone helpers used by StelisSDK.connect().
  * No StelisSDK state required — pure I/O and validation.
  */
-import { SETTLEMENT_SWAP_DIRECTION_VECTORS, VALID_SETTLEMENT_SWAP_DIRECTIONS } from '@stelis/contracts';
+import {
+  SETTLEMENT_SWAP_DIRECTION_VECTORS,
+  VALID_SETTLEMENT_SWAP_DIRECTIONS,
+} from '@stelis/contracts';
 import type { RelayerConfig, SingleHopSettlementSwapPath, StelisRequestTimeouts } from './types.js';
 
 const DEFAULT_RELAY_CONFIG_TIMEOUT_MS = 5_000;
@@ -62,7 +65,9 @@ export function parseRelayerConfig(data: unknown): RelayerConfig {
 
   const supportedSettlementSwapPaths = raw.supportedSettlementSwapPaths;
   if (!Array.isArray(supportedSettlementSwapPaths)) {
-    throw new Error('Invalid /relay/config response: supportedSettlementSwapPaths must be an array');
+    throw new Error(
+      'Invalid /relay/config response: supportedSettlementSwapPaths must be an array',
+    );
   }
 
   const quotedRelayerFeeMist = raw.quotedRelayerFeeMist;
@@ -188,9 +193,7 @@ function validateSettlementSwapPathIntegrity(p: Record<string, unknown>, idx: nu
 
   // hops.length ↔ settlementSwapDirection ↔ ordered swapDirection vector consistency.
   const expectedDeepBookSwapDirections =
-    SETTLEMENT_SWAP_DIRECTION_VECTORS[
-      direction as keyof typeof SETTLEMENT_SWAP_DIRECTION_VECTORS
-    ];
+    SETTLEMENT_SWAP_DIRECTION_VECTORS[direction as keyof typeof SETTLEMENT_SWAP_DIRECTION_VECTORS];
   if (hops.length !== expectedDeepBookSwapDirections.length) {
     throw new Error(
       `${prefix} settlementSwapDirection '${direction}' requires ${expectedDeepBookSwapDirections.length} hop(s), got ${hops.length}`,

@@ -33,7 +33,11 @@ const SETTLE_PARAMS = {
   orderIdHash: new Uint8Array(32).fill(0xcc),
 };
 
-function buildCreditData(): { commands: unknown[]; normalizedCommands: ReturnType<typeof convertSdkCommands>; inputs: unknown[] } {
+function buildCreditData(): {
+  commands: unknown[];
+  normalizedCommands: ReturnType<typeof convertSdkCommands>;
+  inputs: unknown[];
+} {
   const tx = new Transaction();
   buildSettleWithCreditPtb(tx, SETTLE_PARAMS);
   const data = tx.getData() as { commands: unknown[]; inputs: unknown[] };
@@ -51,7 +55,8 @@ function patchPureInputBytes(
   bytes: Uint8Array,
 ): unknown[] {
   const command = commands.find(
-    (cmd) => typeof cmd === 'object' && cmd !== null && (cmd as { $kind?: string }).$kind === 'MoveCall',
+    (cmd) =>
+      typeof cmd === 'object' && cmd !== null && (cmd as { $kind?: string }).$kind === 'MoveCall',
   ) as { MoveCall: { arguments: unknown[] } } | undefined;
   if (!command) throw new Error('test setup failed: MoveCall command not found');
 

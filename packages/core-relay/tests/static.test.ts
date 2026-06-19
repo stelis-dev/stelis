@@ -572,7 +572,9 @@ const SETTLEMENT_SWAP_PATH_1HOP = {
   settlementSwapDirection: 'baseForQuote' as const,
 };
 
-const ALLOWED_SETTLEMENT_SWAP_PATHS = [{ tokenType: DEEP_TYPE, hops: [POOL_1], settlementSwapDirection: 'baseForQuote' as const }];
+const ALLOWED_SETTLEMENT_SWAP_PATHS = [
+  { tokenType: DEEP_TYPE, hops: [POOL_1], settlementSwapDirection: 'baseForQuote' as const },
+];
 
 const TENANT_ENV: RelayerEnv = {
   ...ENV,
@@ -597,19 +599,35 @@ describe('Layer 2: settlement swap path validation — allowedSettlementSwapPath
 
   it('pass — qfb settlement swap path matches allowedSettlementSwapPaths by settlementSwapDirection + hops + tokenType', () => {
     const QFB_TOKEN = '0xqfb_token::token::TOKEN';
-    const qfbSettlementSwapPath = { tokenType: QFB_TOKEN, hops: [POOL_1], settlementSwapDirection: 'quoteForBase' as const };
+    const qfbSettlementSwapPath = {
+      tokenType: QFB_TOKEN,
+      hops: [POOL_1],
+      settlementSwapDirection: 'quoteForBase' as const,
+    };
     const qfbEnv: RelayerEnv = {
       ...ENV,
-      allowedSettlementSwapPaths: [{ tokenType: QFB_TOKEN, hops: [POOL_1], settlementSwapDirection: 'quoteForBase' as const }],
+      allowedSettlementSwapPaths: [
+        { tokenType: QFB_TOKEN, hops: [POOL_1], settlementSwapDirection: 'quoteForBase' as const },
+      ],
     };
-    expect(validateSettleArgs({ ...validArgs, extractedSettlementSwapPath: qfbSettlementSwapPath }, CONFIG, qfbEnv)).toEqual({
+    expect(
+      validateSettleArgs(
+        { ...validArgs, extractedSettlementSwapPath: qfbSettlementSwapPath },
+        CONFIG,
+        qfbEnv,
+      ),
+    ).toEqual({
       ok: true,
     });
   });
 
   it('fail — qfb PTB rejected when allowedSettlementSwapPaths only has bfq same token+hops', () => {
     // Same tokenType + hops, different settlementSwapDirection (bfq vs qfb) must NOT match.
-    const qfbSettlementSwapPath = { tokenType: DEEP_TYPE, hops: [POOL_1], settlementSwapDirection: 'quoteForBase' as const };
+    const qfbSettlementSwapPath = {
+      tokenType: DEEP_TYPE,
+      hops: [POOL_1],
+      settlementSwapDirection: 'quoteForBase' as const,
+    };
     const result = validateSettleArgs(
       { ...validArgs, extractedSettlementSwapPath: qfbSettlementSwapPath },
       CONFIG,
@@ -650,7 +668,10 @@ describe('Layer 2: settlement swap path validation — allowedSettlementSwapPath
   });
 
   it('fail — allowedSettlementSwapPaths undefined: L2_NO_SETTLEMENT_SWAP_PATHS_CONFIGURED', () => {
-    const noSettlementSwapPathsEnv: RelayerEnv = { ...TENANT_ENV, allowedSettlementSwapPaths: undefined };
+    const noSettlementSwapPathsEnv: RelayerEnv = {
+      ...TENANT_ENV,
+      allowedSettlementSwapPaths: undefined,
+    };
     const result = validateSettleArgs(
       { ...validArgs, extractedSettlementSwapPath: SETTLEMENT_SWAP_PATH_1HOP },
       CONFIG,
@@ -664,7 +685,11 @@ describe('Layer 2: settlement swap path validation — allowedSettlementSwapPath
 
   it('pass — 1hop exact match in allowedSettlementSwapPaths', () => {
     expect(
-      validateSettleArgs({ ...validArgs, extractedSettlementSwapPath: SETTLEMENT_SWAP_PATH_1HOP }, CONFIG, TENANT_ENV),
+      validateSettleArgs(
+        { ...validArgs, extractedSettlementSwapPath: SETTLEMENT_SWAP_PATH_1HOP },
+        CONFIG,
+        TENANT_ENV,
+      ),
     ).toEqual({ ok: true });
   });
 
@@ -684,7 +709,10 @@ describe('Layer 2: settlement swap path validation — allowedSettlementSwapPath
   });
 
   it('fail — token type mismatch: L2_UNAUTHORIZED_SETTLEMENT_SWAP_PATH', () => {
-    const badPaymentTokenSettlementSwapPath = { ...SETTLEMENT_SWAP_PATH_1HOP, tokenType: '0xfake::fake::FAKE' };
+    const badPaymentTokenSettlementSwapPath = {
+      ...SETTLEMENT_SWAP_PATH_1HOP,
+      tokenType: '0xfake::fake::FAKE',
+    };
     const result = validateSettleArgs(
       { ...validArgs, extractedSettlementSwapPath: badPaymentTokenSettlementSwapPath },
       CONFIG,
@@ -698,7 +726,11 @@ describe('Layer 2: settlement swap path validation — allowedSettlementSwapPath
 
   it('pass (canonical) — 1hop in allowedSettlementSwapPaths', () => {
     expect(
-      validateSettleArgs({ ...validArgs, extractedSettlementSwapPath: SETTLEMENT_SWAP_PATH_1HOP }, CONFIG, CANONICAL_ENV),
+      validateSettleArgs(
+        { ...validArgs, extractedSettlementSwapPath: SETTLEMENT_SWAP_PATH_1HOP },
+        CONFIG,
+        CANONICAL_ENV,
+      ),
     ).toEqual({ ok: true });
   });
 });
