@@ -292,6 +292,42 @@ describe('createSponsorOperationsRefillWorker — lifecycle', () => {
     worker.dispose();
   });
 
+  it('does not mark refill failed when the first post-dispatch balance read is stale', async () => {
+    const lock = makeStubLock();
+    const executeRefill = vi.fn(async () => refillSuccess());
+    const getSlotBalance = vi.fn(async () => 0n);
+    getSlotBalance.mockResolvedValueOnce(4_000_000_000n);
+    getSlotBalance.mockResolvedValueOnce(4_000_000_000n);
+    getSlotBalance.mockResolvedValueOnce(10_000_000_000n);
+    const worker = createSponsorOperationsRefillWorker({
+      state: stub.state,
+      refillLock: lock.lock,
+      sponsorRefillAccountDispatchLock: dispatchLock.lock,
+      sui: makeStubSui(async () => '20000000000'),
+      sponsorRefillAccountAddress: SPONSOR_REFILL_ACCOUNT_ADDRESS,
+      warnThresholdMist: SPONSOR_BALANCE_WARN_MIST,
+      refillTargetMist: 10_000_000_000n,
+      refillTimeoutMs: 500,
+      confirmationTimeoutMs: 500,
+      sponsorRefillAccountBalanceTimeoutMs: 500,
+      executeRefill,
+      getSlotBalance,
+    });
+
+    worker.requestRefill(SLOT);
+    await waitUntil(() => stub.slotWrites.length >= 3);
+
+    expect(executeRefill).toHaveBeenCalledWith(SLOT, 6_000_000_000n);
+    expect(stub.slotWrites.map((w) => w.fields.state)).toEqual([
+      'refilling',
+      'awaiting_confirmation',
+      'healthy',
+    ]);
+    expect(stub.slotWrites[2].fields.balanceMist).toBe('10000000000');
+    expect(stub.slotWrites[2].fields.refillReconciliationResult).toBe('confirmed');
+    worker.dispose();
+  });
+
   it('does not dispatch when the observed slot balance already meets the refill target', async () => {
     const lock = makeStubLock();
     const executeRefill = vi.fn(async () => refillSuccess());
@@ -420,7 +456,7 @@ describe('createSponsorOperationsRefillWorker — lifecycle', () => {
     worker.dispose();
   });
 
-  it('confirmation below target balance writes refill_failed', async () => {
+  it('leaves a successful refill awaiting confirmation when the balance stays below target', async () => {
     const lock = makeStubLock();
     const getSlotBalance = vi.fn(async () => 0n);
     getSlotBalance.mockResolvedValueOnce(4_000_000_000n);
@@ -434,7 +470,7 @@ describe('createSponsorOperationsRefillWorker — lifecycle', () => {
       warnThresholdMist: SPONSOR_BALANCE_WARN_MIST,
       refillTargetMist: 10_000_000_000n,
       refillTimeoutMs: 500,
-      confirmationTimeoutMs: 500,
+      confirmationTimeoutMs: 30,
       sponsorRefillAccountBalanceTimeoutMs: 500,
       executeRefill: async () => refillSuccess(),
       getSlotBalance,
@@ -443,8 +479,9 @@ describe('createSponsorOperationsRefillWorker — lifecycle', () => {
     worker.requestRefill(SLOT);
     await waitUntil(() => stub.slotWrites.length >= 3);
     const states = stub.slotWrites.map((w) => w.fields.state);
-    expect(states).toEqual(['refilling', 'awaiting_confirmation', 'refill_failed']);
-    expect(stub.slotWrites[2].fields.refillReconciliationResult).toBe('balance_below_target');
+    expect(states).toEqual(['refilling', 'awaiting_confirmation', 'awaiting_confirmation']);
+    expect(stub.slotWrites[2].fields.pendingRefillDigest).toBe('0xrefill');
+    expect(stub.slotWrites[2].fields.refillReconciliationResult).toBe('still_pending');
     worker.dispose();
   });
 

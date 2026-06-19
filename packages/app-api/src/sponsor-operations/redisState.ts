@@ -33,7 +33,6 @@ export const REFILL_RECONCILIATION_RESULTS = [
   'dispatch_timeout',
   'confirmed',
   'still_pending',
-  'balance_below_target',
 ] as const;
 
 export type RefillReconciliationResult = (typeof REFILL_RECONCILIATION_RESULTS)[number];

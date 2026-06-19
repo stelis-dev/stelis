@@ -24,9 +24,12 @@
  *        budget.
  *     5. Dispatch success writes `state='awaiting_confirmation'` with
  *        the pending digest, refreshes the sponsor refill account
- *        best-effort, then confirms the slot balance against the refill
- *        target. Dispatch timeout writes `state='awaiting_confirmation'`
- *        and lets the underlying promise reconcile late success/failure.
+ *        best-effort, then probes the slot until the transferred coin is
+ *        visible. If the refill is not visible before the confirmation
+ *        budget expires, the slot remains `awaiting_confirmation` for the
+ *        next reconciliation pass. Dispatch timeout also writes
+ *        `state='awaiting_confirmation'` and lets the underlying promise
+ *        reconcile late success/failure.
  *     6. Release the slot lock via a matching-token Lua CAS delete.
  *
  * Slot lock TTL:
@@ -105,6 +108,8 @@ interface AcquiredRefillDispatchLock {
   readonly handle: SponsorRefillAccountDispatchLockHandle;
   readonly remainingMs: number;
 }
+
+const REFILL_CONFIRMATION_POLL_MS = 250;
 
 export interface SponsorOperationsRefillWorker {
   /**
@@ -362,37 +367,51 @@ export function createSponsorOperationsRefillWorker(
     attempt: RefillAttempt,
     digest: string | null,
   ): Promise<void> {
+    const deadlineMs = Date.now() + deps.confirmationTimeoutMs;
+    let lastObservedBalanceMist: bigint | null = null;
     try {
-      const balance = await readSlotBalanceForRefill(
-        address,
-        `refillWorker.confirmation(${address})`,
-      );
-      if (disposed) return;
-      if (balance >= refillConfirmationThreshold(deps)) {
-        await writeSlot(address, {
-          state: classifySlotFromBalance(balance, deps.warnThresholdMist),
-          balanceMist: balance.toString(),
-          lastError: '',
-          ...refillAttemptFields({
-            pendingRefillDigest: '',
-            attemptedAmountMist: attempt.amountMist,
-            observedBalanceMist: balance,
-            reconciliationResult: 'confirmed',
-          }),
-        });
-      } else {
-        await writeSlot(address, {
-          state: 'refill_failed',
-          balanceMist: balance.toString(),
-          lastError: '',
-          ...refillAttemptFields({
-            pendingRefillDigest: '',
-            attemptedAmountMist: attempt.amountMist,
-            observedBalanceMist: balance,
-            reconciliationResult: 'balance_below_target',
-          }),
-        });
+      while (!disposed) {
+        const remainingMs = deadlineMs - Date.now();
+        if (remainingMs <= 0) break;
+
+        const balance = await withTimeout(
+          `refillWorker.confirmation(${address})`,
+          remainingMs,
+          () => deps.getSlotBalance(address),
+        );
+        lastObservedBalanceMist = balance;
+        if (disposed) return;
+        if (balance >= refillConfirmationThreshold(deps)) {
+          await writeSlot(address, {
+            state: classifySlotFromBalance(balance, deps.warnThresholdMist),
+            balanceMist: balance.toString(),
+            lastError: '',
+            ...refillAttemptFields({
+              pendingRefillDigest: '',
+              attemptedAmountMist: attempt.amountMist,
+              observedBalanceMist: balance,
+              reconciliationResult: 'confirmed',
+            }),
+          });
+          return;
+        }
+
+        const delayMs = Math.min(REFILL_CONFIRMATION_POLL_MS, deadlineMs - Date.now());
+        if (delayMs > 0) await delay(delayMs);
       }
+
+      if (disposed) return;
+      await writeSlot(address, {
+        state: 'awaiting_confirmation',
+        balanceMist: lastObservedBalanceMist?.toString() ?? attempt.observedBalanceMist.toString(),
+        lastError: '',
+        ...refillAttemptFields({
+          pendingRefillDigest: digest,
+          attemptedAmountMist: attempt.amountMist,
+          observedBalanceMist: lastObservedBalanceMist ?? attempt.observedBalanceMist,
+          reconciliationResult: 'still_pending',
+        }),
+      });
     } catch (err) {
       if (disposed) return;
       await writeSlot(address, {
