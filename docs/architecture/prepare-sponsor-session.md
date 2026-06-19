@@ -21,10 +21,10 @@ Request (handlePrepare — handlers/prepare.ts)
         │
         ▼
 SettlementPlan                         prepare/settlePlanTypes.ts
-  (profile, route, funding, swap, audit)
+  (profile, settlementSwapPath, funding, swap, audit)
         │
         │  runGenericPrepareBuildPipeline()  prepare/build.ts
-        │  (optional pre-swap credit probe → route-normalized cost envelope
+        │  (optional pre-swap credit probe → cost envelope for the selected settlement swap path
         │   → Pass 2 final PTB)
         ▼
 GenericPrepareBuildOutput              prepare/build.ts
@@ -87,15 +87,15 @@ are authoritative.
 
 **Stored entry during /sponsor (coordination-only)**:
 
-| Field                              | Role                                                                                                                                     |
-| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `txBytesHash`                      | single-use hash binding — `consume()` verifies it                                                                                        |
-| `slotId`, `sponsorAddress`         | sponsor slot identity + gasOwner coordination                                                                                            |
-| `receiptId`                        | HMAC-protected receipt identity (paired with committed `txBytesHash` in the pool)                                                        |
-| `senderAddress`                    | Verified prepare sender, nonce reservation key, generic outstanding-prepare quota key, and observability echo. Promotion outstanding-prepare quota uses verified `userId`. |
-| `nonce`                            | sender-local live/pending reservation compaction key                                                                                     |
-| `orderId`                          | echo target for `expectedOrderIdHash` reconstruction                                                                                     |
-| `executionPathKey`, `clientIp`, `issuedAt` | structured log / TTL observability                                                                                                       |
+| Field                                      | Role                                                                                                                                                                       |
+| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `txBytesHash`                              | single-use hash binding — `consume()` verifies it                                                                                                                          |
+| `slotId`, `sponsorAddress`                 | sponsor slot identity + gasOwner coordination                                                                                                                              |
+| `receiptId`                                | HMAC-protected receipt identity (paired with committed `txBytesHash` in the pool)                                                                                          |
+| `senderAddress`                            | Verified prepare sender, nonce reservation key, generic outstanding-prepare quota key, and observability echo. Promotion outstanding-prepare quota uses verified `userId`. |
+| `nonce`                                    | sender-local live/pending reservation compaction key                                                                                                                       |
+| `orderId`                                  | echo target for `expectedOrderIdHash` reconstruction                                                                                                                       |
+| `executionPathKey`, `clientIp`, `issuedAt` | structured log / TTL observability                                                                                                                                         |
 
 The store entry carries no settle-value copies. Every settle-execution
 field (relayerClaim, fee components, profile, policyHash, quoteTimestampMs)
@@ -144,15 +144,15 @@ after consumed (always):
 
 State transitions:
 
-| Transition                             | Trigger                                                                 | Source location                                              |
-| -------------------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------ |
-| entry → `reserved`                     | `runPrepareStateMachine()` acquires sponsor slot + nonce reservation      | `session/sponsoredExecution/runner.ts`                       |
-| `reserved` → `stored`                  | `composePreparedCommit()` + `prepareStore.store()` + ownership transfer | `session/sponsoredExecution/runner.ts`                       |
-| `stored` → `consumed`                  | `prepareStore.consume(receiptId, txBytesHash)` — atomic delete          | `session/sessionPrimitives.ts` (`consumeEntry`)              |
-| `consumed` → `submitted`               | `signAndSubmit()` call                                                  | `session/sessionPrimitives.ts`                               |
+| Transition                             | Trigger                                                                 | Source location                                                          |
+| -------------------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| entry → `reserved`                     | `runPrepareStateMachine()` acquires sponsor slot + nonce reservation    | `session/sponsoredExecution/runner.ts`                                   |
+| `reserved` → `stored`                  | `composePreparedCommit()` + `prepareStore.store()` + ownership transfer | `session/sponsoredExecution/runner.ts`                                   |
+| `stored` → `consumed`                  | `prepareStore.consume(receiptId, txBytesHash)` — atomic delete          | `session/sessionPrimitives.ts` (`consumeEntry`)                          |
+| `consumed` → `submitted`               | `signAndSubmit()` call                                                  | `session/sessionPrimitives.ts`                                           |
 | `submitted` → `executed` \| `reverted` | `execResult.success` branch                                             | `session/sponsoredExecution/sponsorRunner.ts` + SponsoredExecutionPolicy |
-| any → `expired`                        | background `_evictExpired()` or TTL check inside `consume()`            | `store/memoryPrepareStore.ts`, `store/redisPrepareStore.ts`  |
-| `consumed` → `released`                | `safeSlotCheckin()` in `finally` — runs on every post-consume path      | `session/sponsoredExecution/sponsorRunner.ts`                |
+| any → `expired`                        | background `_evictExpired()` or TTL check inside `consume()`            | `store/memoryPrepareStore.ts`, `store/redisPrepareStore.ts`              |
+| `consumed` → `released`                | `safeSlotCheckin()` in `finally` — runs on every post-consume path      | `session/sponsoredExecution/sponsorRunner.ts`                            |
 
 The lifecycle states above are enforced by the shared sponsor execution
 runners. Prepare-side cleanup is owned by
@@ -278,12 +278,12 @@ ctx.vaultsTableId ?? undefined)`. If the vault now exists →
    `SPONSOR_PREFLIGHT_FAILED` - IP-counter pressure (the address carve-out
    skips only the non-IP counter), and the flow emits no
    `SPONSOR_DRIFT_OBSERVED` — both violate the
-     vault-drift contract. **Residual TOCTOU**: in the brief window between
-     this pre-sign re-query and on-chain submit a vault can still be created;
-     the resulting on-chain `VAULT_ALREADY_REGISTERED` revert is handled by
-     the standard non-IP carve-out in `ADDRESS_CARVE_OUT_SUBCODES` (address
-     counter skipped) and the IP counter still increments — same rule as
-     every other carve-out subcode.
+   vault-drift contract. **Residual TOCTOU**: in the brief window between
+   this pre-sign re-query and on-chain submit a vault can still be created;
+   the resulting on-chain `VAULT_ALREADY_REGISTERED` revert is handled by
+   the standard non-IP carve-out in `ADDRESS_CARVE_OUT_SUBCODES` (address
+   counter skipped) and the IP counter still increments — same rule as
+   every other carve-out subcode.
 10. Preflight simulation → L3 `validateGenericSponsorNonloss` — fed
     `settleArgs.gasVarianceFixedMist`, `settleArgs.slippageBufferMist`, and
     `settleArgs.relayerClaim`; no store copies participate in the L3 decision.
@@ -294,13 +294,13 @@ ctx.vaultsTableId ?? undefined)`. If the vault now exists →
 
 Stored fields still read at `/sponsor` (coordination-only, never execution authority):
 
-| Field                      | Purpose                                                                     |
-| -------------------------- | --------------------------------------------------------------------------- |
-| `txBytesHash`              | Single-use hash binding verified in `consume()`                             |
-| `orderId`                  | Echo target for `expectedOrderIdHash` reconstruction in L2                  |
-| `slotId`, `sponsorAddress` | Sponsor pool slot identity + gasOwner coordination                          |
+| Field                      | Purpose                                                                           |
+| -------------------------- | --------------------------------------------------------------------------------- |
+| `txBytesHash`              | Single-use hash binding verified in `consume()`                                   |
+| `orderId`                  | Echo target for `expectedOrderIdHash` reconstruction in L2                        |
+| `slotId`, `sponsorAddress` | Sponsor pool slot identity + gasOwner coordination                                |
 | `receiptId`                | HMAC-protected receipt identity (paired with committed `txBytesHash` in the pool) |
-| `executionPathKey`                 | `ONCHAIN_REVERT` log key                                                    |
+| `executionPathKey`         | `ONCHAIN_REVERT` log key                                                          |
 
 Settle observability fields **not persisted** in the store:
 `relayerClaim`, `quotedRelayerFeeMist`, `gasVarianceFixedMist`,

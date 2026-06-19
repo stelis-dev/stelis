@@ -1,12 +1,12 @@
 import type {
-  StaticPoolDescriptor,
-  StaticPoolDescriptorMap,
-  StaticPoolDescriptorSource,
+  StaticSettlementSwapPathDescriptor,
+  StaticSettlementSwapPathDescriptorMap,
+  StaticSettlementSwapPathDescriptorSource,
 } from './types.js';
 
-export function createStaticPoolDescriptor(
-  source: StaticPoolDescriptorSource,
-): StaticPoolDescriptor {
+export function createStaticSettlementSwapPathDescriptor(
+  source: StaticSettlementSwapPathDescriptorSource,
+): StaticSettlementSwapPathDescriptor {
   return {
     paymentTokenType: source.paymentTokenType,
     paymentTokenSymbol: source.paymentTokenSymbol,
@@ -19,12 +19,12 @@ export function createStaticPoolDescriptor(
   };
 }
 
-export function createStaticPoolDescriptorMap(
-  sources: readonly StaticPoolDescriptorSource[],
-): StaticPoolDescriptorMap {
-  const map: StaticPoolDescriptorMap = new Map();
+export function createStaticSettlementSwapPathDescriptorMap(
+  sources: readonly StaticSettlementSwapPathDescriptorSource[],
+): StaticSettlementSwapPathDescriptorMap {
+  const map: StaticSettlementSwapPathDescriptorMap = new Map();
   for (const source of sources) {
-    map.set(source.paymentTokenType, createStaticPoolDescriptor(source));
+    map.set(source.paymentTokenType, createStaticSettlementSwapPathDescriptor(source));
   }
   return map;
 }

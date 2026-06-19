@@ -272,7 +272,7 @@ function makeInput(
   return {
     userTxKindBytes: 'AAAA', // base64 placeholder
     senderAddress: '0xSENDER',
-    pool: {
+    settlementSwapPath: {
       hops: [
         {
           poolId: '0xPOOL',
@@ -289,7 +289,7 @@ function makeInput(
       minSize: 1n,
       effectiveFeeRateBps: 0,
       settlementSwapDirection: 'baseForQuote',
-    } as unknown as GenericPrepareBuildRequest['pool'],
+    } as unknown as GenericPrepareBuildRequest['settlementSwapPath'],
     descriptor: {
       paymentTokenType: '0xDEEP::deep::DEEP',
       paymentTokenSymbol: 'DEEP',
@@ -3116,7 +3116,7 @@ describe('runGenericPrepareBuildPipeline — quote RPC observability fields', ()
       profile: 'new_user',
       vaultObjectId: undefined,
       credit: '0',
-      pool: {
+      settlementSwapPath: {
         hops: [
           {
             poolId: '0xPOOL',
@@ -3133,7 +3133,7 @@ describe('runGenericPrepareBuildPipeline — quote RPC observability fields', ()
         minSize: 1_000_000_000n,
         effectiveFeeRateBps: 0,
         settlementSwapDirection: 'quoteForBase',
-      } as unknown as GenericPrepareBuildRequest['pool'],
+      } as unknown as GenericPrepareBuildRequest['settlementSwapPath'],
       descriptor: {
         paymentTokenType: '0xUSDC::usdc::USDC',
         paymentTokenSymbol: 'USDC',

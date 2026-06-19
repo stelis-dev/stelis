@@ -21,7 +21,7 @@ vi.mock('../src/settlementSwapPathRegistry.js', () => ({
     .fn()
     .mockImplementation((client: unknown, _pkg: unknown, _jsonFilePath: unknown) => {
       capturedSettlementSwapPathRegistryClient = client;
-      return Promise.resolve([]); // empty pools
+      return Promise.resolve([]); // empty settlement swap path registry
     }),
 }));
 
@@ -93,7 +93,7 @@ vi.mock('../src/redisClient.js', () => ({
 }));
 
 vi.mock('@stelis/core-api/prepareConfig', () => ({
-  createPreparePoolDescriptorMap: vi.fn().mockReturnValue(new Map()),
+  createPrepareSettlementSwapPathDescriptorMap: vi.fn().mockReturnValue(new Map()),
   resolvePrepareConfig: vi.fn().mockReturnValue({
     supportedSettlementSwapPaths: [],
     deepbookPackageId: '0xDEEPBOOK',

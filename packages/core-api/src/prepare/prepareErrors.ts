@@ -189,7 +189,7 @@ export type SponsorFailureSubcode =
  * `stelisPackageId`, and `SLIPPAGE_EXCEEDED` only when bound to
  * `deepbookPackageId`. External packages with the same module names
  * and abort codes return `undefined` so the caller falls back to the
- * route-specific unclassified path (`simulation_failed` /
+ * request-flow-specific unclassified path (`simulation_failed` /
  * `onchain_revert` / `DRY_RUN_FAILED`).
  */
 export function classifySponsorFailureSubcode(

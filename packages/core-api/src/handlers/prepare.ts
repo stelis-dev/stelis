@@ -14,7 +14,7 @@ import {
   type SingleHopSettlementSwapPath,
 } from '@stelis/contracts';
 import type { AllowedSettlementSwapPath } from '@stelis/core-relay';
-import type { StaticPoolDescriptorMap } from '@stelis/core-relay/server';
+import type { StaticSettlementSwapPathDescriptorMap } from '@stelis/core-relay/server';
 import type { RelayerContext } from '../context.js';
 import { checkBlockedRequest } from '../abuseBlocking.js';
 import { PREPARE_TTL_MS } from '../preparePolicy.js';
@@ -73,7 +73,7 @@ export interface PrepareParams {
 export interface PrepareHandlerConfig {
   deepbookPackageId: string;
   supportedSettlementSwapPaths: SingleHopSettlementSwapPath[];
-  poolDescriptors: StaticPoolDescriptorMap;
+  settlementSwapPathDescriptors: StaticSettlementSwapPathDescriptorMap;
   /** Pre-registered settlement swap paths for L2 validation. */
   allowedSettlementSwapPaths: AllowedSettlementSwapPath[];
   /**
@@ -133,7 +133,12 @@ export async function handlePrepare(
     address: params.senderAddress,
   });
   if (blockedBySender.blocked) {
-    throw new PrepareValidationError('ABUSE_BLOCKED', 'Request temporarily blocked', undefined, 429);
+    throw new PrepareValidationError(
+      'ABUSE_BLOCKED',
+      'Request temporarily blocked',
+      undefined,
+      429,
+    );
   }
 
   const options = {

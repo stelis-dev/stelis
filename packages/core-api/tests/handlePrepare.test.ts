@@ -20,11 +20,8 @@ import type { PrepareParams, PrepareHandlerConfig } from '../src/handlers/prepar
 import { handlePrepare } from '../src/handlers/prepare.js';
 import { PrepareValidationError, MAX_TX_KIND_BYTES } from '../src/prepare/replay.js';
 import { PrepareOverloadError } from '../src/store/prepareErrors.js';
-import { createStaticPoolDescriptorMap } from '@stelis/core-relay/server';
-import {
-  TEST_PREPARE_AUTH_SENDER,
-  withPrepareAuthorization,
-} from './prepareAuthTestHelpers.js';
+import { createStaticSettlementSwapPathDescriptorMap } from '@stelis/core-relay/server';
+import { TEST_PREPARE_AUTH_SENDER, withPrepareAuthorization } from './prepareAuthTestHelpers.js';
 
 /** Valid-format test address (64-hex) for use in tests that reach BCS serialize. */
 const TEST_SENDER_ADDR = TEST_PREPARE_AUTH_SENDER;
@@ -144,7 +141,9 @@ function makeExtraCfg(): PrepareHandlerConfig {
       },
     ],
     supportedSettlementSwapPaths,
-    poolDescriptors: createStaticPoolDescriptorMap(supportedSettlementSwapPaths),
+    settlementSwapPathDescriptors: createStaticSettlementSwapPathDescriptorMap(
+      supportedSettlementSwapPaths,
+    ),
   };
 }
 
@@ -499,10 +498,7 @@ describe('handlePrepare', () => {
   it('rejects decimal slippageBps with INVALID_SLIPPAGE_BPS', async () => {
     const { ctx } = makeMockContext();
     const txKindBytes = await makeValidTxKindBytes();
-    const params = await makeParamsWithRequestShapeOverride(
-      { txKindBytes },
-      { slippageBps: 1.5 },
-    );
+    const params = await makeParamsWithRequestShapeOverride({ txKindBytes }, { slippageBps: 1.5 });
 
     await expectPrepareError(ctx, params, makeExtraCfg(), 'INVALID_SLIPPAGE_BPS');
     expect(ctx.sponsorPool.checkout).not.toHaveBeenCalled();
@@ -546,10 +542,7 @@ describe('handlePrepare', () => {
   it('rejects decimal gasMarginBps with INVALID_GAS_MARGIN_BPS', async () => {
     const { ctx } = makeMockContext();
     const txKindBytes = await makeValidTxKindBytes();
-    const params = await makeParamsWithRequestShapeOverride(
-      { txKindBytes },
-      { gasMarginBps: 1.5 },
-    );
+    const params = await makeParamsWithRequestShapeOverride({ txKindBytes }, { gasMarginBps: 1.5 });
 
     await expectPrepareError(ctx, params, makeExtraCfg(), 'INVALID_GAS_MARGIN_BPS');
     expect(ctx.sponsorPool.checkout).not.toHaveBeenCalled();
@@ -566,10 +559,7 @@ describe('handlePrepare', () => {
   it('rejects NaN gasMarginBps with INVALID_GAS_MARGIN_BPS', async () => {
     const { ctx } = makeMockContext();
     const txKindBytes = await makeValidTxKindBytes();
-    const params = await makeParamsWithRequestShapeOverride(
-      { txKindBytes },
-      { gasMarginBps: NaN },
-    );
+    const params = await makeParamsWithRequestShapeOverride({ txKindBytes }, { gasMarginBps: NaN });
 
     await expectPrepareError(ctx, params, makeExtraCfg(), 'INVALID_GAS_MARGIN_BPS');
   });

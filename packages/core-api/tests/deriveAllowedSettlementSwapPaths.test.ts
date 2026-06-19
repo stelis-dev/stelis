@@ -1,13 +1,13 @@
 /**
  * deriveAllowedSettlementSwapPaths — fail-closed integrity check tests.
  *
- * Validates that server-side settlement swap path derivation rejects pool configs
+ * Validates that server-side settlement swap path derivation rejects configs
  * whose settlementSwapDirection is inconsistent with either hop count or ordered
  * swapDirection vector. This is the boot-time barrier that locks runtime config
  * against the on-chain Move entry signatures.
  */
 import { describe, it, expect } from 'vitest';
-import { createStaticPoolDescriptorMap } from '@stelis/core-relay/server';
+import { createStaticSettlementSwapPathDescriptorMap } from '@stelis/core-relay/server';
 import { deriveAllowedSettlementSwapPaths, resolvePrepareConfig } from '../src/prepareConfig.js';
 import type { SingleHopSettlementSwapPath } from '@stelis/contracts';
 
@@ -17,7 +17,9 @@ const SUI = '0x0000000000000000000000000000000000000000000000000000000000000002:
 const POOL_A = '0x' + 'a1'.repeat(32);
 const POOL_B = '0x' + 'b2'.repeat(32);
 
-function pool(overrides: Partial<SingleHopSettlementSwapPath>): SingleHopSettlementSwapPath {
+function settlementSwapPath(
+  overrides: Partial<SingleHopSettlementSwapPath>,
+): SingleHopSettlementSwapPath {
   return {
     paymentTokenType: DEEP,
     paymentTokenSymbol: 'DEEP',
@@ -26,26 +28,34 @@ function pool(overrides: Partial<SingleHopSettlementSwapPath>): SingleHopSettlem
     minSize: 1n,
     effectiveFeeRateBps: 0,
     settlementSwapDirection: 'baseForQuote',
-    hops: [{ poolId: POOL_A, baseType: DEEP, quoteType: SUI, swapDirection: 'baseForQuote', feeBps: 0 }],
+    hops: [
+      { poolId: POOL_A, baseType: DEEP, quoteType: SUI, swapDirection: 'baseForQuote', feeBps: 0 },
+    ],
     ...overrides,
   } as SingleHopSettlementSwapPath;
 }
 
 describe('deriveAllowedSettlementSwapPaths — settlementSwapDirection ↔ swapDirection vector integrity', () => {
   it('accepts baseForQuote direction with swapDirection=baseForQuote', () => {
-    const result = deriveAllowedSettlementSwapPaths([pool({})]);
+    const result = deriveAllowedSettlementSwapPaths([settlementSwapPath({})]);
     expect(result).toHaveLength(1);
     expect(result[0].settlementSwapDirection).toBe('baseForQuote');
   });
 
   it('accepts quoteForBase direction with swapDirection=quoteForBase', () => {
     const result = deriveAllowedSettlementSwapPaths([
-      pool({
+      settlementSwapPath({
         paymentTokenType: USDC,
         paymentTokenSymbol: 'USDC',
         settlementSwapDirection: 'quoteForBase',
         hops: [
-          { poolId: POOL_A, baseType: SUI, quoteType: USDC, swapDirection: 'quoteForBase', feeBps: 0 },
+          {
+            poolId: POOL_A,
+            baseType: SUI,
+            quoteType: USDC,
+            swapDirection: 'quoteForBase',
+            feeBps: 0,
+          },
         ],
       }),
     ]);
@@ -56,10 +66,16 @@ describe('deriveAllowedSettlementSwapPaths — settlementSwapDirection ↔ swapD
   it('rejects duplicate paymentTokenType because each token selects one active settlement swap path', () => {
     expect(() =>
       deriveAllowedSettlementSwapPaths([
-        pool({}),
-        pool({
+        settlementSwapPath({}),
+        settlementSwapPath({
           hops: [
-            { poolId: POOL_B, baseType: DEEP, quoteType: SUI, swapDirection: 'baseForQuote', feeBps: 0 },
+            {
+              poolId: POOL_B,
+              baseType: DEEP,
+              quoteType: SUI,
+              swapDirection: 'baseForQuote',
+              feeBps: 0,
+            },
           ],
         }),
       ]),
@@ -69,9 +85,15 @@ describe('deriveAllowedSettlementSwapPaths — settlementSwapDirection ↔ swapD
   it('rejects baseForQuote direction with swapDirection=quoteForBase (swapDirection vector mismatch)', () => {
     expect(() =>
       deriveAllowedSettlementSwapPaths([
-        pool({
+        settlementSwapPath({
           hops: [
-            { poolId: POOL_A, baseType: DEEP, quoteType: SUI, swapDirection: 'quoteForBase', feeBps: 0 },
+            {
+              poolId: POOL_A,
+              baseType: DEEP,
+              quoteType: SUI,
+              swapDirection: 'quoteForBase',
+              feeBps: 0,
+            },
           ],
         }),
       ]),
@@ -83,10 +105,16 @@ describe('deriveAllowedSettlementSwapPaths — settlementSwapDirection ↔ swapD
   it('rejects quoteForBase direction with swapDirection=baseForQuote (swapDirection vector mismatch)', () => {
     expect(() =>
       deriveAllowedSettlementSwapPaths([
-        pool({
+        settlementSwapPath({
           settlementSwapDirection: 'quoteForBase',
           hops: [
-            { poolId: POOL_A, baseType: SUI, quoteType: DEEP, swapDirection: 'baseForQuote', feeBps: 0 },
+            {
+              poolId: POOL_A,
+              baseType: SUI,
+              quoteType: DEEP,
+              swapDirection: 'baseForQuote',
+              feeBps: 0,
+            },
           ],
         }),
       ]),
@@ -98,11 +126,23 @@ describe('deriveAllowedSettlementSwapPaths — settlementSwapDirection ↔ swapD
   it('rejects baseForQuote direction with 2 hops (hop count mismatch)', () => {
     expect(() =>
       deriveAllowedSettlementSwapPaths([
-        pool({
+        settlementSwapPath({
           settlementSwapDirection: 'baseForQuote',
           hops: [
-            { poolId: POOL_A, baseType: DEEP, quoteType: SUI, swapDirection: 'baseForQuote', feeBps: 0 },
-            { poolId: POOL_B, baseType: DEEP, quoteType: SUI, swapDirection: 'baseForQuote', feeBps: 0 },
+            {
+              poolId: POOL_A,
+              baseType: DEEP,
+              quoteType: SUI,
+              swapDirection: 'baseForQuote',
+              feeBps: 0,
+            },
+            {
+              poolId: POOL_B,
+              baseType: DEEP,
+              quoteType: SUI,
+              swapDirection: 'baseForQuote',
+              feeBps: 0,
+            },
           ],
         }),
       ]),
@@ -110,59 +150,70 @@ describe('deriveAllowedSettlementSwapPaths — settlementSwapDirection ↔ swapD
   });
 });
 
-describe('resolvePrepareConfig — pool descriptor coverage', () => {
+describe('resolvePrepareConfig — settlement swap path descriptor coverage', () => {
   it('accepts descriptors derived from the same supported settlement swap path set', () => {
-    const pools = [pool({})];
+    const settlementSwapPaths = [settlementSwapPath({})];
     const result = resolvePrepareConfig({
-      pools,
-      descriptors: createStaticPoolDescriptorMap(pools),
+      settlementSwapPaths,
+      descriptors: createStaticSettlementSwapPathDescriptorMap(settlementSwapPaths),
       deepbookPackageId: '0xDEEPBOOK',
     });
 
-    expect(result.supportedSettlementSwapPaths).toEqual(pools);
-    expect(result.poolDescriptors.size).toBe(1);
+    expect(result.supportedSettlementSwapPaths).toEqual(settlementSwapPaths);
+    expect(result.settlementSwapPathDescriptors.size).toBe(1);
   });
 
   it('rejects a supported settlement swap path without a matching descriptor', () => {
     expect(() =>
       resolvePrepareConfig({
-        pools: [pool({})],
+        settlementSwapPaths: [settlementSwapPath({})],
         descriptors: new Map(),
         deepbookPackageId: '0xDEEPBOOK',
       }),
-    ).toThrow(/Missing StaticPoolDescriptor/);
+    ).toThrow(/Missing StaticSettlementSwapPathDescriptor/);
   });
 
   it('rejects descriptors that are not backed by supportedSettlementSwapPaths', () => {
-    const pools = [pool({})];
-    const extraPool = pool({
+    const settlementSwapPaths = [settlementSwapPath({})];
+    const extraSettlementSwapPath = settlementSwapPath({
       paymentTokenType: USDC,
       paymentTokenSymbol: 'USDC',
       settlementSwapDirection: 'quoteForBase',
-      hops: [{ poolId: POOL_B, baseType: SUI, quoteType: USDC, swapDirection: 'quoteForBase', feeBps: 0 }],
+      hops: [
+        {
+          poolId: POOL_B,
+          baseType: SUI,
+          quoteType: USDC,
+          swapDirection: 'quoteForBase',
+          feeBps: 0,
+        },
+      ],
     });
-    const descriptors = createStaticPoolDescriptorMap([...pools, extraPool]);
+    const descriptors = createStaticSettlementSwapPathDescriptorMap([
+      ...settlementSwapPaths,
+      extraSettlementSwapPath,
+    ]);
 
     expect(() =>
       resolvePrepareConfig({
-        pools,
+        settlementSwapPaths,
         descriptors,
         deepbookPackageId: '0xDEEPBOOK',
       }),
-    ).toThrow(/Unexpected StaticPoolDescriptor/);
+    ).toThrow(/Unexpected StaticSettlementSwapPathDescriptor/);
   });
 
   it('rejects a descriptor whose execution fields drift from the supported settlement swap path', () => {
-    const pools = [pool({})];
-    const descriptors = createStaticPoolDescriptorMap([
-      pool({
+    const settlementSwapPaths = [settlementSwapPath({})];
+    const descriptors = createStaticSettlementSwapPathDescriptorMap([
+      settlementSwapPath({
         lotSize: 2n,
       }),
     ]);
 
     expect(() =>
       resolvePrepareConfig({
-        pools,
+        settlementSwapPaths,
         descriptors,
         deepbookPackageId: '0xDEEPBOOK',
       }),

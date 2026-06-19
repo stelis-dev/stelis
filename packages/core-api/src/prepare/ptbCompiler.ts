@@ -5,7 +5,7 @@
  * the settlement suffix onto the user's Transaction.
  *
  * This module must NOT:
- *   - Infer route shape
+ *   - Infer settlement swap path shape
  *   - Recalculate swap amounts
  *   - Make funding-source decisions
  *
@@ -85,7 +85,7 @@ export interface SwapCompileContext {
  *
  * Steps:
  *   1. Select/create payment coin (coin_object | address_balance | mixed_topup)
- *   2. Call buildSwapAndSettlePtb with the plan's route shape + audit fields
+ *   2. Call buildSwapAndSettlePtb with the plan's settlement swap path + audit fields
  *
  * Payment-coin selection is the only remaining async/chain-dependent step in the compiler.
  * This is acceptable because coin object selection requires real-time balance data
@@ -102,7 +102,7 @@ export async function compileSwapSettlement(
   vaultObjectId: string | null,
   prefixUsage: PrefixUsage,
 ): Promise<void> {
-  const pool = plan.route;
+  const settlementSwapPath = plan.settlementSwapPath;
 
   // ── Payment coin selection ──────────────────────────────────────────────
   let paymentCoin: TransactionObjectArgument;
@@ -112,19 +112,19 @@ export async function compileSwapSettlement(
       ctx.sui,
       tx,
       senderAddress,
-      pool.paymentTokenType,
+      settlementSwapPath.paymentTokenType,
       plan.swap.swapAmountSmallest,
-      pool.paymentTokenSymbol,
+      settlementSwapPath.paymentTokenSymbol,
       prefixUsage,
     ));
   } else if (plan.funding.source === 'address_balance') {
     const withdrawalInput = tx.withdrawal({
       amount: plan.swap.swapAmountSmallest,
-      type: pool.paymentTokenType,
+      type: settlementSwapPath.paymentTokenType,
     });
     [paymentCoin] = tx.moveCall({
       target: '0x2::coin::redeem_funds',
-      typeArguments: [pool.paymentTokenType],
+      typeArguments: [settlementSwapPath.paymentTokenType],
       arguments: [withdrawalInput],
     });
   } else {
@@ -133,7 +133,7 @@ export async function compileSwapSettlement(
     if (usable.length === 0) {
       throw new PrepareValidationError(
         'PAYMENT_COIN_CONFLICT',
-        `Mixed topup selected but no usable ${pool.paymentTokenSymbol} coin objects remain after R-9 filtering.`,
+        `Mixed topup selected but no usable ${settlementSwapPath.paymentTokenSymbol} coin objects remain after R-9 filtering.`,
       );
     }
     const baseCoin = pickPreferredPaymentBaseCoin(usable, prefixUsage);
@@ -147,24 +147,24 @@ export async function compileSwapSettlement(
     }
     const withdrawalInput = tx.withdrawal({
       amount: plan.funding.redeemDelta,
-      type: pool.paymentTokenType,
+      type: settlementSwapPath.paymentTokenType,
     });
     const [redeemedCoin] = tx.moveCall({
       target: '0x2::coin::redeem_funds',
-      typeArguments: [pool.paymentTokenType],
+      typeArguments: [settlementSwapPath.paymentTokenType],
       arguments: [withdrawalInput],
     });
     tx.mergeCoins(tx.object(baseCoinId), [redeemedCoin]);
     [paymentCoin] = tx.splitCoins(tx.object(baseCoinId), [plan.swap.swapAmountSmallest]);
   }
 
-  // ── Route shape + PTB builder ──────────────────────────────────────────
+  // ── Settlement swap path args + PTB builder ────────────────────────────
   const variant = plan.variant!;
 
-  const routeShape = {
-    settlementSwapDirection: pool.settlementSwapDirection,
-    paymentTokenType: pool.paymentTokenType,
-    poolId: pool.hops[0].poolId,
+  const settlementSwapPathArgs = {
+    settlementSwapDirection: settlementSwapPath.settlementSwapDirection,
+    paymentTokenType: settlementSwapPath.paymentTokenType,
+    poolId: settlementSwapPath.hops[0].poolId,
   };
 
   const sharedParams = {
@@ -190,11 +190,11 @@ export async function compileSwapSettlement(
   };
 
   if (variant === 'new_user') {
-    buildSwapAndSettlePtb(tx, { variant: 'new_user', ...routeShape, ...sharedParams });
+    buildSwapAndSettlePtb(tx, { variant: 'new_user', ...settlementSwapPathArgs, ...sharedParams });
   } else {
     buildSwapAndSettlePtb(tx, {
       variant: 'with_vault',
-      ...routeShape,
+      ...settlementSwapPathArgs,
       ...sharedParams,
       vaultId: vaultObjectId!,
       useCreditAmount: plan.funding.useCreditAmount,

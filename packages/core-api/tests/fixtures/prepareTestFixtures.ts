@@ -35,10 +35,10 @@ export const SUI_TYPE = '0x2::sui::SUI';
 export const DEEP_TYPE_FULL = `${ADDR_PKG}::deep::DEEP`;
 
 // ─────────────────────────────────────────────
-// Pool configs
+// Settlement swap path fixtures
 // ─────────────────────────────────────────────
 
-export const POOL_BFQ: SingleHopSettlementSwapPath = {
+export const SETTLEMENT_SWAP_PATH_BFQ: SingleHopSettlementSwapPath = {
   hops: [
     {
       poolId: ADDR_POOL,
@@ -73,7 +73,7 @@ export const BASE_CONFIG: PlannerConfig = {
 
 export function makeInput(overrides: Partial<PlannerInput> = {}): PlannerInput {
   return {
-    pool: POOL_BFQ,
+    settlementSwapPath: SETTLEMENT_SWAP_PATH_BFQ,
     profile: 'with_vault',
     vaultObjectId: ADDR_VAULT,
     creditMist: 0n,

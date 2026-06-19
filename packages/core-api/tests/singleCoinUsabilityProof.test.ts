@@ -16,7 +16,7 @@ import {
   ADDR_USABLE_COIN,
   ADDR_VAULT,
   BASE_AUDIT,
-  POOL_BFQ,
+  SETTLEMENT_SWAP_PATH_BFQ,
 } from './fixtures/prepareTestFixtures.js';
 
 const mockSelectPaymentCoin = vi.fn();
@@ -60,7 +60,7 @@ function makeSwapPlan(overrides: Partial<SettlementPlan> = {}): SettlementPlan {
   return {
     profile: 'with_vault',
     variant: 'with_vault',
-    route: POOL_BFQ,
+    settlementSwapPath: SETTLEMENT_SWAP_PATH_BFQ,
     settlementSwapDirection: 'baseForQuote',
     funding: {
       source: 'coin_object',

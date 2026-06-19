@@ -29,7 +29,10 @@ import {
 } from '@stelis/core-relay';
 import type { AllowedSettlementSwapPath, OnchainConfig, RelayerEnv } from '@stelis/core-relay';
 import { validatePaymentInputIntegrity } from '@stelis/core-relay/server';
-import type { StaticPoolDescriptor, StaticPoolDescriptorMap } from '@stelis/core-relay/server';
+import type {
+  StaticSettlementSwapPathDescriptor,
+  StaticSettlementSwapPathDescriptorMap,
+} from '@stelis/core-relay/server';
 import { classifySponsorFailureSubcode } from '../../prepare/prepareErrors.js';
 import { deserializeUserTxKind, PrepareValidationError } from '../../prepare/replay.js';
 import {
@@ -113,7 +116,7 @@ export interface GenericPreparePolicyParams {
 export interface GenericPreparePolicyConfig {
   readonly deepbookPackageId: string;
   readonly supportedSettlementSwapPaths: readonly SingleHopSettlementSwapPath[];
-  readonly poolDescriptors: StaticPoolDescriptorMap;
+  readonly settlementSwapPathDescriptors: StaticSettlementSwapPathDescriptorMap;
   readonly allowedSettlementSwapPaths: readonly AllowedSettlementSwapPath[];
   readonly quotedRelayerFeeMist: bigint;
 }
@@ -169,8 +172,8 @@ export interface GenericPrepareRuntimeState {
   slippageBps?: Bps;
   gasMarginBps?: Bps;
   orderIdHash?: Uint8Array;
-  pool?: SingleHopSettlementSwapPath;
-  descriptor?: StaticPoolDescriptor;
+  settlementSwapPath?: SingleHopSettlementSwapPath;
+  descriptor?: StaticSettlementSwapPathDescriptor;
   credit?: Awaited<ReturnType<typeof queryUserCredit>>;
   config?: OnchainConfig;
   profile?: SettleProfile;
@@ -569,16 +572,24 @@ async function runGenericRequestValidation(
     );
   }
 
-  state.pool = findPool(prepare.config.supportedSettlementSwapPaths, prepare.params.paymentTokenType);
-  if (!state.pool) {
+  state.settlementSwapPath = findSettlementSwapPath(
+    prepare.config.supportedSettlementSwapPaths,
+    prepare.params.paymentTokenType,
+  );
+  if (!state.settlementSwapPath) {
     throw new PrepareValidationError(
       'UNSUPPORTED_PAYMENT_TOKEN',
       `Payment token ${prepare.params.paymentTokenType} is not supported`,
     );
   }
-  state.descriptor = findPoolDescriptor(prepare.config.poolDescriptors, prepare.params.paymentTokenType);
+  state.descriptor = findSettlementSwapPathDescriptor(
+    prepare.config.settlementSwapPathDescriptors,
+    prepare.params.paymentTokenType,
+  );
   if (!state.descriptor) {
-    throw new Error(`[PREPARE_CONFIG] Missing StaticPoolDescriptor for ${prepare.params.paymentTokenType}`);
+    throw new Error(
+      `[PREPARE_CONFIG] Missing StaticSettlementSwapPathDescriptor for ${prepare.params.paymentTokenType}`,
+    );
   }
 
   if (prepare.params.orderId !== undefined) {
@@ -663,8 +674,8 @@ async function runGenericGasBoundBuild(
   const d = getDeps(options);
   const config = requireValue(state.config, 'on-chain config');
   const credit = requireValue(state.credit, 'credit snapshot');
-  const pool = requireValue(state.pool, 'pool config');
-  const descriptor = requireValue(state.descriptor, 'pool descriptor');
+  const settlementSwapPath = requireValue(state.settlementSwapPath, 'settlement swap path config');
+  const descriptor = requireValue(state.descriptor, 'settlement swap path descriptor');
   const slippageBps = requireValue(state.slippageBps, 'slippageBps');
   const gasMarginBps = requireValue(state.gasMarginBps, 'gasMarginBps');
   const profile = requireValue(state.profile, 'profile');
@@ -690,7 +701,7 @@ async function runGenericGasBoundBuild(
     {
       userTxKindBytes: prepare.params.txKindBytes,
       senderAddress: prepare.params.senderAddress,
-      pool,
+      settlementSwapPath,
       descriptor,
       sponsorAddress: input.reservationHandles.sponsorSlot.sponsorAddress,
       slippageBps,
@@ -1451,24 +1462,28 @@ function validateGenericSponsorNonloss(
   }
 }
 
-function buildGenericExecutionPathKey(settlementSwapPath: AllowedSettlementSwapPath | undefined): string {
+function buildGenericExecutionPathKey(
+  settlementSwapPath: AllowedSettlementSwapPath | undefined,
+): string {
   if (settlementSwapPath) {
     return `${settlementSwapPath.tokenType}:${settlementSwapPath.hops.join(',')}:${settlementSwapPath.settlementSwapDirection}`;
   }
   return 'credit';
 }
 
-function findPool(
-  pools: readonly SingleHopSettlementSwapPath[] | undefined,
+function findSettlementSwapPath(
+  settlementSwapPaths: readonly SingleHopSettlementSwapPath[] | undefined,
   paymentTokenType: string,
 ): SingleHopSettlementSwapPath | undefined {
-  return pools?.find((p) => p.paymentTokenType === paymentTokenType);
+  return settlementSwapPaths?.find(
+    (settlementSwapPath) => settlementSwapPath.paymentTokenType === paymentTokenType,
+  );
 }
 
-function findPoolDescriptor(
-  descriptors: StaticPoolDescriptorMap | undefined,
+function findSettlementSwapPathDescriptor(
+  descriptors: StaticSettlementSwapPathDescriptorMap | undefined,
   paymentTokenType: string,
-): StaticPoolDescriptor | undefined {
+): StaticSettlementSwapPathDescriptor | undefined {
   return descriptors?.get(paymentTokenType);
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createStaticPoolDescriptor } from '../src/market-policy/descriptor.js';
+import { createStaticSettlementSwapPathDescriptor } from '../src/market-policy/descriptor.js';
 import { solveExecutableSwap } from '../src/market-policy/solver.js';
 import {
   ExecutionGapExceededError,
@@ -39,7 +39,7 @@ function makeDescriptor(
   swapDirection: 'baseForQuote' | 'quoteForBase',
   overrides?: { lotSize?: bigint; minSize?: bigint },
 ) {
-  return createStaticPoolDescriptor({
+  return createStaticSettlementSwapPathDescriptor({
     paymentTokenType: TOKEN_TYPE,
     paymentTokenSymbol: 'TOKEN',
     paymentTokenDecimals: 6,

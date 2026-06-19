@@ -79,7 +79,7 @@ import { MemoryPrepareInflight } from '../src/store/memoryPrepareInflight.js';
 import { MemoryAbuseBlocker } from '../src/store/memoryAbuseBlocker.js';
 import { SponsorPool } from '../src/context.js';
 import type { RelayerContext } from '../src/context.js';
-import { createStaticPoolDescriptorMap } from '@stelis/core-relay/server';
+import { createStaticSettlementSwapPathDescriptorMap } from '@stelis/core-relay/server';
 import {
   handlePromotionPrepare,
   type PromotionPrepareContext,
@@ -286,7 +286,9 @@ function makeGenericHarness(): GenericHarness {
   const extraCfg: PrepareHandlerConfig = {
     deepbookPackageId: '0x' + 'bb'.repeat(32),
     supportedSettlementSwapPaths,
-    poolDescriptors: createStaticPoolDescriptorMap(supportedSettlementSwapPaths),
+    settlementSwapPathDescriptors: createStaticSettlementSwapPathDescriptorMap(
+      supportedSettlementSwapPaths,
+    ),
     allowedSettlementSwapPaths: [],
     quotedRelayerFeeMist: GENERIC_QUOTED_RELAYER_FEE,
   };

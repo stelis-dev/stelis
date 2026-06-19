@@ -11,11 +11,16 @@
  *   - PtbCompiler (consumes SettlementPlan to produce PTB mutations)
  *   - runGenericPrepareBuildPipeline orchestrator (coordinates multi-pass flow)
  *
- * Does not own: route tables (constants.ts), settle field schema (settlePayloadContract.ts),
- * on-chain types (types.ts), or persisted store types (prepareTypes.ts).
+ * Does not own: settlement swap direction tables (constants.ts), settle field schema
+ * (settlePayloadContract.ts), on-chain types (types.ts), or persisted store types
+ * (prepareTypes.ts).
  */
 
-import type { SettleProfile, SingleHopSettlementSwapPath, SettlementSwapDirection } from '@stelis/contracts';
+import type {
+  SettleProfile,
+  SingleHopSettlementSwapPath,
+  SettlementSwapDirection,
+} from '@stelis/contracts';
 import type { PaymentInputSource } from '@stelis/core-relay/server';
 
 // ─────────────────────────────────────────────
@@ -103,7 +108,7 @@ export interface SwapPlan {
  * Complete, fully-determined settlement plan.
  *
  * Produced by SettlementPlanner, consumed by PtbCompiler.
- * The compiler must not re-derive route shape, swap amounts, or
+ * The compiler must not re-derive settlement swap path shape, swap amounts, or
  * funding-source decisions from chain state — those are in this plan.
  *
  * The compiler does perform coin object discovery (listCoins) because
@@ -121,8 +126,8 @@ export interface SettlementPlan {
    * Compiler reads plan.variant without re-deriving from profile + vaultObjectId.
    */
   readonly variant?: 'new_user' | 'with_vault';
-  /** Route configuration (pool hops, token types, swap directions). */
-  readonly route: SingleHopSettlementSwapPath;
+  /** Settlement swap path configuration (pool hops, token types, swap directions). */
+  readonly settlementSwapPath: SingleHopSettlementSwapPath;
   /** Settlement swap direction string for function name resolution. */
   readonly settlementSwapDirection: SettlementSwapDirection;
   /** Funding-source decision. */

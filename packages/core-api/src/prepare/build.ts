@@ -18,7 +18,7 @@ import type { SingleHopSettlementSwapPath, SettleProfile } from '@stelis/contrac
 import type {
   ExecutableSwapQuote,
   PaymentInputSource,
-  StaticPoolDescriptor,
+  StaticSettlementSwapPathDescriptor,
 } from '@stelis/core-relay/server';
 import {
   batchGetHopMidPrices,
@@ -165,7 +165,7 @@ function buildPlannerInputs(
       protocolFlatFeeMist: ctx.protocolFlatFeeMist,
     },
     input: {
-      pool: input.pool,
+      settlementSwapPath: input.settlementSwapPath,
       profile: input.profile,
       vaultObjectId: input.vaultObjectId,
       creditMist: parseMistString(input.credit, 'credit'),
@@ -325,12 +325,12 @@ async function dryRunForGas(
   }
 }
 
-function assertSingleHopOnly(pool: SingleHopSettlementSwapPath): void {
-  if (pool.hops.length !== 1) {
+function assertSingleHopOnly(settlementSwapPath: SingleHopSettlementSwapPath): void {
+  if (settlementSwapPath.hops.length !== 1) {
     throw new PrepareValidationError(
       'SLIPPAGE_QUERY_FAILED',
-      `Unsupported hop count ${pool.hops.length} (only 1-hop routes are supported)`,
-      { stage: 'hop_validation', poolId: pool.hops[0]?.poolId ?? 'unknown' },
+      `Unsupported hop count ${settlementSwapPath.hops.length} (only 1-hop routes are supported)`,
+      { stage: 'hop_validation', poolId: settlementSwapPath.hops[0]?.poolId ?? 'unknown' },
     );
   }
 }
@@ -357,7 +357,7 @@ function materializePrefixUsage(tx: Transaction, paymentTokenType: string): Pref
 
 async function loadRawMidPrices(
   ctx: BuildContext,
-  descriptor: StaticPoolDescriptor,
+  descriptor: StaticSettlementSwapPathDescriptor,
   stage: string,
 ): Promise<bigint[]> {
   try {
@@ -379,7 +379,7 @@ async function loadRawMidPrices(
 
 function normalizeMarketPolicyError(
   err: unknown,
-  descriptor: StaticPoolDescriptor,
+  descriptor: StaticSettlementSwapPathDescriptor,
   stage: string,
 ): never {
   const poolId = descriptor.hops[0]?.poolId ?? 'unknown';
@@ -473,7 +473,7 @@ async function solveSwapForClaim(
       pass,
       error_code: classifyQuoteFailure(err),
       pool_id: input.descriptor.hops[0]?.poolId ?? 'unknown',
-      payment_token_symbol: input.pool.paymentTokenSymbol,
+      payment_token_symbol: input.settlementSwapPath.paymentTokenSymbol,
       target_output_mist: targetOutputMist.toString(),
       quote_quantity_in_rpc_calls: stats.quantityInCalls,
       quote_quantity_out_verify_rpc_calls: stats.quantityOutVerifyCalls,
@@ -588,7 +588,7 @@ async function dryRunPreSwapCreditPathCosts(
     'credit_preswap',
     {
       poolId: input.descriptor.hops[0]?.poolId ?? 'unknown',
-      paymentTokenSymbol: input.pool.paymentTokenSymbol,
+      paymentTokenSymbol: input.settlementSwapPath.paymentTokenSymbol,
     },
   );
   const creditCosts = computeRelayerCosts(gasUsed);
@@ -658,7 +658,7 @@ async function buildFinalGenericPrepareResult(
   rpcAcc: BuildRpcAccumulator,
   quoteCache?: QuoteCache,
 ): Promise<GenericPrepareBuildOutput> {
-  const swapPool = input.pool;
+  const settlementSwapPath = input.settlementSwapPath;
   const { grossGas, gasVarianceFixedMist, slippageBufferMist } = finalCosts;
   // Tag the two fields consumed by downstream sponsor / store code.
   // Other bigint fields are co-located audit data and stay untagged.
@@ -742,7 +742,7 @@ async function buildFinalGenericPrepareResult(
         'Execution gap appeared after initial measurement showed zero',
         {
           stage: 'pass2',
-          poolId: swapPool.hops[0].poolId,
+          poolId: settlementSwapPath.hops[0].poolId,
           swapAmount: String(swapFinal),
           residualSlippage: String(residualSlippage),
         },
@@ -757,7 +757,7 @@ async function buildFinalGenericPrepareResult(
         'Execution gap re-verification exceeded tolerance',
         {
           stage: 'pass2',
-          poolId: swapPool.hops[0].poolId,
+          poolId: settlementSwapPath.hops[0].poolId,
           swapAmount: String(swapFinal),
           convergenceRatio: String((residualSlippage * 10_000n) / slippageBuffer0),
           capBps: String(CONVERGENCE_TOLERANCE_BPS),
@@ -793,7 +793,7 @@ async function buildFinalGenericPrepareResult(
       pass: 'pass2',
       error_code: err instanceof PrepareValidationError ? err.code : 'UNKNOWN',
       pool_id: input.descriptor.hops[0]?.poolId ?? 'unknown',
-      payment_token_symbol: input.pool.paymentTokenSymbol,
+      payment_token_symbol: input.settlementSwapPath.paymentTokenSymbol,
       quote_quantity_in_rpc_calls: rpcSummary.quoteQuantityInCalls,
       quote_quantity_out_verify_rpc_calls: rpcSummary.quoteQuantityOutVerifyCalls,
       quote_total_rpc_calls: rpcSummary.quoteTotalRpcCalls,
@@ -804,7 +804,7 @@ async function buildFinalGenericPrepareResult(
       quote_cache_hits: rpcSummary.quoteCacheHits,
       quote_rpc_stats_complete: true,
       phase_complete: false,
-      ...buildBfqFloorPayload(pass2ExecutionQuote, input.pool.hops[0]?.swapDirection),
+      ...buildBfqFloorPayload(pass2ExecutionQuote, input.settlementSwapPath.hops[0]?.swapDirection),
     });
     throw err;
   }
@@ -842,7 +842,7 @@ async function buildFinalGenericPrepareResult(
     // quantity_out_verify) summed over the request, so this is the complete
     // count.
     quote_rpc_stats_complete: true,
-    ...buildBfqFloorPayload(pass2ExecutionQuote, input.pool.hops[0]?.swapDirection),
+    ...buildBfqFloorPayload(pass2ExecutionQuote, input.settlementSwapPath.hops[0]?.swapDirection),
   });
 
   return {
@@ -909,8 +909,8 @@ function logGenericPrepareBuildStart(input: GenericPrepareBuildRequest): void {
     requested_profile: input.profile,
     slippage_bps: input.slippageBps,
     gas_margin_bps: input.gasMarginBps,
-    settlement_swap_direction: input.pool.settlementSwapDirection,
-    hop_count: input.pool.hops.length,
+    settlement_swap_direction: input.settlementSwapPath.settlementSwapDirection,
+    hop_count: input.settlementSwapPath.hops.length,
     sponsor_address: input.sponsorAddress,
   });
 }
@@ -982,7 +982,7 @@ async function runMaxClaimGasProbe(
     'pass1',
     {
       poolId: input.descriptor.hops[0]?.poolId ?? 'unknown',
-      paymentTokenSymbol: input.pool.paymentTokenSymbol,
+      paymentTokenSymbol: input.settlementSwapPath.paymentTokenSymbol,
     },
     runContext.rpcAcc.pass1Quote,
   );
@@ -1048,7 +1048,7 @@ async function measureSwapExecutionGap(
       relayer_claim_mist: finalCosts.relayerClaim.toString(),
       actual_sui_out: probeQuote.actualOutputMist.toString(),
       pass1_5_quantity_in_rpc_calls: runContext.rpcAcc.pass1_5Quote.quantityInCalls,
-      ...buildBfqFloorPayload(probeQuote, input.pool.hops[0]?.swapDirection),
+      ...buildBfqFloorPayload(probeQuote, input.settlementSwapPath.hops[0]?.swapDirection),
     });
 
     // Pass 2 will use adjusted relayerClaim — verify convergence below
@@ -1196,10 +1196,10 @@ async function runPreparePass(
     (await import('@mysten/sui/utils')).fromBase64(input.userTxKindBytes),
   );
 
-  const pool = input.pool;
+  const settlementSwapPath = input.settlementSwapPath;
   // API contract: unaccountable Sender withdrawals are rejected before
   // payment-source selection, including credit-only paths.
-  const prefixUsage = materializePrefixUsage(tx, pool.paymentTokenType);
+  const prefixUsage = materializePrefixUsage(tx, settlementSwapPath.paymentTokenType);
 
   // ── Build planner config + input from orchestrator context ─────────────
   const { config: plannerConfig, input: plannerInput } = buildPlannerInputs(ctx, input);
@@ -1261,7 +1261,7 @@ async function runPreparePass(
   }
 
   // ── Step 4: Swap-only R-9 coin classification ─────────────────────────
-  assertSingleHopOnly(pool);
+  assertSingleHopOnly(settlementSwapPath);
   logPrepareBuildStage('run_prepare_pass_coin_classified', {
     pass: passLabel,
     survivor_count: prefixUsage.survivors.size,
@@ -1273,7 +1273,7 @@ async function runPreparePass(
 
   // ── Step 3: Mid-price snapshot ────────────────────────────────────────
   let rawMidPrices: bigint[];
-  if (prefetchedMidPrices && prefetchedMidPrices.length === pool.hops.length) {
+  if (prefetchedMidPrices && prefetchedMidPrices.length === settlementSwapPath.hops.length) {
     rawMidPrices = prefetchedMidPrices;
   } else {
     const midPriceStartedAt = Date.now();
@@ -1291,7 +1291,7 @@ async function runPreparePass(
         pass: passLabel,
         error_code: err instanceof PrepareValidationError ? err.code : 'UNKNOWN',
         pool_id: input.descriptor.hops[0]?.poolId ?? 'unknown',
-        payment_token_symbol: pool.paymentTokenSymbol,
+        payment_token_symbol: settlementSwapPath.paymentTokenSymbol,
         mid_price_total_ms: Date.now() - midPriceStartedAt,
         mid_price_stats_complete: false,
       });
@@ -1321,7 +1321,7 @@ async function runPreparePass(
     swap_amount_smallest: swapAmountSmallest.toString(),
     execution_gap_mist: executionQuote.executionGapMist.toString(),
     actual_sui_out: executionQuote.actualOutputMist.toString(),
-    ...buildBfqFloorPayload(executionQuote, pool.hops[0]?.swapDirection),
+    ...buildBfqFloorPayload(executionQuote, settlementSwapPath.hops[0]?.swapDirection),
   });
 
   // ── Steps 5-7: post-solve work (resolve payment, assemble plan, compile)
@@ -1337,9 +1337,9 @@ async function runPreparePass(
     const sourceResolution = await resolvePaymentSource(
       ctx.sui,
       input.senderAddress,
-      pool.paymentTokenType,
+      settlementSwapPath.paymentTokenType,
       swapAmountSmallest,
-      pool.paymentTokenSymbol,
+      settlementSwapPath.paymentTokenSymbol,
       prefixUsage,
     );
     const funding: FundingResolution = {
@@ -1410,7 +1410,7 @@ async function runPreparePass(
       pass: passLabel,
       error_code: err instanceof PrepareValidationError ? err.code : 'UNKNOWN',
       pool_id: input.descriptor.hops[0]?.poolId ?? 'unknown',
-      payment_token_symbol: pool.paymentTokenSymbol,
+      payment_token_symbol: settlementSwapPath.paymentTokenSymbol,
       quote_quantity_in_rpc_calls: quoteStats.quantityInCalls,
       quote_quantity_out_verify_rpc_calls: quoteStats.quantityOutVerifyCalls,
       quote_total_rpc_calls: quoteStats.quantityInCalls + quoteStats.quantityOutVerifyCalls,
@@ -1424,7 +1424,7 @@ async function runPreparePass(
       quote_rpc_total_ms: quoteStats.totalDurationMs,
       quote_rpc_max_ms: quoteStats.maxDurationMs,
       quote_rpc_stats_complete: false,
-      ...buildBfqFloorPayload(executionQuote, pool.hops[0]?.swapDirection),
+      ...buildBfqFloorPayload(executionQuote, settlementSwapPath.hops[0]?.swapDirection),
     });
     throw err;
   }

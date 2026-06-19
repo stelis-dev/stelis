@@ -12,7 +12,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Transaction } from '@mysten/sui/transactions';
 import { toBase64 } from '@mysten/sui/utils';
 import { GAS_VARIANCE_FIXED_MIST, sha256Bytes } from '@stelis/core-relay';
-import { SETTLE_MODULE, SETTLEMENT_SWAP_DIRECTION_FUNCTIONS, SLIPPAGE_CAP_BPS } from '@stelis/contracts';
+import {
+  SETTLE_MODULE,
+  SETTLEMENT_SWAP_DIRECTION_FUNCTIONS,
+  SLIPPAGE_CAP_BPS,
+} from '@stelis/contracts';
 import { PREPARE_TTL_MS } from '../src/handlers/prepare.js';
 import { computePolicyHash } from '../src/policyHash.js';
 
@@ -82,11 +86,8 @@ vi.mock('@mysten/sui/transactions', async (importOriginal) => {
 import type { PrepareParams, PrepareHandlerConfig } from '../src/handlers/prepare.js';
 import { handlePrepare } from '../src/handlers/prepare.js';
 import { extractSettleArgsFromBuiltTx } from '../src/prepare/extractSettleArgs.js';
-import { createStaticPoolDescriptorMap } from '@stelis/core-relay/server';
-import {
-  TEST_PREPARE_AUTH_SENDER,
-  withPrepareAuthorization,
-} from './prepareAuthTestHelpers.js';
+import { createStaticSettlementSwapPathDescriptorMap } from '@stelis/core-relay/server';
+import { TEST_PREPARE_AUTH_SENDER, withPrepareAuthorization } from './prepareAuthTestHelpers.js';
 
 // ─── Fixtures ───────────────────────────────────────────────────────────────
 
@@ -200,7 +201,9 @@ function makeExtraCfg(): PrepareHandlerConfig {
   return {
     deepbookPackageId: '0xDEEPBOOK',
     supportedSettlementSwapPaths,
-    poolDescriptors: createStaticPoolDescriptorMap(supportedSettlementSwapPaths),
+    settlementSwapPathDescriptors: createStaticSettlementSwapPathDescriptorMap(
+      supportedSettlementSwapPaths,
+    ),
     allowedSettlementSwapPaths: [
       {
         tokenType: '0xDEEP::deep::DEEP',
@@ -537,11 +540,7 @@ describe('handlePrepare — success path', () => {
     const txKindBytes = await makeValidTxKindBytes();
 
     await expect(
-      handlePrepare(
-        ctx,
-        await makeParams(txKindBytes),
-        makeExtraCfg(),
-      ),
+      handlePrepare(ctx, await makeParams(txKindBytes), makeExtraCfg()),
     ).rejects.toMatchObject({
       code: 'L2_EXTRACT_FAILED',
       meta: { subcode: 'payment_input_source_mismatch' },
@@ -576,11 +575,7 @@ describe('handlePrepare — success path', () => {
 
     let caught: unknown;
     try {
-      await handlePrepare(
-        ctx,
-        await makeParams(txKindBytes),
-        makeExtraCfg(),
-      );
+      await handlePrepare(ctx, await makeParams(txKindBytes), makeExtraCfg());
       expect.unreachable('Expected SPONSOR_LEASE_COMMIT_FAILED');
     } catch (err) {
       caught = err;

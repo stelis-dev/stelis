@@ -221,7 +221,7 @@ function viewResult(values: Uint8Array[]) {
 }
 
 describe('loadSettlementSwapPathRegistry', () => {
-  it('publishes fee-bearing pools on Stelis input-fee basis', async () => {
+  it('publishes fee-bearing settlement swap paths on Stelis input-fee basis', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'stelis-settlement-swap-path-registry-'));
     const jsonPath = join(dir, 'settlement-swap-paths.json');
     await writeFile(jsonPath, JSON.stringify([POOL_ID]), 'utf-8');

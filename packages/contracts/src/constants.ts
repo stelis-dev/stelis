@@ -78,7 +78,7 @@ export function settlementSwapDirectionFromFunctionName(
 /**
  * Canonical SettlementSwapDirection ↔ ordered per-hop swapDirection vector mapping.
  *
- * Shared route table for downstream consumers:
+ * Shared settlement swap direction table for downstream consumers:
  *   - `core-api/prepareConfig.ts` boot barrier (server-side fail-closed)
  *   - `sdk/sdk.ts` response-shape defense (client-side parse guard)
  *   - `app-api/settlementSwapPathRegistry.ts` derives settlementSwapDirection from hop swapDirections

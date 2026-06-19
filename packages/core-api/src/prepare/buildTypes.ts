@@ -1,6 +1,9 @@
 import type { SuiGrpcClient } from '@mysten/sui/grpc';
 import type { SingleHopSettlementSwapPath, SettleProfile } from '@stelis/contracts';
-import type { PaymentInputSource, StaticPoolDescriptor } from '@stelis/core-relay/server';
+import type {
+  PaymentInputSource,
+  StaticSettlementSwapPathDescriptor,
+} from '@stelis/core-relay/server';
 import type { Bps, Mist } from '../internal/brand.js';
 
 /** Context needed for the build phase. */
@@ -33,10 +36,10 @@ export interface GenericPrepareBuildRequest {
   /** Deserialized user transaction (from replay.ts). */
   userTxKindBytes: string;
   senderAddress: string;
-  /** Swap pool config. Required for all settle paths. */
-  pool: SingleHopSettlementSwapPath;
-  /** Server-only static pool descriptor used by market policy. */
-  descriptor: StaticPoolDescriptor;
+  /** Settlement swap path config. Required for all settle paths. */
+  settlementSwapPath: SingleHopSettlementSwapPath;
+  /** Server-only static settlement swap path descriptor used by market policy. */
+  descriptor: StaticSettlementSwapPathDescriptor;
   sponsorAddress: string;
   slippageBps: Bps;
   gasMarginBps: Bps;

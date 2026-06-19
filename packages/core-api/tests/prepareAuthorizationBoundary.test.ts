@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { Transaction } from '@mysten/sui/transactions';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { toBase64 } from '@mysten/sui/utils';
-import { createStaticPoolDescriptorMap } from '@stelis/core-relay/server';
+import { createStaticSettlementSwapPathDescriptorMap } from '@stelis/core-relay/server';
 import type { PrepareHandlerConfig, PrepareParams } from '../src/handlers/prepare.js';
 import { handlePrepare } from '../src/handlers/prepare.js';
 import {
@@ -10,10 +10,7 @@ import {
   PREPARE_AUTHORIZATION_TTL_MS,
 } from '../src/prepare/prepareAuthorization.js';
 import { PrepareOverloadError } from '../src/store/prepareErrors.js';
-import {
-  TEST_PREPARE_AUTH_SENDER,
-  withPrepareAuthorization,
-} from './prepareAuthTestHelpers.js';
+import { TEST_PREPARE_AUTH_SENDER, withPrepareAuthorization } from './prepareAuthTestHelpers.js';
 
 async function makeValidTxKindBytes(): Promise<string> {
   const tx = new Transaction();
@@ -21,9 +18,7 @@ async function makeValidTxKindBytes(): Promise<string> {
   return toBase64(await tx.build({ onlyTransactionKind: true }));
 }
 
-async function makeSignedParams(
-  overrides: Partial<PrepareParams> = {},
-): Promise<PrepareParams> {
+async function makeSignedParams(overrides: Partial<PrepareParams> = {}): Promise<PrepareParams> {
   const {
     txKindBytesHash,
     prepareAuthorizationTimestampMs,
@@ -31,18 +26,21 @@ async function makeSignedParams(
     prepareAuthorizationSignature,
     ...inputOverrides
   } = overrides;
-  return withPrepareAuthorization({
-    txKindBytes: await makeValidTxKindBytes(),
-    senderAddress: TEST_PREPARE_AUTH_SENDER,
-    paymentTokenType: '0xDEEP::deep::DEEP',
-    clientIp: '127.0.0.1',
-    ...inputOverrides,
-  }, {
-    txKindBytesHash,
-    prepareAuthorizationTimestampMs,
-    prepareAuthorizationRequestNonce,
-    prepareAuthorizationSignature,
-  });
+  return withPrepareAuthorization(
+    {
+      txKindBytes: await makeValidTxKindBytes(),
+      senderAddress: TEST_PREPARE_AUTH_SENDER,
+      paymentTokenType: '0xDEEP::deep::DEEP',
+      clientIp: '127.0.0.1',
+      ...inputOverrides,
+    },
+    {
+      txKindBytesHash,
+      prepareAuthorizationTimestampMs,
+      prepareAuthorizationRequestNonce,
+      prepareAuthorizationSignature,
+    },
+  );
 }
 
 function makeContext(options: { nonceClaim?: 'ok' | 'duplicate' } = {}) {
@@ -117,7 +115,9 @@ function makeExtraCfg(): PrepareHandlerConfig {
       },
     ],
     supportedSettlementSwapPaths,
-    poolDescriptors: createStaticPoolDescriptorMap(supportedSettlementSwapPaths),
+    settlementSwapPathDescriptors: createStaticSettlementSwapPathDescriptorMap(
+      supportedSettlementSwapPaths,
+    ),
   };
 }
 

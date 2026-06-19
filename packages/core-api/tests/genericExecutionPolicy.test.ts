@@ -173,7 +173,7 @@ function makePrepareOptions(
       config: {
         deepbookPackageId: `0x${'77'.repeat(32)}`,
         supportedSettlementSwapPaths: [],
-        poolDescriptors: new Map(),
+        settlementSwapPathDescriptors: new Map(),
         allowedSettlementSwapPaths: [],
         quotedRelayerFeeMist: 0n,
       },

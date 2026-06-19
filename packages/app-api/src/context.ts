@@ -49,7 +49,7 @@ import type { SponsorAvailabilityView } from './sponsor-operations/gate.js';
 import { probeAndWriteSponsorRefillAccountState } from './sponsor-operations/sponsorRefillAccountProbe.js';
 import { parseChainBalanceMist } from './sponsor-operations/balanceParsing.js';
 import {
-  createPreparePoolDescriptorMap,
+  createPrepareSettlementSwapPathDescriptorMap,
   resolvePrepareConfig,
   parseRelayerFeeEnv,
 } from '@stelis/core-api/prepareConfig';
@@ -307,7 +307,8 @@ async function initContext(): Promise<AppApiContext> {
       deepbookIds.packageId,
       settlementSwapPathRegistryPath,
     );
-    const poolDescriptors = createPreparePoolDescriptorMap(settlementSwapPaths);
+    const settlementSwapPathDescriptors =
+      createPrepareSettlementSwapPathDescriptorMap(settlementSwapPaths);
     // eslint-disable-next-line no-console
     console.log(
       `[app-api] Settlement swap path registry loaded: ${settlementSwapPaths.length} path(s) — ` +
@@ -316,8 +317,8 @@ async function initContext(): Promise<AppApiContext> {
 
     // ── 6. PrepareConfig ────────────────────────────────────────────
     const prepareConfig = resolvePrepareConfig({
-      pools: settlementSwapPaths,
-      descriptors: poolDescriptors,
+      settlementSwapPaths,
+      descriptors: settlementSwapPathDescriptors,
       deepbookPackageId: deepbookIds.packageId,
       quotedRelayerFeeMist: parseRelayerFeeEnv(process.env.RELAYER_FEE_MIST),
     });
@@ -330,8 +331,7 @@ async function initContext(): Promise<AppApiContext> {
       parseOptionalPositiveIntegerEnv(
         'PREPARE_INFLIGHT_CAPACITY',
         process.env.PREPARE_INFLIGHT_CAPACITY,
-      ) ??
-      sponsorPool.size * 2;
+      ) ?? sponsorPool.size * 2;
     const prepareInflightLimiter = new RedisPrepareInflight(redis, prepareInflightCapacity);
 
     // ── 8. Create base RelayerContext ───────────────────────────────

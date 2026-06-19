@@ -1,14 +1,18 @@
-import type { DeepBookPoolHop, SettlementSwapDirection, SingleHopSettlementSwapPath } from '@stelis/contracts';
+import type {
+  DeepBookPoolHop,
+  SettlementSwapDirection,
+  SingleHopSettlementSwapPath,
+} from '@stelis/contracts';
 import type { QuantityInQuote } from '../deepbook.js';
 
 /**
- * Server-only static route descriptor derived from the public capability response.
+ * Server-only static settlement swap path descriptor derived from the public capability response.
  *
  * This keeps advertised capability and execution-policy inputs separate:
  * `/relay/config` continues to expose `SingleHopSettlementSwapPathResponse`, while the
  * prepare pipeline consumes this narrower descriptor internally.
  */
-export interface StaticPoolDescriptor {
+export interface StaticSettlementSwapPathDescriptor {
   readonly paymentTokenType: string;
   readonly paymentTokenSymbol: string;
   readonly paymentTokenDecimals: number;
@@ -24,7 +28,7 @@ export interface StaticPoolDescriptor {
  * output under current market conditions.
  */
 export interface ExecutableSwapRequest {
-  readonly descriptor: StaticPoolDescriptor;
+  readonly descriptor: StaticSettlementSwapPathDescriptor;
   readonly targetOutputMist: bigint;
   readonly rawMidPrices: readonly bigint[];
   readonly enforceExecutionGapCap?: boolean;
@@ -74,13 +78,13 @@ export interface MarketQuotePort {
   ): Promise<QuantityInQuote>;
 }
 
-export type StaticPoolDescriptorMap = Map<string, StaticPoolDescriptor>;
+export type StaticSettlementSwapPathDescriptorMap = Map<string, StaticSettlementSwapPathDescriptor>;
 
 /**
- * Internal input used when deriving descriptors from the advertised route
- * contract. The descriptor keeps execution-critical fields only.
+ * Internal input used when deriving descriptors from the advertised settlement
+ * swap path contract. The descriptor keeps execution-critical fields only.
  */
-export type StaticPoolDescriptorSource = Pick<
+export type StaticSettlementSwapPathDescriptorSource = Pick<
   SingleHopSettlementSwapPath,
   | 'paymentTokenType'
   | 'paymentTokenSymbol'

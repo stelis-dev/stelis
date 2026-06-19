@@ -16,11 +16,11 @@ export type {
 export { base64urlDecode } from './base64url.js';
 
 export type {
-  StaticPoolDescriptor,
-  StaticPoolDescriptorMap,
+  StaticSettlementSwapPathDescriptor,
+  StaticSettlementSwapPathDescriptorMap,
   ExecutableSwapQuote,
 } from '../market-policy/types.js';
-export { createStaticPoolDescriptorMap } from '../market-policy/descriptor.js';
+export { createStaticSettlementSwapPathDescriptorMap } from '../market-policy/descriptor.js';
 export {
   createDeepbookQuotePort,
   wrapQuotePortWithStats,

@@ -17,7 +17,7 @@ import {
   ADDR_USABLE_COIN,
   ADDR_PAYMENT_COIN,
   ADDR_DEEP_COIN,
-  POOL_BFQ,
+  SETTLEMENT_SWAP_PATH_BFQ,
   BASE_AUDIT,
 } from './fixtures/prepareTestFixtures.js';
 
@@ -79,7 +79,7 @@ function makeSwapPlan(overrides: Partial<SettlementPlan> = {}): SettlementPlan {
   return {
     profile: 'with_vault',
     variant: 'with_vault',
-    route: POOL_BFQ,
+    settlementSwapPath: SETTLEMENT_SWAP_PATH_BFQ,
     settlementSwapDirection: 'baseForQuote',
     funding: {
       source: 'coin_object',

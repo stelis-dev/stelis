@@ -27,7 +27,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Transaction } from '@mysten/sui/transactions';
 import { toBase64 } from '@mysten/sui/utils';
 import { GAS_VARIANCE_FIXED_MIST } from '@stelis/core-relay';
-import { SETTLE_MODULE, SETTLEMENT_SWAP_DIRECTION_FUNCTIONS, SLIPPAGE_CAP_BPS } from '@stelis/contracts';
+import {
+  SETTLE_MODULE,
+  SETTLEMENT_SWAP_DIRECTION_FUNCTIONS,
+  SLIPPAGE_CAP_BPS,
+} from '@stelis/contracts';
 import { PREPARE_TTL_MS } from '../src/handlers/prepare.js';
 import { computePolicyHash } from '../src/policyHash.js';
 
@@ -81,11 +85,8 @@ import type { PrepareParams, PrepareHandlerConfig } from '../src/handlers/prepar
 import { handlePrepare } from '../src/handlers/prepare.js';
 import { extractSettleArgsFromBuiltTx } from '../src/prepare/extractSettleArgs.js';
 import type { SingleHopSettlementSwapPath } from '@stelis/contracts';
-import type { StaticPoolDescriptorMap } from '@stelis/core-relay/server';
-import {
-  TEST_PREPARE_AUTH_SENDER,
-  withPrepareAuthorization,
-} from './prepareAuthTestHelpers.js';
+import type { StaticSettlementSwapPathDescriptorMap } from '@stelis/core-relay/server';
+import { TEST_PREPARE_AUTH_SENDER, withPrepareAuthorization } from './prepareAuthTestHelpers.js';
 
 // ─── Fixtures ──────────────────────────────────────────────────────────────
 
@@ -173,7 +174,7 @@ const SUPPORTED_POOL = {
   settlementSwapDirection: 'baseForQuote' as const,
 } satisfies SingleHopSettlementSwapPath;
 
-const POOL_DESCRIPTORS: StaticPoolDescriptorMap = new Map([
+const SETTLEMENT_SWAP_PATH_DESCRIPTORS: StaticSettlementSwapPathDescriptorMap = new Map([
   [
     SUPPORTED_POOL.paymentTokenType,
     {
@@ -236,7 +237,7 @@ function makeExtraCfg(): PrepareHandlerConfig {
   return {
     deepbookPackageId: '0xDEEPBOOK',
     supportedSettlementSwapPaths: [SUPPORTED_POOL],
-    poolDescriptors: POOL_DESCRIPTORS,
+    settlementSwapPathDescriptors: SETTLEMENT_SWAP_PATH_DESCRIPTORS,
     allowedSettlementSwapPaths: [
       {
         tokenType: '0xDEEP::deep::DEEP',

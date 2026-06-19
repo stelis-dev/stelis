@@ -31,7 +31,7 @@ export interface PlannerConfig {
 
 /** Request inputs needed for planning decisions. */
 export interface PlannerInput {
-  readonly pool: SingleHopSettlementSwapPath;
+  readonly settlementSwapPath: SingleHopSettlementSwapPath;
   readonly profile: SettleProfile;
   readonly vaultObjectId: string | null;
   readonly creditMist: bigint;
@@ -159,8 +159,8 @@ export function assembleSwapSettlementPlan(
           ? 'with_vault'
           : input.profile,
     variant,
-    route: input.pool,
-    settlementSwapDirection: input.pool.settlementSwapDirection,
+    settlementSwapPath: input.settlementSwapPath,
+    settlementSwapDirection: input.settlementSwapPath.settlementSwapDirection,
     funding: {
       source: funding.source,
       usableCoins: [...funding.usableCoins],
@@ -192,8 +192,8 @@ export function assembleCreditSettlementPlan(
   }
   return {
     profile: 'credit_general',
-    route: input.pool,
-    settlementSwapDirection: input.pool.settlementSwapDirection,
+    settlementSwapPath: input.settlementSwapPath,
+    settlementSwapDirection: input.settlementSwapPath.settlementSwapDirection,
     funding: {
       source: 'none_credit_only',
       usableCoins: [],

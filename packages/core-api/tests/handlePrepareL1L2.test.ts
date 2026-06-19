@@ -19,11 +19,8 @@ import { toBase64 } from '@mysten/sui/utils';
 import type { PrepareHandlerConfig, PrepareParams } from '../src/handlers/prepare.js';
 import { handlePrepare } from '../src/handlers/prepare.js';
 import { PrepareValidationError } from '../src/prepare/replay.js';
-import { createStaticPoolDescriptorMap } from '@stelis/core-relay/server';
-import {
-  TEST_PREPARE_AUTH_SENDER,
-  withPrepareAuthorization,
-} from './prepareAuthTestHelpers.js';
+import { createStaticSettlementSwapPathDescriptorMap } from '@stelis/core-relay/server';
+import { TEST_PREPARE_AUTH_SENDER, withPrepareAuthorization } from './prepareAuthTestHelpers.js';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -103,7 +100,11 @@ function makeCtx() {
     },
     relayerRecipientAddress: '0xRELAYER',
     allowedSettlementSwapPaths: [
-      { tokenType: '0xDEEP::deep::DEEP', hops: ['0xPOOL'], settlementSwapDirection: 'baseForQuote' as const },
+      {
+        tokenType: '0xDEEP::deep::DEEP',
+        hops: ['0xPOOL'],
+        settlementSwapDirection: 'baseForQuote' as const,
+      },
     ],
     getConfig: vi.fn().mockResolvedValue(onchainConfig),
     prepareInflightLimiter: {
@@ -138,9 +139,15 @@ function makeExtraCfg(): PrepareHandlerConfig {
   return {
     deepbookPackageId: '0xDEEPBOOK',
     supportedSettlementSwapPaths,
-    poolDescriptors: createStaticPoolDescriptorMap(supportedSettlementSwapPaths),
+    settlementSwapPathDescriptors: createStaticSettlementSwapPathDescriptorMap(
+      supportedSettlementSwapPaths,
+    ),
     allowedSettlementSwapPaths: [
-      { tokenType: '0xDEEP::deep::DEEP', hops: ['0xPOOL'], settlementSwapDirection: 'baseForQuote' as const },
+      {
+        tokenType: '0xDEEP::deep::DEEP',
+        hops: ['0xPOOL'],
+        settlementSwapDirection: 'baseForQuote' as const,
+      },
     ],
     quotedRelayerFeeMist: 50_000n,
   };

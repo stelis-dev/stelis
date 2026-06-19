@@ -8,7 +8,7 @@ import type {
   ExecutableSwapQuote,
   ExecutableSwapRequest,
   MarketQuotePort,
-  StaticPoolDescriptor,
+  StaticSettlementSwapPathDescriptor,
 } from './types.js';
 
 /**
@@ -56,7 +56,7 @@ import type {
  */
 function effectiveTargetOutputMist(
   targetOutputMist: bigint,
-  descriptor: StaticPoolDescriptor,
+  descriptor: StaticSettlementSwapPathDescriptor,
   midPrice: bigint,
 ): bigint {
   const hop = descriptor.hops[0];
@@ -79,7 +79,10 @@ function effectiveTargetOutputMist(
  * smallest unit; bfq increments by one lot. The solver applies this step at
  * most once per call.
  */
-function conservativeRetryInput(candidateInput: bigint, descriptor: StaticPoolDescriptor): bigint {
+function conservativeRetryInput(
+  candidateInput: bigint,
+  descriptor: StaticSettlementSwapPathDescriptor,
+): bigint {
   const hop = descriptor.hops[0];
   if (!hop) return candidateInput;
   if (hop.swapDirection === 'quoteForBase') return candidateInput + 1n;
@@ -156,7 +159,12 @@ export async function solveExecutableSwap(
     );
   }
 
-  const assessment = buildExecutionGapAssessment(finalInput, verifiedOutput, midPrice, hop.swapDirection);
+  const assessment = buildExecutionGapAssessment(
+    finalInput,
+    verifiedOutput,
+    midPrice,
+    hop.swapDirection,
+  );
 
   if (request.enforceExecutionGapCap !== false) {
     assertExecutionGapWithinPolicy(assessment);
