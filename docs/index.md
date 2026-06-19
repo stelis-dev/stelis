@@ -31,8 +31,8 @@ These packages are private workspace packages. They exist to keep shared code in
 
 | Internal package | Purpose |
 | --- | --- |
-| [`@stelis/contracts`](../packages/contracts/README.md) | Contract IDs, shared request and response types, route data, and data shared with Move contracts |
-| [`@stelis/core-relay`](../packages/core-relay/README.md) | Transaction validation, pricing, route checks, and transaction-building helpers |
+| [`@stelis/contracts`](../packages/contracts/README.md) | Contract IDs, shared request and response types, settlement swap direction data, and data shared with Move contracts |
+| [`@stelis/core-relay`](../packages/core-relay/README.md) | Transaction validation, pricing, settlement swap path checks, and transaction-building helpers |
 | [`@stelis/core-api`](../packages/core-api/README.md) | Server-side domain logic for prepare, sponsor, admin, promotion, stores, and abuse controls |
 
 ## Main Documents

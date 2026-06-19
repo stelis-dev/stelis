@@ -31,7 +31,7 @@ Consume the shipped SDK as-is. Modifying the SDK, contracts, or host/core source
 - Need the transaction constraints enforced before prepare? Start with [docs/api.md → User TransactionKind rules](../../docs/api.md#user-transactionkind-rules).
 - Integrating against the hosted Studio promotion flow? Pair this README with [docs/payment-platform.md](../../docs/payment-platform.md).
 - Operating a host with Studio mode enabled? Use [docs/operations.md → Studio Mode Operations](../../docs/operations.md#studio-mode-operations).
-- Need product-owned payment token support because your selected host is missing your token? Move to [docs/payment-platform.md](../../docs/payment-platform.md) and [docs/operations.md -> Payment Token Settlement Swap Path Onboarding Procedure](../../docs/operations.md#token-pool-onboarding-procedure).
+- Need product-owned payment token support because your selected host is missing your token? Move to [docs/payment-platform.md](../../docs/payment-platform.md) and [docs/operations.md -> Payment Token Settlement Swap Path Onboarding Procedure](../../docs/operations.md#payment-token-settlement-swap-path-onboarding-procedure).
 - Need an interactive browser flow? Use [packages/app-web](../app-web/README.md).
 
 ## Responsibility Split
@@ -163,7 +163,7 @@ npm install @stelis/sdk
 `supportedSettlementSwapPaths` contains one active settlement swap path per `paymentTokenType`.
 SDK calls choose a payment token with `paymentToken.type`; they do not send a pool ID or path ID.
 If a token is absent from `supportedSettlementSwapPaths`, the SDK treats it as unsupported on that host.
-The host operator can add new settlement swap paths via `packages/app-api/settlement-swap-paths.json` — see [operations.md -> Payment Token Settlement Swap Path Onboarding Procedure](../../docs/operations.md#token-pool-onboarding-procedure).
+The host operator can add new settlement swap paths via `packages/app-api/settlement-swap-paths.json` — see [operations.md -> Payment Token Settlement Swap Path Onboarding Procedure](../../docs/operations.md#payment-token-settlement-swap-path-onboarding-procedure).
 
 ```typescript
 import { StelisSDK, STELIS_CONTRACT_IDS } from '@stelis/sdk';

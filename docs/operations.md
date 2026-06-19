@@ -198,7 +198,7 @@ Optional admin settings:
 
 Boot validation requires `ADMIN_JWT_SECRET` to be at least 32 characters when it is configured. If `ADMIN_ADDRESS` is configured, the sponsor refill account address must be different from the admin address.
 
-<a id="token-pool-onboarding-procedure"></a>
+<a id="payment-token-settlement-swap-path-onboarding-procedure"></a>
 
 ## Payment Token Settlement Swap Path Onboarding Procedure
 

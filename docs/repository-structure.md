@@ -28,8 +28,8 @@ The repository uses npm workspaces for development. Product publishing and deplo
 
 | Package | Role |
 | --- | --- |
-| `@stelis/contracts` | Contract IDs, shared request and response types, route data, and data shared with Move contracts |
-| `@stelis/core-relay` | Transaction validation, pricing, route checks, and transaction-building helpers |
+| `@stelis/contracts` | Contract IDs, shared request and response types, settlement swap direction data, and data shared with Move contracts |
+| `@stelis/core-relay` | Transaction validation, pricing, settlement swap path checks, and transaction-building helpers |
 | `@stelis/core-api` | Server-side domain logic for prepare, sponsor, admin, promotion, stores, and abuse controls |
 
 Internal packages are marked `private: true`. They are workspace boundaries, not public install targets.
@@ -62,8 +62,8 @@ stelis/
 ```mermaid
 graph TD
     Move["contracts/move\nMove package"]
-    Contracts["@stelis/contracts\nshared IDs, request and response types, route data"]
-    Relay["@stelis/core-relay\nvalidation, pricing, route checks"]
+    Contracts["@stelis/contracts\nshared IDs, request and response types, settlement swap direction data"]
+    Relay["@stelis/core-relay\nvalidation, pricing, settlement swap path checks"]
     CoreApi["@stelis/core-api\nserver domain logic"]
     Sdk["@stelis/sdk\napp and service SDK"]
     Mcp["@stelis/mcp-server\nMCP server"]

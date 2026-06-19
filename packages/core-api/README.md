@@ -53,7 +53,7 @@ from this package's main barrel.
 
 ## Dependencies
 
-- `@stelis/contracts` — shared request and response types, route tables, and contract IDs
+- `@stelis/contracts` — shared request and response types, settlement swap direction tables, and contract IDs
 - `@stelis/core-relay` — formulas, validation, PTB helpers, base64url helpers (`./server`)
 - `jose` — JWT operations (admin auth)
 - `redis` — Redis client (admin session/rate limiting stores)
