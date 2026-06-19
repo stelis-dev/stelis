@@ -154,7 +154,7 @@ describe('Sandbox SDK wiring', () => {
     expect(invalidHopCountMsg).toContain('reports 2 hops');
     expect(feeBearingMsg).toContain('whitelisted');
     expect(feeBearingMsg).toContain('20 bps');
-    // Fee-bearing routes must not get the hop-count rejection message.
+    // Fee-bearing settlement swap paths must not get the hop-count rejection message.
     expect(feeBearingMsg).not.toContain('reports 2 hops');
   });
 

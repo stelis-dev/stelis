@@ -261,7 +261,7 @@ describe('extractSettleArgsFromBuiltTx — unit tests', () => {
     expect(typeof result.quoteTimestampMs).toBe('bigint');
   });
 
-  it('new-user base-for-quote settlement: extracts route with tokenType, hops, settlementSwapDirection', () => {
+  it('new-user base-for-quote settlement: extracts settlement swap path with tokenType, hops, settlementSwapDirection', () => {
     // [config(0), registry(1), clock(2), pool(3), payment(4),
     //  swapAmt(5), minSuiOut(6), claim(7), recipient(8), receiptId(9), nonce(10), simGas(11),
     //  gasVariance(12), slippage(13), quotedRelayer(14), expectedProtocol(15), expectedConfig(16),

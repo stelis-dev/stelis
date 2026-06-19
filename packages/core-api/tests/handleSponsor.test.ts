@@ -3158,7 +3158,7 @@ describe('handleSponsor', () => {
       const ctx = makeMockContext(ctxOverrides);
       // Pre-cached vaultsTableId so queryUserCredit skips the registry fetch.
       (ctx as { vaultsTableId: string }).vaultsTableId = M1_VAULTS_TABLE_ID;
-      // Swap PTBs need an allowed-route entry so postconsume L2 passes.
+      // Swap PTBs need an allowed settlement swap path entry so postconsume L2 passes.
       if (opts.needsAllowedSettlementSwapPaths !== false) {
         ctx.allowedSettlementSwapPaths = [SWAP_ALLOWED_ROUTE];
       }

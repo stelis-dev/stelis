@@ -41,7 +41,7 @@ export type SwapDemoRejectReason = 'unsupported_hop_count' | 'fee_bearing';
  * Returns null when the demo is supported.
  *
  * Two requirements:
- *   1. 1-hop only — the sandbox demo does not handle routes whose hop count
+ *   1. 1-hop only — the sandbox demo does not handle settlement swap paths whose hop count
  *      exceeds 1. This check also acts as a fail-closed guard against invalid
  *      runtime shapes (e.g. a misconfigured settlement-swap-paths.json with multiple hops).
  *   2. hop fee rate must be 0 (whitelisted path) — fee-bearing 1-hop paths

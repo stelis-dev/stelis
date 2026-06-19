@@ -52,8 +52,8 @@ function validateSettleInput(params: {
 //   Enables arbitrary MoveCall commands in the same PTB.
 // ─────────────────────────────────────────────
 
-/** Route-shape: single-hop swap fields. */
-export type SettleRouteShape = {
+/** Single-hop settlement swap path fields. */
+export type SettlementSwapPathFields = {
   settlementSwapDirection: SettlementSwapDirection;
   /** Move entry type parameter: payment token. */
   paymentTokenType: string;
@@ -62,7 +62,7 @@ export type SettleRouteShape = {
 };
 
 /** Common params for swap_and_settle (both variants) */
-export type SwapAndSettleCommonParams = SettleRouteShape & SwapAndSettleSharedParams;
+export type SwapAndSettleCommonParams = SettlementSwapPathFields & SwapAndSettleSharedParams;
 
 interface SwapAndSettleSharedParams {
   packageId: string;

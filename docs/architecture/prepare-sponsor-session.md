@@ -176,7 +176,7 @@ contexts with different roles. The field must not be read as a control-flow auth
 
 | Use site                             | File                                                    | Role                                                                                                                                |
 | ------------------------------------ | ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `checkCreditOnlyEligibility()` guard | `prepare/settlementPlanner.ts`                          | Routes eligible `credit_general` requests to the credit-only PTB path; swap build is skipped only after measured credit is selected |
+| `checkCreditOnlyEligibility()` guard | `prepare/settlementPlanner.ts`                          | Selects eligible `credit_general` requests for the credit-only PTB path; swap build is skipped only after measured credit is selected |
 | Credit amount calculation            | `prepare/settlementPlanner.ts`                          | `creditMist` applied only when `!== 'new_user'`                                                                                     |
 | On-chain variant selection           | `prepare/settlementPlanner.ts`                          | Inlined: `profile === 'new_user' \|\| !vaultObjectId` → `'new_user'`; else `'with_vault'`                                           |
 | Forward discriminant                 | `prepare/settlePlanTypes.ts` (`SettlementPlan.variant`) | Set by `assembleSwapSettlementPlan`; undefined for credit path. Compiler reads `plan.variant` without re-deriving.                  |

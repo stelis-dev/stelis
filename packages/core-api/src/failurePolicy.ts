@@ -612,7 +612,8 @@ export const FAILURE_TABLE: Readonly<Record<FailureCode, FailurePolicy>> = {
     httpStatus: 422,
     abuseImpact: SKIP_BOTH,
     bodyFields: NO_BODY_EXTRAS,
-    notes: 'Route not in allowedSettlementSwapPaths[] — pre-registered allowlist breach.',
+    notes:
+      'Settlement swap path not in allowedSettlementSwapPaths[] — pre-registered allowlist breach.',
   },
   L2_POLICY_HASH_MISMATCH: {
     code: 'L2_POLICY_HASH_MISMATCH',
