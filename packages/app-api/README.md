@@ -47,7 +47,10 @@ From the repository root:
 cp packages/app-api/.env.local.example packages/app-api/.env.local
 cp packages/app-api/settlement-swap-paths.json.example packages/app-api/settlement-swap-paths.json
 cp packages/app-api/rpc.json.example packages/app-api/rpc.json
-npm run dev -w @stelis/app-api
+set -a
+source packages/app-api/.env.local
+set +a
+npm run dev:app-api
 ```
 
 For a full local self-hosted bring-up, follow [docs/getting-started.md](../../docs/getting-started.md).

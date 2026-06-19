@@ -23,8 +23,7 @@ Use this package when you need a browser demo for a deployed relay host:
 ```bash
 # From workspace root
 npm install
-cd packages/app-web
-npm run dev
+npm run dev:app-web
 ```
 
 ## Environment variables

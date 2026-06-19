@@ -60,7 +60,10 @@ Fill in real values in `.env.local`, `settlement-swap-paths.json`, and `rpc.json
 Then run:
 
 ```bash
-npm run dev --workspace=@stelis/app-api
+set -a
+source packages/app-api/.env.local
+set +a
+npm run dev:app-api
 ```
 
 ## Run Web Apps
@@ -75,8 +78,8 @@ cp packages/app-admin/.env.local.example packages/app-admin/.env.local
 Use values that point at the local API host.
 
 ```bash
-npm run dev --workspace=@stelis/app-web
-npm run dev --workspace=@stelis/app-admin
+npm run dev:app-web
+npm run dev:app-admin
 ```
 
 ## Next Documents

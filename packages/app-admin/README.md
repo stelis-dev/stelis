@@ -42,7 +42,7 @@ Configure the UI and host together when deploying the operator dashboard.
 From the repository root:
 
 ```bash
-npm run dev --workspace=@stelis/app-admin
+npm run dev:app-admin
 ```
 
 Build a production bundle with:
