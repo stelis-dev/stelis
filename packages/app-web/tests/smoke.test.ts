@@ -1,21 +1,21 @@
 /**
- * app-web smoke tests — SDK wiring, relayer endpoint, component/page exports.
+ * app-web smoke tests — SDK wiring, Relay API endpoint, component/page exports.
  *
  * Verifies sandbox execution flow wiring against app-api route layout.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// ── Relayer endpoint logic ─────────────────────────────────────────────────
+// ── Relay API endpoint logic ─────────────────────────────────────────────────
 
-describe('relayerEndpoint', () => {
+describe('relayApiEndpoint', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
   });
 
-  it('RELAYER_BASE is always explicit (no runtime fallback)', async () => {
-    const mod = await import('../src/relayerEndpoint');
-    expect(mod.RELAYER_BASE.endsWith('/relay')).toBe(true);
-    expect(mod.RELAYER_BASE).not.toBe('/relay');
+  it('RELAY_API_BASE is always explicit (no runtime fallback)', async () => {
+    const mod = await import('../src/relayApiEndpoint');
+    expect(mod.RELAY_API_BASE.endsWith('/relay')).toBe(true);
+    expect(mod.RELAY_API_BASE).not.toBe('/relay');
   });
 });
 
@@ -319,8 +319,8 @@ describe('Endpoint routes', () => {
     const fs = await import('fs');
     const path = await import('path');
     const src = fs.readFileSync(path.resolve(__dirname, '../src/pages/Status.tsx'), 'utf-8');
-    expect(src).toContain('`${RELAYER_BASE}/status`');
-    expect(src).toContain('`${RELAYER_BASE}/config`');
+    expect(src).toContain('`${RELAY_API_BASE}/status`');
+    expect(src).toContain('`${RELAY_API_BASE}/config`');
   });
 
   it('Playground endpoints match app-api /relay/* routes', async () => {

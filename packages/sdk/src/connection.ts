@@ -1,5 +1,5 @@
 /**
- * Relayer configuration loading and parsing.
+ * Relay config responseuration loading and parsing.
  *
  * Standalone helpers used by StelisSDK.connect().
  * No StelisSDK state required — pure I/O and validation.
@@ -8,7 +8,7 @@ import {
   SETTLEMENT_SWAP_DIRECTION_VECTORS,
   VALID_SETTLEMENT_SWAP_DIRECTIONS,
 } from '@stelis/contracts';
-import type { RelayerConfig, SingleHopSettlementSwapPath, StelisRequestTimeouts } from './types.js';
+import type { RelayConfigResponse, SingleHopSettlementSwapPath, StelisRequestTimeouts } from './types.js';
 
 const DEFAULT_RELAY_CONFIG_TIMEOUT_MS = 5_000;
 const MIST_STRING_RE = /^(?:0|[1-9]\d*)$/;
@@ -37,10 +37,10 @@ function resolveConfigTimeoutMs(timeoutMs: number | undefined): number {
 }
 
 /**
- * Validate /relay/config response shape and narrow to `RelayerConfig`.
+ * Validate /relay/config response shape and narrow to `RelayConfigResponse`.
  * Throws a descriptive error if required fields are missing.
  */
-export function parseRelayerConfig(data: unknown): RelayerConfig {
+export function parseRelayConfigResponse(data: unknown): RelayConfigResponse {
   if (typeof data !== 'object' || data === null) {
     throw new Error(`Invalid /relay/config response: expected object, got ${JSON.stringify(data)}`);
   }

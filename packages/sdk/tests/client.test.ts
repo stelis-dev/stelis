@@ -283,7 +283,7 @@ describe('StelisClient', () => {
       );
 
       await expect(client.getStatus()).rejects.toThrow(
-        /Invalid non-JSON response from relayer: <html>ok<\/html>/,
+        /Invalid non-JSON response from Relay API: <html>ok<\/html>/,
       );
     });
   });

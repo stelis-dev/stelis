@@ -16,7 +16,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Transaction } from '@mysten/sui/transactions';
 import { StelisSDK } from '../src/sdk.js';
 import { StelisIntegrityError } from '../src/integrity.js';
-import type { RelayerConfig, PrepareResponse } from '../src/types.js';
+import type { RelayConfigResponse, PrepareResponse } from '../src/types.js';
 import { STELIS_CONTRACT_IDS } from '@stelis/contracts';
 
 // ── Module-level mock: StelisClient ─────────────────────────────────────────────
@@ -56,7 +56,7 @@ vi.stubGlobal('fetch', mockFetch);
 // ── Constants ──────────────────────────────────────────────────────────────────
 const CANONICAL_PKG = STELIS_CONTRACT_IDS.testnet!.packageId;
 
-function makeConfig(overrides: Partial<RelayerConfig> = {}): RelayerConfig {
+function makeConfig(overrides: Partial<RelayConfigResponse> = {}): RelayConfigResponse {
   return {
     network: 'testnet',
     packageId: CANONICAL_PKG,

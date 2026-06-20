@@ -28,7 +28,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Transaction } from '@mysten/sui/transactions';
 import type { SuiGrpcClient } from '@mysten/sui/grpc';
 import { StelisSDK, StelisSponsoredError } from '../src/sdk.js';
-import type { RelayerConfig } from '../src/types.js';
+import type { RelayConfigResponse } from '../src/types.js';
 import { STELIS_CONTRACT_IDS } from '@stelis/contracts';
 
 const { mockExtractSettleFields, mockValidateSettleFields } = vi.hoisted(() => ({
@@ -97,7 +97,7 @@ const ADDR = '0x' + 'a'.repeat(64);
 const PKG = '0x' + '1'.repeat(64);
 const DEEP_TYPE = `${PKG}::deep::DEEP`;
 
-const RELAYER_CONFIG: RelayerConfig = {
+const RELAY_CONFIG_RESPONSE: RelayConfigResponse = {
   network: 'testnet',
   packageId: STELIS_CONTRACT_IDS.testnet!.packageId,
   settlementPayoutRecipient: '0x' + 'b'.repeat(64),
@@ -134,7 +134,7 @@ function makeMockSuiClient(): SuiGrpcClient {
 }
 
 async function createSDK(): Promise<StelisSDK> {
-  mockFetch.mockResolvedValueOnce(new Response(JSON.stringify(RELAYER_CONFIG), { status: 200 }));
+  mockFetch.mockResolvedValueOnce(new Response(JSON.stringify(RELAY_CONFIG_RESPONSE), { status: 200 }));
   return StelisSDK.connect('http://mock.local/api');
 }
 

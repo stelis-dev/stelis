@@ -4,7 +4,7 @@
  * All requests use `credentials: 'include'` for cookie-based auth.
  * In dev, Vite proxy forwards /auth, /api, /relay, /studio to app-api.
  * In prod, VITE_STELIS_API_URL provides the base URL (same pattern as
- * app-web's RELAYER_BASE in relayerEndpoint.ts).
+ * app-web's RELAY_API_BASE in relayApiEndpoint.ts).
  *
  * Cross-package contract types used by this file (sponsor operations admin
  * payload family + settlement swap path response data) come from

@@ -24,7 +24,7 @@ const RECEIPT_ID_HEX = 'aabbccdd' + '00'.repeat(28);
 const ORDER_ID = 'ord_001';
 const USER_ADDR = '0x' + '0'.repeat(56) + '1234abcd'; // TEST_USER
 const TREASURY_ADDR = '0x' + 'ff'.repeat(32);
-const RELAYER_ADDR = '0x' + 'ee'.repeat(32);
+const SETTLEMENT_PAYOUT_RECIPIENT_ADDR = '0x' + 'ee'.repeat(32);
 const EXPECTED_BASE = {
   receiptId: RECEIPT_ID_HEX,
   orderId: ORDER_ID,
@@ -50,7 +50,7 @@ function makeSettleEventBcs(overrides?: Record<string, unknown>) {
     surplus_credited: 0n,
     config_version: 3n,
     user: USER_ADDR,
-    settlement_payout_recipient: RELAYER_ADDR,
+    settlement_payout_recipient: SETTLEMENT_PAYOUT_RECIPIENT_ADDR,
     order_id_hash: sha256Bytes(ORDER_ID),
     ...overrides,
   };

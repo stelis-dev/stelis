@@ -28,7 +28,7 @@ interface SwapFormProps {
  * via DeepBook.
  *
  * Uses a hardcoded testnet/mainnet DeepBook pair list (testSwapPairs.ts) keyed
- * by settlement token TYPE — independent of the relayer's settlement registry.
+ * by settlement token TYPE — independent of the Host's settlement registry.
  * The target token auto-tracks the selected settlement swap path.
  */
 export function SwapForm({ onTxSuccess, settlementSwapPathIndex = 0 }: SwapFormProps) {

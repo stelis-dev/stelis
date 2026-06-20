@@ -20,8 +20,8 @@ export type {
   ExecuteSponsoredResult,
   GasEstimateResult,
   ExecuteSuiFirstResult,
-  // Relayer config & responses
-  RelayerConfig,
+  // Relay config response & responses
+  RelayConfigResponse,
   PrepareResponse,
   SponsorResponse,
   SettleProfile,

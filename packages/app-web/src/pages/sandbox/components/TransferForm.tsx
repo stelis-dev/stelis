@@ -174,7 +174,7 @@ export function TransferForm({ onTxSuccess, settlementSwapPathIndex = 0 }: Trans
       if (coinObjects.length === 0) throw new Error(`No ${SETTLEMENT_TOKEN_LABEL} found in wallet`);
 
       // Merge all coins → split transfer amount.
-      // The relayer's resolvePaymentSource handles R-9 coin collision and
+      // The Host's resolvePaymentSource handles R-9 coin collision and
       // address-balance accounting (FundsWithdrawal prefix deduction) server-side,
       // so the client does not need to reserve an untouched coin object.
       const primaryCoin = tx.object(coinObjects[0].objectId);

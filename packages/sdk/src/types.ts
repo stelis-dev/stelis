@@ -5,7 +5,7 @@ import { SuiGrpcClient } from '@mysten/sui/grpc';
 // ─────────────────────────────────────────────
 
 export interface StelisClientConfig {
-  /** Relayer API base URL (e.g. "http://localhost:3200/relay") */
+  /** Relay API base URL (e.g. "http://localhost:3200/relay") */
   endpoint: string;
   /**
    * Optional per-operation HTTP timeout overrides in milliseconds.
@@ -146,11 +146,11 @@ export interface StelisApiError {
 export type { DeepBookPoolHop, SingleHopSettlementSwapPath } from '@stelis/contracts';
 import type { SingleHopSettlementSwapPath } from '@stelis/contracts';
 
-/** Static relayer config served via GET /relay/config */
-export interface RelayerConfig {
+/** Static Relay config response served via GET /relay/config */
+export interface RelayConfigResponse {
   network: 'testnet' | 'mainnet';
   /**
-   * Relayer-advertised packageId (from /relay/config response).
+   * Host-advertised packageId (from /relay/config response).
    * SDK verifies this matches the expected package ID from @stelis/contracts.
    * Not used for construction; SDK reads contract IDs from @stelis/contracts.
    */
@@ -175,9 +175,9 @@ export interface RelayerConfig {
 export interface StelisConnectOptions {
   /**
    * S-16: Known-good package ID. If set, SDK verifies at connect time:
-   *   1. Relayer-advertised packageId matches @stelis/contracts
+   *   1. Host-advertised packageId matches @stelis/contracts
    *   2. pinnedPackageId matches @stelis/contracts
-   * Rejects the relayer if either check fails.
+   * Rejects the Host if either check fails.
    */
   pinnedPackageId?: string;
   /**
@@ -330,7 +330,7 @@ export interface GasEstimateResult {
  * `path` is for debug/tracing only — the caller need not branch on it.
  */
 export interface ExecuteSuiFirstResult {
-  /** 'sui' = executed directly with user SUI | 'sponsored' = Stelis relayer path */
+  /** 'sui' = executed directly with user SUI | 'sponsored' = Stelis Host-sponsored path */
   path: 'sui' | 'sponsored';
   /** Transaction digest */
   digest: string;

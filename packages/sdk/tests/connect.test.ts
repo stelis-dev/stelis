@@ -3,18 +3,18 @@
  *
  * Tests verify:
  * - pinnedPackageId validation (S-16 step 2)
- * - rogue relayer packageId rejection (S-16 step 1)
+ * - rogue Host packageId rejection (S-16 step 1)
  * - strict integrityPolicyVersion and config field parsing
  * - settlement swap path integrity fail-closed (settlementSwapDirection ↔ hops ↔ swapDirection)
  * - studioEndpoint mode guard
  *
  * connect() now takes a required endpoint string. There is no canonical fallback,
- * no reconnect(), no allowCanonicalFallback, and no onRelayerSwitch/onRelayerError.
+ * no reconnect(), no allowCanonicalFallback, and no endpoint-switch callbacks.
  * Errors from config parsing, package ID checks, and status checks are thrown directly.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { StelisSDK } from '../src/sdk.js';
-import type { RelayerConfig, PrepareResponse } from '../src/types.js';
+import type { RelayConfigResponse, PrepareResponse } from '../src/types.js';
 import { STELIS_CONTRACT_IDS } from '@stelis/contracts';
 
 // ── Module-level mock: StelisClient ─────────────────────────────────────────────
@@ -65,7 +65,7 @@ vi.stubGlobal('fetch', mockFetch);
 const CANONICAL_PKG = STELIS_CONTRACT_IDS.testnet!.packageId;
 const PKG_B = '0x' + 'b'.repeat(64);
 
-function makeConfig(overrides: Partial<RelayerConfig> = {}): RelayerConfig {
+function makeConfig(overrides: Partial<RelayConfigResponse> = {}): RelayConfigResponse {
   return {
     network: 'testnet',
     packageId: CANONICAL_PKG,
@@ -131,11 +131,11 @@ describe('StelisSDK.connect — pinnedPackageId policy', () => {
     expect(sdk.config.packageId).toBe(CANONICAL_PKG);
   });
 
-  it('rejects rogue relayer advertising wrong packageId', async () => {
+  it('rejects rogue Host advertising wrong packageId', async () => {
     stubConfig(makeConfig({ packageId: PKG_B }));
     await expect(
       StelisSDK.connect('http://primary/api', { pinnedPackageId: CANONICAL_PKG }),
-    ).rejects.toThrow('relayer packageId mismatch');
+    ).rejects.toThrow('Relay config packageId mismatch');
   });
 });
 
@@ -254,10 +254,10 @@ describe('StelisSDK.connect — studioEndpoint mode guard', () => {
 });
 
 // ─────────────────────────────────────────────
-// Settlement swap path integrity validation in parseRelayerConfig
+// Settlement swap path integrity validation in parseRelayConfigResponse
 // ─────────────────────────────────────────────
 
-describe('parseRelayerConfig — settlement swap path integrity fail-closed', () => {
+describe('parseRelayConfigResponse — settlement swap path integrity fail-closed', () => {
   // connect() reports parse errors directly; no fallback wrapping applied.
 
   it('rejects missing settlementSwapDirection', async () => {

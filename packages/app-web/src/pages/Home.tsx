@@ -15,7 +15,7 @@ export function HomePage() {
           Pay with your token. Stelis handles settlement and execution.
         </p>
         <p className="hero-audience">
-          For developers and agents who want to start with a deployed relay when the user has tokens
+          For developers and agents who want to start with a deployed Host when the user has tokens
           but no SUI.
         </p>
         <div className="hero-actions">
@@ -40,7 +40,7 @@ export function HomePage() {
                   Non-loss policy
                 </div>
                 <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-                  The relayer refuses to sponsor if the claimed cost isn't fully covered by dry-run
+                  The Host refuses to sponsor if the claimed cost is not fully covered by dry-run
                   simulation + risk buffer.
                 </div>
               </div>
@@ -81,25 +81,25 @@ export function HomePage() {
             className="seq-mermaid"
             chart={`sequenceDiagram
     participant U as User
-    participant R as Relayer
+    participant H as Host
     participant C as Chain
 
     Note over U: Query wallet & coins
     Note over U: Build PTB
 
-    U->>R: POST /relay/prepare
+    U->>H: POST /relay/prepare
     Note right of U: txKindBytes, senderAddress, settlementTokenType
-    Note over R: L1/L2 validate, build + dry-run
-    R-->>U: txBytes, receiptId, nonce, cost
+    Note over H: L1/L2 validate, build + dry-run
+    H-->>U: txBytes, receiptId, nonce, cost
 
     Note over U: Sign TX (no SUI needed)
 
-    U->>R: POST /relay/sponsor
+    U->>H: POST /relay/sponsor
     Note right of U: txBytes, userSignature, receiptId
-    Note over R: consume/hash-bind + fresh L1/L2 + gasOwner + new-user vault check + L4/L3 + sponsor-sign
-    R->>C: Submit sponsored TX
+    Note over H: consume/hash-bind + fresh L1/L2 + gasOwner + new-user vault check + L4/L3 + sponsor-sign
+    H->>C: Submit sponsored TX
     Note over C: optional swap + settle entrypoint executes
-    R-->>U: digest, effects
+    H-->>U: digest, effects
 `}
           />
         </div>
@@ -113,7 +113,7 @@ export function HomePage() {
             code={`import { StelisSDK, DEEPBOOK_IDS } from '@stelis/sdk';
 import { SuiGrpcClient } from '@mysten/sui/grpc';
 
-// connect() auto-detects network from the relayer.
+// connect() auto-detects network from the Host.
 const suiClient = new SuiGrpcClient({ network: 'testnet' });
 const sdk = await StelisSDK.connect('https://relay.example.com/relay');
 

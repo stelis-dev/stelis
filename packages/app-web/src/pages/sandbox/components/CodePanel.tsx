@@ -16,7 +16,7 @@ function makeSnippets(
   return {
     install: {
       title: 'Step 1: Install Dependencies',
-      code: `# Core SDK — gas abstraction + relayer API client
+      code: `# Core SDK — gas abstraction + Relay API client
 npm install @stelis/sdk
 
 # Sui blockchain client
@@ -25,17 +25,17 @@ npm install @mysten/sui
 # Wallet connector (React)
 npm install @mysten/dapp-kit-react
 
-# Then connect — SDK auto-detects network from the relayer:
+# Then connect — SDK auto-detects network from the Host:
 import { StelisSDK } from '@stelis/sdk';
-const sdk = await StelisSDK.connect('https://your-relayer/relay');
+const sdk = await StelisSDK.connect('https://your-host/relay');
 // sdk.network exposes 'testnet' | 'mainnet'.`,
     },
     connect: {
-      title: 'Step 2: Connect to Relayer',
+      title: 'Step 2: Connect to Host',
       code: `import { StelisSDK } from '@stelis/sdk';
 
-// connect() auto-detects network from the relayer.
-const sdk = await StelisSDK.connect('https://your-relayer/relay');
+// connect() auto-detects network from the Host.
+const sdk = await StelisSDK.connect('https://your-host/relay');
 
 console.log(sdk.network);              // 'testnet' | 'mainnet'
 console.log(sdk.settlementPayoutRecipient);     // '0x...'`,
@@ -47,7 +47,7 @@ console.log(sdk.settlementPayoutRecipient);     // '0x...'`,
 const tx = new Transaction();
 
 // Pick a coin, merge others into it, split the transfer amount.
-// The relayer handles R-9 collision avoidance and address-balance
+// The Host handles R-9 collision avoidance and address-balance
 // accounting server-side — no need to reserve an untouched coin.
 const primaryCoin = tx.object(coinId);
 if (otherCoinIds.length > 0) {

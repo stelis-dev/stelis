@@ -33,7 +33,7 @@ const endpoints: EndpointOverview[] = [
     path: '/relay/status',
     desc: 'Health check',
     detail:
-      'Use this to verify that the relay host is responsive before attempting integration or sandbox flows.',
+      'Use this to verify that the Host is responsive before attempting integration or sandbox flows.',
     highlights: [
       'Minimal success payload: { ok: true }',
       'Good first probe for CI smoke checks and operational dashboards',
@@ -102,11 +102,11 @@ const integrationSteps = [
     desc: 'The SDK handles config resolution, sponsored PTB construction, and the full prepare/sponsor flow.',
   },
   {
-    title: '2. Connect to the relay host',
+    title: '2. Connect to the Host',
     code: `import { StelisSDK } from '@stelis/sdk';
 
-// connect() auto-detects network from the relay host.
-const sdk = await StelisSDK.connect('https://your-relayer/relay');
+// connect() auto-detects network from the Host.
+const sdk = await StelisSDK.connect('https://your-host/relay');
 
 // sdk.network exposes 'testnet' | 'mainnet'.
 console.log(sdk.network);`,
@@ -172,8 +172,8 @@ export function DocsPage() {
             marginBottom: 20,
           }}
         >
-          Definitions of <code>Hosted relay</code>, <code>Studio</code>, <code>Host</code>,{' '}
-          <code>relay host</code>, and <code>relayer</code> live in{' '}
+          Definitions of <code>Host</code>, <code>Relay API</code>, <code>Admin app</code>,{' '}
+          <code>Studio</code>, and <code>relayer role</code> live in{' '}
           {PAYMENT_PLATFORM_DOC_URL ? (
             <a href={PAYMENT_PLATFORM_DOC_URL} target="_blank" rel="noreferrer">
               docs/payment-platform.md → Product Family Terms
@@ -193,21 +193,21 @@ export function DocsPage() {
     participant W as Wallet
     participant App
     participant SDK
-    participant R as Relayer
+    participant H as Host
 
     App->>SDK: connect(endpoint)
-    SDK->>R: /relay/status -> /relay/config
+    SDK->>H: /relay/status -> /relay/config
     App->>App: Build PTB
     App->>SDK: executeSponsored()
-    SDK->>R: POST /relay/prepare
-    R-->>SDK: txBytes, receiptId, nonce, cost
+    SDK->>H: POST /relay/prepare
+    H-->>SDK: txBytes, receiptId, nonce, cost
     SDK->>App: request signature
     App->>W: Sign txBytes
     W-->>App: signature
     App-->>SDK: signature
-    SDK->>R: POST /relay/sponsor
-    Note over R: consume/hash-bind + fresh L1/L2 + gasOwner + new-user vault check + L4/L3 + sponsor-sign
-    R-->>SDK: digest, effects
+    SDK->>H: POST /relay/sponsor
+    Note over H: consume/hash-bind + fresh L1/L2 + gasOwner + new-user vault check + L4/L3 + sponsor-sign
+    H-->>SDK: digest, effects
 `}
         />
 
@@ -223,7 +223,7 @@ export function DocsPage() {
     B --> G[executionCostClaim]
     D --> G
     F --> G
-    G --> H[relayer_payout]
+    G --> H[settlement_payout]
     I[quotedHostFeeMist] --> H
     H --> J[total_deduction]
     K[protocol_fee] --> J

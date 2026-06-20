@@ -1,7 +1,7 @@
 /**
  * Hardcoded DeepBook swap pairs for the sandbox Swap card.
  *
- * Independent of the relayer's settlement swap path registry — this list exists
+ * Independent of the Host's settlement swap path registry — this list exists
  * solely so the sandbox can acquire arbitrary test tokens from SUI, feeding
  * balances into the Connect/Transfer cards.
  *

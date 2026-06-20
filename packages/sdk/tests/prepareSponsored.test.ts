@@ -12,7 +12,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Transaction } from '@mysten/sui/transactions';
 import type { SuiGrpcClient } from '@mysten/sui/grpc';
 import { StelisSDK } from '../src/sdk.js';
-import type { RelayerConfig, PrepareResponse } from '../src/types.js';
+import type { RelayConfigResponse, PrepareResponse } from '../src/types.js';
 import { STELIS_CONTRACT_IDS } from '@stelis/contracts';
 
 const { mockExtractSettleFields, mockValidateSettleFields, mockValidateGenericUserTx } = vi.hoisted(
@@ -90,16 +90,16 @@ vi.stubGlobal('fetch', mockFetch);
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 const ADDR = '0x' + 'a'.repeat(64);
-const RELAYER = '0x' + 'b'.repeat(64);
+const SETTLEMENT_PAYOUT_RECIPIENT = '0x' + 'b'.repeat(64);
 const PKG = '0x' + '1'.repeat(64);
 const POOL = '0x' + '4'.repeat(64);
 const DEEP_TYPE = `${PKG}::deep::DEEP`;
 const SUI_TYPE = '0x2::sui::SUI';
 
-const RELAYER_CONFIG: RelayerConfig = {
+const RELAY_CONFIG_RESPONSE: RelayConfigResponse = {
   network: 'testnet',
   packageId: STELIS_CONTRACT_IDS.testnet!.packageId,
-  settlementPayoutRecipient: RELAYER,
+  settlementPayoutRecipient: SETTLEMENT_PAYOUT_RECIPIENT,
   supportedSettlementSwapPaths: [
     {
       hops: [
@@ -159,7 +159,7 @@ function makeMockSuiClient(overrides?: { listCoins?: ReturnType<typeof vi.fn> })
 async function createSDK(): Promise<StelisSDK> {
   // Mock the internal /relay/config fetch that StelisSDK.connect() uses.
   // The StelisClient constructor is mocked — getStatus() resolves immediately.
-  mockFetch.mockResolvedValueOnce(new Response(JSON.stringify(RELAYER_CONFIG), { status: 200 }));
+  mockFetch.mockResolvedValueOnce(new Response(JSON.stringify(RELAY_CONFIG_RESPONSE), { status: 200 }));
   return StelisSDK.connect('http://mock.local/api');
 }
 
@@ -210,8 +210,8 @@ describe('StelisSDK.prepareSponsored — prepare delegation', () => {
     expect(prepareAuthorizationSigner).toHaveBeenCalledWith(expect.any(Uint8Array));
     expect(mockValidateGenericUserTx).toHaveBeenCalledTimes(1);
     expect(mockValidateGenericUserTx.mock.calls[0][1]).toEqual({
-      network: RELAYER_CONFIG.network,
-      relayerAddress: RELAYER_CONFIG.settlementPayoutRecipient,
+      network: RELAY_CONFIG_RESPONSE.network,
+      relayerAddress: RELAY_CONFIG_RESPONSE.settlementPayoutRecipient,
       configId: STELIS_CONTRACT_IDS.testnet!.configId,
       vaultRegistryId: STELIS_CONTRACT_IDS.testnet!.vaultRegistryId,
       packageId: STELIS_CONTRACT_IDS.testnet!.packageId,
