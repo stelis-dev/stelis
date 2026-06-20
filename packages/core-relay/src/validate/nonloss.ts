@@ -23,7 +23,7 @@ export interface SponsorNonlossContext {
   gasVarianceFixedMist: bigint;
   /** DEX slippage buffer (0 for credit paths) */
   slippageBufferMist: bigint;
-  /** Execution cost claim extracted from hash-bound settle args */
+  /** Execution cost claim extracted from stored-hash-verified settle args */
   executionCostClaim: bigint;
   /** TX gas budget from gasData */
   gasBudget: bigint;

@@ -636,7 +636,7 @@ export class StelisSDK {
   // ─────────────────────────────────────────
 
   /**
-   * Execute any Transaction through the sponsored relay flow with automatic error normalization.
+   * Execute any Transaction through the sponsored Relay API flow with automatic error normalization.
    *
    * Orchestrates: prepare → sign → sponsor → submit.
    * Server API errors are translated into user-friendly
@@ -679,7 +679,7 @@ export class StelisSDK {
       // ── Step 2: User sign ────────────────────────────────────
       const userSignature = await opts.signer(prepared.txBytes);
 
-      // ── Step 3: Sponsor (Host verifies, sponsor-signs, submits) ──
+      // ── Step 3: Sponsor (Host verifies, adds sponsor signature, submits) ──
       const sponsorRes = await this._client.sponsor({
         txBytes: prepared.txBytes,
         userSignature,
@@ -861,7 +861,7 @@ export class StelisSDK {
    * Submit a signed promotion-sponsored transaction (low-level).
    *
    * Sends the signed txBytes + receiptId to POST /studio/promotions/:id/sponsor.
-   * The server re-verifies developer JWT, consumes the reservation, sponsor-signs, and submits.
+   * The server re-verifies developer JWT, consumes the reservation, adds the sponsor signature, and submits.
    *
    * @returns digest, effects, actualGasMist
    */

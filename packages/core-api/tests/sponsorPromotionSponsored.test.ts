@@ -382,7 +382,7 @@ describe('handlePromotionSponsor', () => {
     // Promotion ledger release must not fire for a generic-mode receipt.
     expect(releaseSpy).not.toHaveBeenCalled();
 
-    // Destructive cleanup authority is reserved for hash-bound and
+    // Destructive cleanup authority is reserved for stored-hash-verified and
     // corrupt-entry phases. The misrouted generic entry stays intact so
     // the legitimate `/relay/sponsor` caller can still consume it.
     const stillPeeked = await ctx.prepareStore.peek(genericReceiptId);
@@ -562,7 +562,7 @@ describe('handlePromotionSponsor', () => {
   //
   // Mirrors the generic handleSponsor behaviour: post-consume
   // `GasOwnerMismatchError` is server-side coordination drift, not user
-  // abuse. The hash-bound consume() has already proved the submitted bytes
+  // abuse. The stored-hash-verified consume() has already proved the submitted bytes
   // are byte-identical to the /prepare commit, so the gas owner embedded in
   // the PTB is exactly what /prepare built. A mismatch against
   // `prepared.sponsorAddress` therefore points at store coordination drift
@@ -612,7 +612,7 @@ describe('handlePromotionSponsor', () => {
     expect(err).toBeInstanceOf(PromotionSponsorError);
     expect((err as PromotionSponsorError).code).toBe('REPREPARE_REQUIRED');
 
-    // No abuse recorded — post-consume drift, hash-bound internal state.
+    // No abuse recorded — post-consume drift, stored-hash-verified internal state.
     await expect(ctx.abuseBlocker.checkIp('127.0.0.1')).resolves.toMatchObject({
       blocked: false,
     });
@@ -1029,7 +1029,7 @@ describe('handlePromotionSponsor', () => {
 
     // Simulate post-consume server-side drift: the prepared entry's
     // `reservedGasMist` differs from the built tx's gas budget.
-    // Overwrite the stored entry so consume() succeeds (hash-bound) but
+    // Overwrite the stored entry so consume() succeeds (stored-hash-verified) but
     // the reservedGasMist field disagrees with the PTB's gasData.budget.
     const peeked = await prepareStore.peek(receiptId);
     if (!peeked || peeked.mode !== 'promotion') throw new Error('expected promotion entry');
@@ -1618,7 +1618,7 @@ describe('handlePromotionSponsor', () => {
     }
 
     // Preserve-on-preconsume contract: canonical-sender mismatch rejects
-    // before hash-binding, so the prepared entry stays alive for the
+    // before the stored hash match, so the prepared entry stays alive for the
     // legitimate owner to retry /sponsor without re-preparing.
     const stillPeeked = await ctx.prepareStore.peek(receiptId);
     expect(stillPeeked).not.toBeNull();
@@ -1770,7 +1770,7 @@ describe('handlePromotionSponsor', () => {
     }
   });
 
-  // Preconsume rejections reach neither consume() nor the hash-bind check,
+  // Preconsume rejections reach neither consume() nor the stored hash check,
   // so we can reuse the slot/entry from setup() and just submit crafted
   // txBytes. No extra pool slot is required.
   async function runPreconsumeRecorderCase(opts: {
@@ -1867,7 +1867,7 @@ describe('handlePromotionSponsor', () => {
     expect((err as PromotionSponsorError).statusHint).toBe(400);
 
     // Preserve-on-preconsume contract: a malformed submission is not
-    // a tampering signal for the prepared entry, and hash-binding
+    // a tampering signal for the prepared entry, and the stored hash match
     // has not yet happened, so the entry and reservation stay alive for
     // the legitimate owner's retry (docs/operations.md Studio Mode Operations).
     const stillPeeked = await ctx.prepareStore.peek(receiptId);
@@ -1892,7 +1892,7 @@ describe('handlePromotionSponsor', () => {
     expect((err as PromotionSponsorError).statusHint).toBe(403);
 
     // Preserve-on-preconsume contract: S1 policy failures reject before
-    // hash-binding, so the prepared entry and its reservation are
+    // the stored hash match, so the prepared entry and its reservation are
     // preserved for the legitimate owner's retry
     // (docs/operations.md Studio Mode Operations).
     const stillPeeked = await ctx.prepareStore.peek(receiptId);

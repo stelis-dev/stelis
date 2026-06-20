@@ -398,7 +398,7 @@ describe('runGenericPrepareBuildPipeline — boundary conditions', () => {
     mockResolvePaymentSource.mockRejectedValue(
       new PrepareValidationError(
         'INSUFFICIENT_BALANCE',
-        'Payment-token funding should not be required for a measured credit-only path',
+        'Settlement-token funding should not be required for a measured credit-only path',
       ),
     );
     mockComputeExecutionCostClaim.mockReturnValue({
@@ -3022,7 +3022,7 @@ describe('runGenericPrepareBuildPipeline — quote RPC observability fields', ()
     );
 
     // Funding resolution rejects the raised swap input. This is the
-    // expected fail-closed branch when the user holds enough payment-token
+    // expected fail-closed branch when the user holds enough settlement-token
     // for the economic target but not for the floor-raised amount.
     mockResolvePaymentSource.mockRejectedValueOnce(
       new PrepareValidationError(

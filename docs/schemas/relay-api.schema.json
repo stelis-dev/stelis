@@ -798,7 +798,7 @@
     },
     "knownPromotionSponsorErrorCode": {
       "type": "string",
-      "description": "Promotion sponsor error codes. `FundsWithdrawal(Sponsor)` rejection is a prepare-only companion guard — see `knownPromotionPrepareErrorCode` for `SPONSOR_WITHDRAWAL_FORBIDDEN`. Sponsor preconsume does not emit that code because the hash-bound consume already proves the submitted bytes match the prepare commit.",
+      "description": "Promotion sponsor error codes. `FundsWithdrawal(Sponsor)` rejection is a prepare-only companion guard — see `knownPromotionPrepareErrorCode` for `SPONSOR_WITHDRAWAL_FORBIDDEN`. Sponsor preconsume does not emit that code because the stored-hash-verified consume already proves the submitted bytes match the prepare commit.",
       "enum": [
         "BAD_REQUEST",
         "REQUEST_BODY_TOO_LARGE",

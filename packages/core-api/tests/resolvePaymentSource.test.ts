@@ -339,7 +339,7 @@ describe('resolvePaymentSource — FundsWithdrawal accounting gap', () => {
   });
 
   // ── Single coin object, mutated by prefix ────────────────────────────────
-  // User has 1 payment-token Coin<T> with balance 11_000_000.
+  // User has 1 settlement-token Coin<T> with balance 11_000_000.
   // User prefix: splitCoins(thatCoin, [1_000_000]) + transferObjects.
   // classifyUserTxCoins marks thatCoin as mutated.
   // With no reusable provenance and AB = 0, the resolver still rejects.

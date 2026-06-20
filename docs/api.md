@@ -9,7 +9,7 @@ The schema file [`schemas/relay-api.schema.json`](./schemas/relay-api.schema.jso
 | Prefix | Purpose |
 | --- | --- |
 | `/health` | Host health probe |
-| `/relay/*` | Public relay flow |
+| `/relay/*` | Public Relay API flow |
 | `/studio/*` | Developer-JWT promotion flow |
 | `/auth/*` | Admin session authentication |
 | `/api/*` | Operator admin routes |
@@ -142,9 +142,9 @@ Minimal JSON body:
 }
 ```
 
-The route validates the prepared record, checks the transaction again, sponsor-signs, and submits.
+The route validates the prepared record, checks the transaction again, adds the sponsor signature, and submits.
 
-The submitted `txBytes` must match the prepared record bound to `receiptId`. The route verifies the user's transaction signature, checks that `tx.sender` matches the sender proven at prepare time, consumes the prepared record once, and then re-parses settlement fields from the hash-bound transaction bytes.
+The submitted `txBytes` must match the prepared record bound to `receiptId`. The route verifies the user's transaction signature, checks that `tx.sender` matches the sender proven at prepare time, consumes the prepared record once, and then re-parses settlement fields from the stored-hash-verified transaction bytes.
 The submitted `txBytes` is the final Host-built transaction. It must contain exactly one allowed settlement call. This final transaction validation is separate from the user-supplied `User TransactionKind` validation performed during `POST /relay/prepare`.
 The `executionCostClaim` returned by this route is the transaction-derived gas-recovery claim from the settlement arguments.
 

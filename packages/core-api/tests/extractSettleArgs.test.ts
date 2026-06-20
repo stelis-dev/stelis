@@ -317,7 +317,7 @@ describe('extractSettleArgsFromBuiltTx — unit tests', () => {
 });
 
 // ─────────────────────────────────────────────
-// isNewUserSettleMoveCall — new-user vault drift discriminator
+// isNewUserSettleMoveCall — new-user User Vault drift discriminator
 // ─────────────────────────────────────────────
 
 import { isNewUserSettleMoveCall } from '../src/prepare/extractSettleArgs.js';

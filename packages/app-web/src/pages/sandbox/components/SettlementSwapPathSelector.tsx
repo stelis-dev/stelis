@@ -21,7 +21,7 @@ export function SettlementSwapPathSelector({
   return (
     <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
       <label htmlFor="settlement-swap-path-selector" style={{ fontSize: 13, fontWeight: 500 }}>
-        Payment Token:
+        Settlement Token:
       </label>
       <select
         id="settlement-swap-path-selector"

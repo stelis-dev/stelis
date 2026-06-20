@@ -166,5 +166,5 @@ Both static apps select the public Sui RPC endpoint from the network returned by
 
 `@stelis/mcp-server` accepts optional default configuration:
 
-- `STELIS_RELAY_URL`
+- `STELIS_RELAY_API_URL`
 - `STELIS_REQUEST_TIMEOUT_MS`

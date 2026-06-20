@@ -1,15 +1,15 @@
 /**
- * handlePrepare — L1/L2 validation rejection tests.
+ * handlePrepare — built-transaction validation rejection tests.
  *
  * Tests that the prepare handler correctly rejects transactions
- * when L1 (PTB structure) or L2 (settle args) validation fails.
+ * when PTB structure or settlement-argument validation fails.
  *
  * These tests mock runGenericPrepareBuildPipeline to return a REAL Transaction
  * containing forbidden or invalid commands, then verify the handler
  * reports PrepareValidationError with the correct error code.
  *
  * References:
- *   prepare.ts:211-241 (L1/L2 try-catch block)
+ *   prepare.ts:211-241 (built-transaction validation try-catch block)
  *   validate/static.ts:validatePtbStructure
  *   extractSettleArgs.ts:extractSettleArgsFromBuiltTx
  */
@@ -216,7 +216,7 @@ async function buildNoSettleTxBytes(): Promise<Uint8Array> {
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
-describe('handlePrepare — L1/L2 rejection', () => {
+describe('handlePrepare — built-transaction validation rejection', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockQueryUserCredit.mockResolvedValue(MOCK_CREDIT);
@@ -284,7 +284,7 @@ describe('handlePrepare — L1/L2 rejection', () => {
     }
   });
 
-  it('slot is released when L1/L2 validation fails', async () => {
+  it('slot is released when built-transaction validation fails', async () => {
     const noSettleBytes = await buildNoSettleTxBytes();
     mockPrepareBuildPipeline.mockResolvedValue({
       txBytes: noSettleBytes,
@@ -307,7 +307,7 @@ describe('handlePrepare — L1/L2 rejection', () => {
 
     await handlePrepare(ctx, await makeParams(txKindBytes), makeExtraCfg()).catch(() => {});
 
-    // Slot must be released even on L1/L2 failure. checkin is called with
+    // Slot must be released even on built-transaction validation failure. checkin is called with
     // `(slotId, receiptId)` where receiptId is the generated lease
     // authenticator; assert on its shape.
     expect(ctx.sponsorPool.checkin).toHaveBeenCalledTimes(1);

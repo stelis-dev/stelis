@@ -43,14 +43,14 @@ export interface PrefixUsage {
   /** Result-backed objects (opaque, may not be coins). */
   readonly opaqueInUse: Set<string>;
   /**
-   * All SplitCoins source coins after precedence pruning. Payment-token
+   * All SplitCoins source coins after precedence pruning. Settlement-token
    * selection may admit the narrower `reusableSplitSources` subset, while
    * conservative paths may still exclude the whole set.
    */
   readonly mutated: Set<string>;
   /**
    * Narrow additive subset of direct-input SplitCoins sources that remain
-   * structurally eligible for the narrow payment-token safe-reuse policy.
+   * structurally eligible for the narrow settlement-token safe-reuse policy.
    */
   readonly reusableSplitSources: Set<string>;
   /** MergeCoins destination → source IDs mapping for merge credit calculation. */

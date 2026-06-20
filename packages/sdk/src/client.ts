@@ -57,7 +57,7 @@ export class StelisClient {
   private readonly endpoint: string;
   /**
    * App root URL for /studio/* endpoints.
-   * Derived by stripping a terminal /relay path segment from the relay endpoint.
+   * Derived by stripping a terminal /relay path segment from the Relay API endpoint.
    * e.g. 'http://localhost:3200/relay' → 'http://localhost:3200'
    */
   private readonly studioBase: string;

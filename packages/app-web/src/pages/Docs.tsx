@@ -68,9 +68,9 @@ const endpoints: EndpointOverview[] = [
   {
     method: 'POST',
     path: '/relay/sponsor',
-    desc: 'Validate, sponsor-sign, and submit',
+    desc: 'Validate, sign as sponsor, and submit',
     detail:
-      'Sponsor consumes the prepared receipt, hash-binds txBytes, re-validates the transaction, adds the sponsor signature, and submits it on-chain.',
+      'Sponsor consumes the prepared receipt, checks that txBytes match it, re-validates the transaction, adds the sponsor signature, and submits it on-chain.',
     highlights: [
       'Required body: txBytes, userSignature, receiptId',
       'Post-consume drift returns REPREPARE_REQUIRED instead of exposing generic L2_* codes',
@@ -118,7 +118,7 @@ console.log(sdk.network);`,
 
 const tx = new Transaction();
 // Add only your business logic Move calls here.
-// The SDK appends the settlement step and runs the relay flow.`,
+// The SDK appends the settlement step and runs the Relay API flow.`,
     desc: 'Keep the PTB focused on business intent. Gas abstraction and sponsor flow stay in the SDK layer.',
   },
   {
@@ -206,7 +206,7 @@ export function DocsPage() {
     W-->>App: signature
     App-->>SDK: signature
     SDK->>H: POST /relay/sponsor
-    Note over H: consume/hash-bind + fresh L1/L2 + gasOwner + new-user vault check + L4/L3 + sponsor-sign
+    Note over H: Verify receipt, sponsor gas, submit final transaction
     H-->>SDK: digest, effects
 `}
         />
@@ -364,7 +364,7 @@ export function DocsPage() {
           {'{ "error": "<message>", "code": "<ERROR_CODE>" }'}
         </code>
         <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-          All relay endpoints use this shape. See <code>docs/api.md</code> for the full error code
+          All Relay API endpoints use this shape. See <code>docs/api.md</code> for the full error code
           reference.
         </span>
       </div>

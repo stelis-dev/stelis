@@ -618,7 +618,7 @@ describe('handleSponsor', () => {
     expect(logData['digest']).toBe('0xdigest123');
   });
 
-  it('allows sponsor when the hash-bound PTB carries a valid address-balance payment-input contract', async () => {
+  it('allows sponsor when the stored-hash-verified PTB carries a valid address-balance payment-input contract', async () => {
     const { encodedTxBytes, txBytes, txHash } = await buildAddressBalanceSwapTx(SPONSOR_ADDRESS);
     // validationFingerprint is not checked at /sponsor — any stub value works.
     const prepared = makePreparedEntry(txHash, {
@@ -775,7 +775,7 @@ describe('handleSponsor', () => {
         CLIENT_IP,
       ),
     ).rejects.toThrow(SponsorValidationError);
-    // IP-only: no address attribution before hash-binding succeeds.
+    // IP-only: no address attribution before the stored hash match succeeds.
     expect(abuseBlocker.recordSponsorFailure).toHaveBeenCalledWith(
       CLIENT_IP,
       undefined,
@@ -910,7 +910,7 @@ describe('handleSponsor', () => {
   });
 
   // Post-consume payment-integrity failure is server-side drift, not tampering.
-  // After hash-binding, the submitted bytes are proven identical to prepare-time commit,
+  // After the stored hash match, the submitted bytes are proven identical to prepare-time commit,
   // so a malformed payment-input contract = server validation bug, not user manipulation.
   // Response: REPREPARE_REQUIRED + SPONSOR_DRIFT_OBSERVED log. No abuse recorded.
   it('throws REPREPARE_REQUIRED (not TAMPERING_DETECTED) on malformed payment-input contract — emits SPONSOR_DRIFT_OBSERVED, no abuse', async () => {
@@ -976,7 +976,7 @@ describe('handleSponsor', () => {
   // ── 6: GAS_OWNER_MISMATCH — post-consume drift classification ──────
   //
   // GAS_OWNER_MISMATCH is a post-consume internal inconsistency. The
-  // submitted bytes are hash-bound by consume(), so the gas owner embedded
+  // submitted bytes are stored-hash-verified by consume(), so the gas owner embedded
   // in the PTB is exactly what /prepare built. If it differs from
   // prepared.sponsorAddress it means slot identity coordination failed
   // server-side — not user tampering.
@@ -1009,7 +1009,7 @@ describe('handleSponsor', () => {
     expect(err).toBeInstanceOf(SponsorValidationError);
     expect((err as SponsorValidationError).code).toBe('REPREPARE_REQUIRED');
 
-    // No abuse recorded — hash-bound internal drift
+    // No abuse recorded — stored-hash-verified internal drift
     expect(abuseBlocker.recordSponsorFailure).not.toHaveBeenCalled();
 
     // Operator observability: SPONSOR_DRIFT_OBSERVED with correct stage
@@ -1260,7 +1260,7 @@ describe('handleSponsor', () => {
       storageRebate: '500000',
     });
     expect(sponsorPool.checkin).toHaveBeenCalledWith(SLOT_ID, PAYMENT_ID, expect.any(String));
-    // Verify ONCHAIN_REVERT abuse was recorded with the hash-bound sender and route metadata.
+    // Verify ONCHAIN_REVERT abuse was recorded with the stored-hash-verified sender and route metadata.
     expect(abuseBlocker.recordSponsorFailure).toHaveBeenCalledWith(
       CLIENT_IP,
       { kind: 'address', address: SENDER },
@@ -1476,7 +1476,7 @@ describe('handleSponsor', () => {
     //
     // The gate therefore rejects pre-consume and preserves the entry so
     // that the legitimate owner (if any) can still retry. Abuse is
-    // attributed IP-only because `tx.sender` is not hash-bound yet.
+    // attributed IP-only because `tx.sender` is not stored-hash-verified yet.
     const ATTACKER_ADDRESS = '0x' + 'aa'.repeat(32);
     const { encodedTxBytes, txBytes, txHash } = await buildValidTx(SPONSOR_ADDRESS);
     const prepared = makePreparedEntry(txHash, { senderAddress: ATTACKER_ADDRESS });
@@ -1496,7 +1496,7 @@ describe('handleSponsor', () => {
     // consume() must NOT be reached; prepared entry is preserved.
     expect(prepareStore.consume).not.toHaveBeenCalled();
     expect(prepareStore.evictPreparedEntry).not.toHaveBeenCalled();
-    // IP-only abuse attribution — no address-level record pre-hash-bind.
+    // IP-only abuse attribution — no address-level record before stored hash match.
     expect(abuseBlocker.recordSponsorFailure).toHaveBeenCalledWith(
       CLIENT_IP,
       undefined,
@@ -1573,7 +1573,7 @@ describe('handleSponsor', () => {
   // REPREPARE_REQUIRED is the canonical response for ALL post-consume L2
   // failures. Rolling-deploy config change (e.g. fee adjustment) causes the
   // sponsor's freshly computed validation data to differ from PTB-embedded
-  // values. After hash-binding it cannot be user manipulation, so:
+  // values. After the stored hash match it cannot be user manipulation, so:
   //   - Response: REPREPARE_REQUIRED
   //   - No abuse recorded
   //   - SPONSOR_DRIFT_OBSERVED logged with stage='l2_settle_args' + an L2 subcode
@@ -1696,7 +1696,7 @@ describe('handleSponsor', () => {
   // If the sponsor instance's env (allowedSettlementSwapPaths, packageId) has changed
   // since /prepare, the PTB that was valid at prepare time may fail L1
   // structural checks against the new env. This is server-side drift —
-  // hash-bound bytes cannot have been tampered. Response: REPREPARE_REQUIRED.
+  // stored-hash-verified bytes cannot have been tampered. Response: REPREPARE_REQUIRED.
 
   it('L2 route-table drift → REPREPARE_REQUIRED, no abuse', async () => {
     // Build a swap TX valid for SWAP_ALLOWED_ROUTE
@@ -1733,7 +1733,7 @@ describe('handleSponsor', () => {
     expect(err).toBeInstanceOf(SponsorValidationError);
     expect((err as SponsorValidationError).code).toBe('REPREPARE_REQUIRED');
 
-    // No abuse — hash-bound drift
+    // No abuse — stored-hash-verified drift
     expect(abuseBlocker.recordSponsorFailure).not.toHaveBeenCalled();
 
     // SPONSOR_DRIFT_OBSERVED logged
@@ -1933,7 +1933,7 @@ describe('handleSponsor', () => {
   // ── orderId mismatch: post-consume drift, not tampering ────────────
   //
   // orderId mismatch between PTB and stored entry is an
-  // L2 post-consume failure. The submitted bytes are hash-bound, so the
+  // L2 post-consume failure. The submitted bytes are stored-hash-verified, so the
   // PTB's orderIdHash is what the user signed. If the stored orderId
   // differs, it means the store was corrupted (coordination metadata
   // failure) — not user manipulation. Response: REPREPARE_REQUIRED,
@@ -2416,10 +2416,10 @@ describe('handleSponsor', () => {
       // The victim has a clean IP and a clean sender. The mock blocker
       // reports `checkSubject({ kind: 'address', address: VICTIM }) = blocked`
       // but `checkIp(IP) = clean`. The pre-consume call is IP-only
-      // because submitted bytes are not hash-bound until consume();
+      // because submitted bytes are not stored-hash-verified until consume();
       // address-level blocking is enforced after canonical sender
       // validation. (This is the generic `/relay/sponsor` route, where
-      // post-consume non-IP attribution is keyed by the hash-bound
+      // post-consume non-IP attribution is keyed by the stored-hash-verified
       // `senderAddress` — the address subject kind. Promotion routes
       // record against the studio_user subject kind instead.)
       const { encodedTxBytes, txBytes, txHash } = await buildValidTx(SPONSOR_ADDRESS);
@@ -2465,7 +2465,7 @@ describe('handleSponsor', () => {
       });
     });
 
-    it('post-consume address block check rejects a hash-bound blocked sender', async () => {
+    it('post-consume address block check rejects a stored-hash-verified blocked sender', async () => {
       // Positive control: once the hash is bound, the address check IS
       // authoritative and blocks. This proves that the IP-only pre-consume
       // step did not remove the address-block defence altogether — it
@@ -2536,7 +2536,7 @@ describe('handleSponsor', () => {
       expect(prepareStore.consume).not.toHaveBeenCalled();
       expect(prepareStore.evictPreparedEntry).not.toHaveBeenCalled();
       // IP-only attribution — neither victim nor attacker-chosen tx.sender
-      // may receive address-level abuse before hash-binding proves identity.
+      // may receive address-level abuse before the stored hash match proves identity.
       expect(abuseBlocker.recordSponsorFailure).toHaveBeenCalledWith(
         CLIENT_IP,
         undefined,
@@ -3137,7 +3137,7 @@ describe('handleSponsor', () => {
   });
 
   // ─────────────────────────────────────────────
-  // New-user vault drift pre-sign re-query
+  // New-user User Vault drift pre-sign re-query
   // ─────────────────────────────────────────────
   //
   // Generic `/relay/sponsor` `swap_and_settle_new_user_*` PTBs include
@@ -3150,7 +3150,7 @@ describe('handleSponsor', () => {
   //   - vault still absent → flow continues unchanged.
   //   - RPC error / inconsistent state → fail closed (SPONSOR_FAILED 500), no sign.
   //   - non-new_user PTBs (with_vault, credit) → re-query is not invoked.
-  describe('new-user vault drift pre-sign re-query', () => {
+  describe('new-user User Vault drift pre-sign re-query', () => {
     function makeVaultDriftContext(
       ctxOverrides: Parameters<typeof makeMockContext>[0],
       opts: { needsAllowedSettlementSwapPaths?: boolean } = {},

@@ -127,7 +127,7 @@ export interface SingleHopSettlementSwapPath {
    */
   effectiveFeeRateBps: number;
   /**
-   * Explicit settlement swap direction for L1/L2 verification. Hop count is
+   * Explicit settlement swap direction for structure and settlement-argument verification. Hop count is
    * separately fixed by hops.length === 1, not encoded here.
    */
   settlementSwapDirection: SettlementSwapDirection;

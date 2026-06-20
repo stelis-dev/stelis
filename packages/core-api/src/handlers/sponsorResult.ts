@@ -103,7 +103,7 @@ export interface SponsorResultMetadata {
   // ── Identity block (recorder input) ─────────────────────────────────
   /** Receipt ID consumed by the sponsor run. */
   readonly receiptId: string;
-  /** Hash-bound sender address after consume succeeds. */
+  /** Stored-hash-verified sender address after consume succeeds. */
   readonly senderAddress: string;
   /** Canonical execution path key carried through the prepare entry. */
   readonly executionPathKey: string;

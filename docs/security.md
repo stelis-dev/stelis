@@ -10,7 +10,7 @@ This document summarizes the current security boundaries that are visible in the
 | Sponsor gas | User commands must not reference `GasCoin` or use `FundsWithdrawal(Sponsor)`. |
 | User TransactionKind | Generic `/relay/prepare` accepts only a user-supplied `User TransactionKind` with zero settlement calls and at most `MAX_COMMANDS = 16` commands. |
 | Final Host-built transaction | The Host-built transaction must contain exactly one allowed settlement call. |
-| Payment-token funding | The Host combines coin object provenance with `FundsWithdrawal(Sender)` address-balance accounting. |
+| Settlement-token funding | The Host combines coin object provenance with `FundsWithdrawal(Sender)` address-balance accounting. |
 | Prepare authorization | Generic prepare requires a sender personal-message signature over the transaction-kind hash and request fields. |
 | Settlement swap path | Relay validation accepts only configured settlement swap paths. Each supported `settlementTokenType` maps to one SUI-adjacent DeepBook one-hop settlement swap path. |
 | Prepare records | Prepare records are single-use and time-limited. |

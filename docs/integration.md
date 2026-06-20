@@ -2,7 +2,7 @@
 
 This document describes the generic sponsored transaction flow.
 
-## Generic Relay Flow
+## Generic Relay API Flow
 
 1. Call `GET /relay/config`.
 2. Choose a settlement token from `supportedSettlementSwapPaths`.

@@ -50,7 +50,7 @@ PreparedTxEntry                        store/prepareTypes.ts
   ├─ verifySenderSignature(txBytes, sig, txSender)     [explicit sender binding]
   ├─ checkBlockedRequest(ip)                           [pre-consume IP-only]
   ├─ consume(receiptId, txBytesHash)                   [atomic single-use delete]
-  │                                                     ↑ txSender becomes hash-bound
+  │                                                     ↑ txSender becomes stored-hash-verified
   │
   │  extractSettleArgsFromBuiltTx()    prepare/extractSettleArgs.ts
   │  (returns all 13 settle-block fields; single parser)
@@ -105,15 +105,17 @@ is read at sponsor time from `parseSettleArgs(txBytes)` exclusively;
 store mirror. Persisting copies invite drift bugs without adding
 authority and is therefore disallowed.
 
-After consume() succeeds the submitted bytes are hash-bound to the prepare commit, so all
-post-consume L1/L2/extraction failures are server-side drift, not user manipulation. The
-generic SponsoredExecutionPolicy additionally re-queries on-chain vault state for hash-bound
+After consume() succeeds the submitted bytes have matched the stored prepare
+hash, so all post-consume structure, settlement-argument, and extraction
+failures are server-side drift, not user manipulation. The
+generic SponsoredExecutionPolicy additionally re-queries on-chain User Vault state for stored-hash-verified
 `swap_and_settle_new_user_*` PTBs **between gas-owner verification and preflight** (not
 after preflight), so an on-chain `EVaultAlreadyRegistered` abort never reaches preflight
 as `SPONSOR_PREFLIGHT_FAILED` + IP-counter pressure. A vault-now-exists drift returns
 `REPREPARE_REQUIRED`; a transient or inconsistent vault-state response returns
 `SPONSOR_FAILED 500` (fail-closed before preflight + signing). All four shapes
-(L1/L2/extraction/payment-integrity/gas-owner drift, plus the three new-user vault
+(structure, settlement-argument, extraction, payment-integrity, and gas-owner drift,
+plus the three new-user User Vault
 stages) emit a structured `SPONSOR_DRIFT_OBSERVED` log for operator triage. The payload
 contract (`stage`, `subcode`, `route`, `receipt_id`, `sender`, `client_ip`, and — on
 `route: 'promotion'` — `promotion_id`) is owned by
@@ -224,7 +226,7 @@ Full sponsor flow steps: → [`pricing-and-validation.md #sponsor-approval-flow`
 `session/sponsoredExecution/sponsorRunner.ts`):
 
 The sponsor runner checks `txBytes` before consume, then
-atomically `consume()`s the stored entry to hash-bind the submitted bytes, and
+atomically `consume()`s the stored entry to compare submitted bytes with the stored hash, and
 only after that lets the generic SponsoredExecutionPolicy consult the parsed `SettleArgs`
 and runtime chain state for the execution verdict.
 
@@ -253,15 +255,15 @@ preflight/dry-run) while the IP counter still applies):
 7. `checkBlockedRequest(ip, txSender)` — post-consume address block check.
 8. `revalidateGenericSponsorPolicy()`:
    - Invalidate config cache; read fresh on-chain config.
-   - L1 `validatePtbStructure`.
+   - `validatePtbStructure`.
    - `extractSettleArgsFromBuiltTx` (all 13 settle-block fields).
-   - L2 `validateSettleArgs` + `validatePaymentInputIntegrity`.
+   - `validateSettleArgs` + `validatePaymentInputIntegrity`.
    - Any failure here → `REPREPARE_REQUIRED` + `SPONSOR_DRIFT_OBSERVED` log
      (payload contract: [`pricing-and-validation.md → Sponsor Failure Classification`](./pricing-and-validation.md#sponsor-failure-classification)).
-     No abuse counter: hash-binding proves failures are server-side drift.
+     No abuse counter: the stored hash match proves failures are server-side drift.
 9. `verifyGasOwner` against `prepared.sponsorAddress` (slot coordination).
-   New-user vault drift re-query runs here, before preflight, only when the
-   hash-bound PTB calls `swap_and_settle_new_user_*` on the trusted Stelis
+   New-user User Vault drift re-query runs here, before preflight, only when the
+   stored-hash-verified PTB calls `swap_and_settle_new_user_*` on the trusted Stelis
    package (predicate `isNewUserSettleMoveCall(builtCommands, packageId)`).
    Calls `queryUserCredit(ctx.sui, ctx.vaultRegistryId, senderAddress,
 ctx.vaultsTableId ?? undefined)`. If the vault now exists →
@@ -284,9 +286,9 @@ ctx.vaultsTableId ?? undefined)`. If the vault now exists →
    the standard non-IP carve-out in `ADDRESS_CARVE_OUT_SUBCODES` (address
    counter skipped) and the IP counter still increments — same rule as
    every other carve-out subcode.
-10. Preflight simulation → L3 `validateGenericSponsorNonloss` — fed
+10. Preflight simulation → `validateGenericSponsorNonloss` — fed
     `settleArgs.gasVarianceFixedMist`, `settleArgs.slippageBufferMist`, and
-    `settleArgs.executionCostClaim`; no store copies participate in the L3 decision.
+    `settleArgs.executionCostClaim`; no store copies participate in the non-loss decision.
 11. `signAndSubmit` via sponsor pool.
 12. Economics log built from `settleArgs.executionCostClaim` and
     `settleArgs.quotedHostFeeMist` (tx-derived); `protocolFee` from fresh
@@ -296,8 +298,8 @@ Stored fields still read at `/sponsor` (coordination-only, never execution autho
 
 | Field                      | Purpose                                                                           |
 | -------------------------- | --------------------------------------------------------------------------------- |
-| `txBytesHash`              | Single-use hash binding verified in `consume()`                                   |
-| `orderId`                  | Echo target for `expectedOrderIdHash` reconstruction in L2                        |
+| `txBytesHash`              | Single-use stored hash verified in `consume()`                                    |
+| `orderId`                  | Echo target for `expectedOrderIdHash` reconstruction during settlement validation |
 | `slotId`, `sponsorAddress` | Sponsor pool slot identity + gasOwner coordination                                |
 | `receiptId`                | HMAC-protected receipt identity (paired with committed `txBytesHash` in the pool) |
 | `executionPathKey`         | `ONCHAIN_REVERT` log key                                                          |
@@ -306,7 +308,7 @@ Settle observability fields **not persisted** in the store:
 `executionCostClaim`, `quotedHostFeeMist`, `gasVarianceFixedMist`,
 `slippageBufferMist`, `simGas`, `grossGas`, `policyHash`,
 `quoteTimestampMs`, `profile`. Sponsor obtains each value from
-`ExtractedSettleArgs` (parsed from the hash-bound PTB).
+`ExtractedSettleArgs` (parsed from the stored-hash-verified PTB).
 
 `nonce` is persisted as a base coordination field (used by
 `reserveNonce` / sender-metadata compaction at the store layer); it is

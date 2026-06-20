@@ -75,12 +75,12 @@ const NEW_USER_SETTLE_FNS: ReadonlySet<string> = new Set(
 
 /**
  * Server-only discriminator: does the built PTB call a `swap_and_settle_new_user_*`
- * settle entrypoint on the trusted Stelis package? Walks the same hash-bound
+ * settle entrypoint on the trusted Stelis package? Walks the same stored-hash-verified
  * MoveCall list `parseSettleArgs` already validated; the package + module + function
  * triple must all match before the predicate returns true. External packages
  * with the same module/function name cannot satisfy this gate.
  *
- * Used by sponsor-time new-user vault-drift detection. `SettleArgs` does not
+ * Used by sponsor-time new-user User Vault drift detection. `SettleArgs` does not
  * expose `fnName`, so this is the narrow internal derivation path; intentionally
  * not re-exported from any browser/SDK barrel.
  */

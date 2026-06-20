@@ -288,7 +288,7 @@ export function createRelayRoutes(getCtx: () => Promise<AppApiContext>) {
       }
 
       // handleSponsor routes through the sponsor runner:
-      // pre-consume validation → consume hash-bind → post-consume checks
+      // pre-consume validation → consume stored hash → post-consume checks
       // → sign/submit → sponsor result policy → finally slot checkin/release hook.
       // The post-terminal host callback writes slot and sponsor refill account state through that
       // runner path, so no separate wake signal is required here.

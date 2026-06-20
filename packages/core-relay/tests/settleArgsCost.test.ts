@@ -16,7 +16,7 @@
  *   P-4: wrong packageId → null return
  *   P-5: unrelated TX (no settle call) → null return
  *
- * Only 1-hop routes are supported.
+ * Only one-hop settlement swap paths are supported.
  */
 import { describe, it, expect } from 'vitest';
 import { Transaction } from '@mysten/sui/transactions';

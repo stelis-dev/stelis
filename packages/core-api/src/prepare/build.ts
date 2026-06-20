@@ -3,7 +3,7 @@
  *
  * Implements the multi-stage build strategy:
  *   Credit probe: for credit_general candidates, dry-run a credit-only
- *             settlement PTB before payment-token resolution.
+ *             settlement PTB before settlement-token resolution.
  *   Pass 1:   Build with maxClaimMist → dry-run → extract actual gas
  *   Path decision: the pre-swap credit probe either selects final credit with
  *             zero slippage or leaves pass 1 / 1.5 / 2 on the swap path.
@@ -103,7 +103,7 @@ function logPrepareBuildStage(stage: string, payload: Record<string, unknown> = 
  * Build the baseForQuote market-executable floor diagnostic payload from a solver
  * quote. Emitted in `PREPARE_BUILD_STAGE` events so operators can correlate
  * any downstream `INSUFFICIENT_BALANCE` (raised swap input vs. user's
- * payment-token funding) with the floor that triggered the raise.
+ * settlement-token funding) with the floor that triggered the raise.
  *
  * `bfq_floor_raised` is true only on the baseForQuote branch and only when the solver
  * lifted the target. quoteForBase's existing minSize bump path keeps the field at
@@ -329,7 +329,7 @@ function assertSingleHopOnly(settlementSwapPath: SingleHopSettlementSwapPath): v
   if (settlementSwapPath.hops.length !== 1) {
     throw new PrepareValidationError(
       'SLIPPAGE_QUERY_FAILED',
-      `Unsupported hop count ${settlementSwapPath.hops.length} (only 1-hop routes are supported)`,
+      `Unsupported hop count ${settlementSwapPath.hops.length} (only one-hop settlement swap paths are supported)`,
       { stage: 'hop_validation', poolId: settlementSwapPath.hops[0]?.poolId ?? 'unknown' },
     );
   }
@@ -866,7 +866,7 @@ async function buildFinalGenericPrepareResult(
 /**
  * Execute the generic prepare build pipeline in code order:
  *   Credit probe: for eligible credit_general requests, measure a credit-only
- *             candidate before requiring payment-token funding for a swap probe.
+ *             candidate before requiring settlement-token funding for a swap probe.
  *   Pass 1:   dry-run with maxClaimMist to extract actual gas.
  *   Path decision: if the pre-swap credit probe did not select credit, the
  *             remaining final path is swap and must measure execution gap.
@@ -1078,7 +1078,7 @@ export async function runGenericPrepareBuildPipeline(
 
   // A credit_general request can be credit-coverable after measurement even
   // when it cannot cover maxClaimMist. Measure that candidate without first
-  // requiring a payment-token source for a max-claim swap probe.
+  // requiring a settlement-token source for a max-claim swap probe.
   const preSwapCreditProbe = shouldAttemptPreSwapCreditProbe(input)
     ? await dryRunPreSwapCreditPathCosts(ctx, input)
     : ({ outcome: 'skipped' } as const);

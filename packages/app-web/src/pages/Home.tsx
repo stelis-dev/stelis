@@ -52,7 +52,7 @@ export function HomePage() {
                   User-owned vault protection
                 </div>
                 <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-                  Vault credit lives in a user-owned Sui object. Payment-token funding can use coin
+                  Vault credit lives in a user-owned Sui object. Settlement-token funding can use coin
                   objects or address balance, and users can withdraw vault credit directly anytime.
                 </div>
               </div>
@@ -89,16 +89,16 @@ export function HomePage() {
 
     U->>H: POST /relay/prepare
     Note right of U: txKindBytes, senderAddress, settlementTokenType
-    Note over H: L1/L2 validate, build + dry-run
+    Note over H: Validate request, build transaction, dry-run cost
     H-->>U: txBytes, receiptId, nonce, cost
 
     Note over U: Sign TX (no SUI needed)
 
     U->>H: POST /relay/sponsor
     Note right of U: txBytes, userSignature, receiptId
-    Note over H: consume/hash-bind + fresh L1/L2 + gasOwner + new-user vault check + L4/L3 + sponsor-sign
+    Note over H: Verify receipt, sponsor gas, submit final transaction
     H->>C: Submit sponsored TX
-    Note over C: optional swap + settle entrypoint executes
+    Note over C: user action and settlement execute together
     H-->>U: digest, effects
 `}
           />

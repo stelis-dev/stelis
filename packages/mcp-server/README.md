@@ -35,16 +35,16 @@ stelis-mcp-server
 Set a default Relay API endpoint with:
 
 ```bash
-STELIS_RELAY_URL=https://your-host.example.com/relay stelis-mcp-server
+STELIS_RELAY_API_URL=https://your-host.example.com/relay stelis-mcp-server
 ```
 
-Tools also accept `relayUrl`, which overrides `STELIS_RELAY_URL` for that call.
+Tools also accept `relayApiUrl`, which overrides `STELIS_RELAY_API_URL` for that call.
 
 ## Environment
 
 | Variable | Required | Description |
 | --- | --- | --- |
-| `STELIS_RELAY_URL` | optional | Default Relay API endpoint, ending in `/relay`. |
+| `STELIS_RELAY_API_URL` | optional | Default Relay API endpoint, ending in `/relay`. |
 | `STELIS_REQUEST_TIMEOUT_MS` | optional | Default HTTP timeout in milliseconds. Defaults to `20000`. |
 
 ## Tool Model
@@ -56,13 +56,13 @@ The server follows the Stelis API agent tier model:
 - generic sponsor requires `receiptId`, exact prepared `txBytes`, and `userSignature`
 - Studio promotion tools require a developer JWT and keep that credential request-local
 
-Agents read `supportedSettlementSwapPaths` from `stelis_get_relay_config` and choose a `settlementTokenType` from that list. The Host has one active settlement swap path per `settlementTokenType`; MCP tools do not accept a pool ID or path ID.
+Agents read `supportedSettlementSwapPaths` from `stelis_get_relay_api_config` and choose a `settlementTokenType` from that list. The Host has one active settlement swap path per `settlementTokenType`; MCP tools do not accept a pool ID or path ID.
 
 The server never stores developer JWTs, user signatures, transaction bytes, or private keys.
 
 ## Generic Tool Flow
 
-1. Call `stelis_get_relay_config` and choose a `settlementTokenType` from `supportedSettlementSwapPaths`.
+1. Call `stelis_get_relay_api_config` and choose a `settlementTokenType` from `supportedSettlementSwapPaths`.
 2. Build serialized `TransactionKind` bytes outside this MCP server. The bytes must satisfy the [User TransactionKind rules](../../docs/api.md#user-transactionkind-rules).
 3. Ask the user wallet to sign the prepare authorization message described in [docs/api.md](../../docs/api.md#post-relayprepare).
 4. Call `stelis_prepare_sponsored_transaction` with `txKindBytes`, `senderAddress`, `settlementTokenType`, `txKindBytesHash`, `prepareAuthorizationTimestampMs`, `prepareAuthorizationRequestNonce`, and `prepareAuthorizationSignature`.

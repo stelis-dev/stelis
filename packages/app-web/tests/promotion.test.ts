@@ -119,7 +119,7 @@ describe('Promotion SDK integration', () => {
     expect(src).toMatch(/await\s+sdk\.preparePromotionSponsored\s*\(/);
     // Must use promotion-specific sponsor method
     expect(src).toMatch(/await\s+sdk\.sponsorPromotionSponsored\s*\(/);
-    // Must NOT use generic relay path
+    // Must NOT use generic Relay API path
     expect(src).not.toMatch(/sdk\.prepareSponsored/);
     expect(src).not.toMatch(/fetch\s*\(/);
   });

@@ -38,7 +38,7 @@ interface StudioExecutionPanelProps {
  *   2. Wallet sign
  *   3. sdk.sponsorPromotionSponsored() — POST /studio/promotions/:id/sponsor
  *
- * This uses the promotion-specific endpoints, not the generic relay path.
+ * This uses the promotion-specific endpoints, not the generic Relay API path.
  * No settlement token or settlement swap path is needed — promotion budget covers gas.
  *
  * The TX builds a 2-step MoveCall-only PTB:

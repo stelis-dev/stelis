@@ -948,7 +948,7 @@ async function runGenericSharedPostconsumeChecks(
       sender: txSender,
       clientIp: ctx.clientIp,
     });
-    const message = 'Prepared nonce does not match the hash-bound PTB nonce — retry /prepare';
+    const message = 'Prepared nonce does not match the stored-hash-verified PTB nonce — retry /prepare';
     setValidationFailure(state, message);
     throw sponsor.errors.sponsorValidation('REPREPARE_REQUIRED', message);
   }

@@ -28,7 +28,7 @@ export function ConnectionPanel({
       </p>
 
       <div className="promo-input-group">
-        <label className="promo-label">Relay URL</label>
+        <label className="promo-label">Host Relay API URL</label>
         <input
           type="url"
           value={inputUrl}

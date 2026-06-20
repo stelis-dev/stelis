@@ -371,7 +371,7 @@ async function drivePrepare(harness: GenericHarness): Promise<{
   });
 
   // Sticky mock — the sponsor side also re-extracts args from the same
-  // hash-bound bytes via `revalidateGenericSponsorPolicy`. Both requests
+  // stored-hash-verified bytes via `revalidateGenericSponsorPolicy`. Both requests
   // must observe the identical canonical settle args.
   vi.mocked(extractSettleArgsFromBuiltTx).mockReturnValue({
     configObjectId: GENERIC_MOCK_CONFIG.configId,
@@ -797,7 +797,7 @@ describe('Studio two-actor golden flow (handlePromotionPrepare → user sign →
     expect(err).toBeInstanceOf(PromotionSponsorError);
     expect((err as PromotionSponsorError).code).toBe('TAMPERING_DETECTED');
 
-    // Hash-bound consume() hash_mismatch is destructive — the entry is
+    // Stored-hash-verified consume() hash_mismatch is destructive — the entry is
     // gone and the ledger reservation has been released.
     expect(await h.prepareStore.peek(prepareResult.receiptId)).toBeNull();
     const ent = await h.executionLedger.getEntitlement(h.promoId, STUDIO_USER_ID);

@@ -59,7 +59,7 @@ const DECIMAL_U64_RE = /^(?:0|[1-9]\d*)$/;
  *   - `mutated` is the broad SplitCoins-source set.
  *   - `reusableSplitSources` is a narrower additive subset of direct-input
  *     SplitCoins sources that survive precedence pruning and remain candidates
- *     for the current payment-token safe-reuse policy.
+ *     for the current settlement-token safe-reuse policy.
  */
 export function classifyUserTxCoins(tx: Transaction): {
   survivors: Set<string>;
@@ -69,7 +69,7 @@ export function classifyUserTxCoins(tx: Transaction): {
   mutated: Set<string>;
   /**
    * Additive subset of direct-input SplitCoins sources that remain structurally
-   * eligible for the narrow payment-token safe-reuse policy after precedence
+   * eligible for the narrow settlement-token safe-reuse policy after precedence
    * pruning. Conservative callers may still exclude the broader `mutated` set.
    */
   reusableSplitSources: Set<string>;
