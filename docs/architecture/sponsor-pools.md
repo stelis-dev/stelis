@@ -48,7 +48,7 @@ Admin withdrawal uses the Sponsor Refill Account signer. It transfers either the
 
 Before prepare and sponsor routes continue, `@stelis/app-api` checks sponsor operation state. If no usable sponsor slot is available, the route can return a sponsor-operations `503` response.
 
-Prepare routes require at least one healthy sponsor slot that is not currently leased. Sponsor routes use the health gate only, because they complete an existing leased prepare receipt. Admin `/api/pool` reports lease occupancy as `sponsorOperations.slotLeases`, including current leased and free sponsor slot counts.
+Prepare routes require at least one healthy sponsor slot that is not currently leased. Sponsor routes use the health gate only, because they complete an existing leased prepare receipt. Admin `/api/sponsor-operations` reports lease occupancy as `sponsorOperations.slotLeases`, including current leased and free sponsor slot counts.
 
 ## Refill Settings
 

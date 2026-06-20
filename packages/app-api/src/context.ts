@@ -137,7 +137,7 @@ export interface AppApiContext {
  * Minimal context-level sponsor operations API for routes and admin. Composes the
  * Redis-shared state store, refill worker, and sponsor refill account probe helper. Routes read
  * the shared state via `readState()` and derive gate decisions on demand;
- * admin `/api/pool` calls `probeSponsorRefillAccount('admin_pool')` before
+ * admin `/api/sponsor-operations` calls `probeSponsorRefillAccount('admin_sponsor_operations')` before
  * reading so its response reflects a freshly observed sponsor refill account balance.
  * Admin withdraw uses the same helper under the `admin_withdraw`
  * trigger after a successful on-chain transfer.
@@ -146,13 +146,13 @@ export interface AppSponsorOperations {
   /** Read the current shared state for every slot and the sponsor refill account. */
   readState(): Promise<SponsorAvailabilityView>;
   /**
-   * Awaited sponsor refill account trigger. `admin_pool` rejects when the probe result
-   * cannot be committed, so `/api/pool` never serialises stale sponsor refill account data
+   * Awaited sponsor refill account trigger. `admin_sponsor_operations` rejects when the probe result
+   * cannot be committed, so `/api/sponsor-operations` never serialises stale sponsor refill account data
    * as if it were fresh. `admin_withdraw` logs the same failure family
    * but resolves so a successful on-chain withdraw is not misreported
    * as a failed transaction.
    */
-  probeSponsorRefillAccount(trigger: 'admin_pool' | 'admin_withdraw'): Promise<void>;
+  probeSponsorRefillAccount(trigger: 'admin_sponsor_operations' | 'admin_withdraw'): Promise<void>;
   /** Enqueue a refill request on this instance's refill worker. */
   requestRefill(slotAddress: string): void;
   /** Slot addresses, exposed so admin route can render per-slot entries. */
@@ -543,7 +543,7 @@ async function initContext(): Promise<AppApiContext> {
     // ── 8g. Sponsor refill account bounded probe helper for admin reads and withdraws
     const probeRelayRef = relay;
     async function probeSponsorRefillAccount(
-      trigger: 'admin_pool' | 'admin_withdraw',
+      trigger: 'admin_sponsor_operations' | 'admin_withdraw',
     ): Promise<void> {
       await probeAndWriteSponsorRefillAccountState(
         {
@@ -555,14 +555,14 @@ async function initContext(): Promise<AppApiContext> {
         },
         {
           operation:
-            trigger === 'admin_pool'
+            trigger === 'admin_sponsor_operations'
               ? 'sponsorOperations.probeSponsorRefillAccount'
               : 'sponsorOperations.probeSponsorRefillAccountAfterWithdraw',
           source:
-            trigger === 'admin_pool'
-              ? 'admin_pool_sponsor_refill_account_update'
+            trigger === 'admin_sponsor_operations'
+              ? 'admin_sponsor_operations_sponsor_refill_account_update'
               : 'admin_withdraw_sponsor_refill_account_update',
-          writeFailureMode: trigger === 'admin_pool' ? 'throw' : 'swallow',
+          writeFailureMode: trigger === 'admin_sponsor_operations' ? 'throw' : 'swallow',
         },
       );
     }

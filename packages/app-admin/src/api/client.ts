@@ -16,7 +16,7 @@
 
 import type {
   SingleHopSettlementSwapPathResponse,
-  SponsorOperationsStatus,
+  SponsorOperationsStatus as SponsorOperationsState,
 } from '@stelis/contracts';
 
 /**
@@ -94,7 +94,7 @@ export function logout(): Promise<void> {
   return apiFetch('/auth/logout', { method: 'POST' });
 }
 
-// ── Pool / Dashboard ───────────────────────────────────────────────────────
+// ── Sponsor Operations / Dashboard ─────────────────────────────────────────
 
 interface FeeConfig {
   maxHostFeeMist: string;
@@ -104,11 +104,11 @@ interface FeeConfig {
   configVersion: string;
 }
 
-export interface PoolAdminStatus {
-  // `/api/pool` runs a bounded sponsor refill account probe and reads the shared Redis
+export interface SponsorOperationsStatus {
+  // `/api/sponsor-operations` runs a bounded sponsor refill account probe and reads the shared Redis
   // state on every request after boot-time sync. The field is always a
   // concrete payload.
-  sponsorOperations: SponsorOperationsStatus;
+  sponsorOperations: SponsorOperationsState;
   primaryAddress: string | null;
   settlementPayoutRecipientAddress: string;
   network: string;
@@ -132,7 +132,7 @@ export interface PoolAdminStatus {
       | 'effectiveFeeRateBps'
     >
   >;
-  // Config-page fields (also returned by /api/pool)
+  // Config-page fields (also returned by /api/sponsor-operations)
   quotedHostFeeMist?: string;
   onChainIds?: {
     packageId: string | null;
@@ -154,8 +154,8 @@ export interface PoolAdminStatus {
   };
 }
 
-export function getPool(): Promise<PoolAdminStatus> {
-  return apiFetch<PoolAdminStatus>('/api/pool');
+export function getSponsorOperations(): Promise<SponsorOperationsStatus> {
+  return apiFetch<SponsorOperationsStatus>('/api/sponsor-operations');
 }
 
 // ── Audit Logs ─────────────────────────────────────────────────────────────
@@ -204,7 +204,7 @@ export function executeSponsorRefillAccountWithdraw(data: {
 
 // ── Studio ─────────────────────────────────────────────────────────────
 
-export interface StudioData {
+export interface StudioStatusResponse {
   enabled: boolean;
   config?: {
     developerJwtTrustConfigured: boolean;
@@ -212,8 +212,8 @@ export interface StudioData {
   };
 }
 
-export function getStudio(): Promise<StudioData> {
-  return apiFetch<StudioData>('/api/studio');
+export function getStudio(): Promise<StudioStatusResponse> {
+  return apiFetch<StudioStatusResponse>('/api/studio');
 }
 
 // ── Promotions ────────────────────────────────────────────────────────────

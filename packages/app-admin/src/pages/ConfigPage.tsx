@@ -10,7 +10,12 @@
  *
  */
 import { useEffect, useState } from 'react';
-import { getPool, getStudio, type PoolAdminStatus, type StudioData } from '../api/client';
+import {
+  getSponsorOperations,
+  getStudio,
+  type SponsorOperationsStatus,
+  type StudioStatusResponse,
+} from '../api/client';
 import { mistToSui, truncateId, CopyButton } from '../utils';
 
 function SuiAmount({ mist }: { mist: string }) {
@@ -30,16 +35,19 @@ function formatBpsPercent(bps: number): string {
 }
 
 export function ConfigPage() {
-  const [data, setData] = useState<PoolAdminStatus | null>(null);
-  const [studioData, setStudioData] = useState<StudioData | null>(null);
+  const [data, setData] = useState<SponsorOperationsStatus | null>(null);
+  const [studioStatus, setStudioStatus] = useState<StudioStatusResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   async function poll() {
     try {
-      const [poolJson, studioJson] = await Promise.all([getPool(), getStudio()]);
-      setData(poolJson);
-      setStudioData(studioJson);
+      const [sponsorOperationsJson, studioJson] = await Promise.all([
+        getSponsorOperations(),
+        getStudio(),
+      ]);
+      setData(sponsorOperationsJson);
+      setStudioStatus(studioJson);
       setLastUpdated(new Date());
       setError(null);
     } catch (e) {
@@ -232,7 +240,7 @@ export function ConfigPage() {
       )}
 
       {/* ═══════════════ §3: Studio Settings (conditional) ═══════════════ */}
-      {studioData?.enabled && (
+      {studioStatus?.enabled && (
         <>
           <div
             style={{
@@ -258,7 +266,7 @@ export function ConfigPage() {
             </h2>
           </div>
 
-          {studioData.config && (
+          {studioStatus.config && (
             <div className="admin-card">
               <div className="admin-card-title">Studio Config</div>
               <table className="admin-table">
@@ -273,13 +281,13 @@ export function ConfigPage() {
                     <td>
                       <span
                         style={{
-                          color: studioData.config.developerJwtTrustConfigured
+                          color: studioStatus.config.developerJwtTrustConfigured
                             ? '#22c55e'
                             : '#f87171',
                           fontWeight: 600,
                         }}
                       >
-                        {studioData.config.developerJwtTrustConfigured
+                        {studioStatus.config.developerJwtTrustConfigured
                           ? '● Configured'
                           : '● Missing'}
                       </span>
@@ -295,13 +303,13 @@ export function ConfigPage() {
                     <td>
                       <span
                         style={{
-                          color: studioData.config.developerJwtVerifyUrlConfigured
+                          color: studioStatus.config.developerJwtVerifyUrlConfigured
                             ? '#22c55e'
                             : '#64748b',
                           fontWeight: 600,
                         }}
                       >
-                        {studioData.config.developerJwtVerifyUrlConfigured
+                        {studioStatus.config.developerJwtVerifyUrlConfigured
                           ? '● Configured'
                           : '○ Not set (optional)'}
                       </span>

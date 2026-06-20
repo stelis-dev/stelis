@@ -1742,8 +1742,8 @@ describe('admin routes', () => {
     });
   });
 
-  // ── GET /api/pool — RPC fleet snapshot ────────────────────────────
-  describe('GET /api/pool', () => {
+  // ── GET /api/sponsor-operations — RPC fleet snapshot ────────────────────────────
+  describe('GET /api/sponsor-operations', () => {
     it('returns 500 when pool metadata exceeds safe integer range (fail-closed)', async () => {
       (mockCtx.prepareConfig as unknown as Record<string, unknown>).supportedSettlementSwapPaths = [
         {
@@ -1752,7 +1752,7 @@ describe('admin routes', () => {
           minSize: 1n,
         },
       ];
-      const res = await app.request('/api/pool');
+      const res = await app.request('/api/sponsor-operations');
       expect(res.status).toBe(500);
       // Restore
       (mockCtx.prepareConfig as unknown as Record<string, unknown>).supportedSettlementSwapPaths = [
@@ -1778,7 +1778,7 @@ describe('admin routes', () => {
     });
 
     it('returns rpcFleet with safe fields (no auth/secret data)', async () => {
-      const res = await app.request('/api/pool');
+      const res = await app.request('/api/sponsor-operations');
       expect(res.status).toBe(200);
       const body = await res.json();
 
@@ -1804,14 +1804,14 @@ describe('admin routes', () => {
       }
     });
 
-    it('awaits probeSponsorRefillAccount before serialising /api/pool', async () => {
-      // Admin `/api/pool` runs a bounded sponsor-refill-account probe before the
+    it('awaits probeSponsorRefillAccount before serialising /api/sponsor-operations', async () => {
+      // Admin `/api/sponsor-operations` runs a bounded sponsor-refill-account probe before the
       // shared-state read so the returned payload is "fresh at return
       // time" rather than stale-then-next-read.
-      const res = await app.request('/api/pool');
+      const res = await app.request('/api/sponsor-operations');
       expect(res.status).toBe(200);
       expect(mockCtx.sponsorOperations.probeSponsorRefillAccount).toHaveBeenCalledWith(
-        'admin_pool',
+        'admin_sponsor_operations',
       );
     });
 
@@ -1820,7 +1820,7 @@ describe('admin routes', () => {
         mockCtx.sponsorOperations.probeSponsorRefillAccount as ReturnType<typeof vi.fn>
       ).mockRejectedValueOnce(new Error('redis sponsor refill account write failed'));
 
-      const res = await app.request('/api/pool');
+      const res = await app.request('/api/sponsor-operations');
 
       expect(res.status).toBe(500);
     });
@@ -1866,7 +1866,7 @@ describe('admin routes', () => {
         },
       });
 
-      const res = await app.request('/api/pool');
+      const res = await app.request('/api/sponsor-operations');
       expect(res.status).toBe(200);
       const body = await res.json();
 
@@ -1908,8 +1908,8 @@ describe('admin routes', () => {
       });
     });
 
-    it('omits top-level /api/pool flat fields (data lives under `sponsorOperations`)', async () => {
-      const res = await app.request('/api/pool');
+    it('omits top-level /api/sponsor-operations flat fields (data lives under `sponsorOperations`)', async () => {
+      const res = await app.request('/api/sponsor-operations');
       expect(res.status).toBe(200);
       const body = await res.json();
 
@@ -1925,7 +1925,7 @@ describe('admin routes', () => {
     });
 
     it('returns boot-derived configuration fields and the cached feeConfig', async () => {
-      const res = await app.request('/api/pool');
+      const res = await app.request('/api/sponsor-operations');
       expect(res.status).toBe(200);
       const body = await res.json();
 

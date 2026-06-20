@@ -141,7 +141,7 @@ Sponsor slot scan policy:
 - The current Redis implementation keeps O(sponsor slot count) Lua scans for sponsor slot checkout, sponsor slot lease status, and sponsor operation state reads.
 - The supported sponsor slot count is capped at 256 so those scans stay inside the current capacity target.
 - Checkout, lease status, and sponsor operation state reads stay within one Redis `EVAL` over at most 256 sponsor slots.
-- `/api/pool` returns a per-slot admin snapshot and reads every configured sponsor slot.
+- `/api/sponsor-operations` returns a per-slot admin snapshot and reads every configured sponsor slot.
 - Deployments with more than 256 sponsor slots are rejected at boot instead of running outside the supported scan bound.
 
 Required timeout variables:

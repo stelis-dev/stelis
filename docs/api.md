@@ -189,7 +189,7 @@ Mounted admin routes:
 - `GET /api/logs`
 - `GET /api/sponsored-logs/summary`
 - `GET /api/sponsored-logs`
-- `GET /api/pool`
+- `GET /api/sponsor-operations`
 - `GET /api/sponsor-refill-account/withdraw`
 - `POST /api/sponsor-refill-account/withdraw`
 - `GET /api/settlement-swap-paths`

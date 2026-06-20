@@ -1,5 +1,5 @@
 /**
- * [app-api] Admin routes — /api/blocklist, /api/logs, /api/pool,
+ * [app-api] Admin routes — /api/blocklist, /api/logs, /api/sponsor-operations,
  * /api/sponsor-refill-account/withdraw, /api/settlement-swap-paths, /api/studio, /api/promotions*
  *
  * All routes are protected by requireAdminSession (JWT + not_before).
@@ -378,7 +378,7 @@ export function createAdminRoutes(getCtx: () => Promise<AppApiContext>) {
     }
   });
 
-  // ── GET /api/pool ─────────────────────────────────────────────────
+  // ── GET /api/sponsor-operations ─────────────────────────────────────────────────
   // Admin view. Sponsor operations fields are read from the shared Redis state
   // store. An awaited bounded sponsor refill account probe runs before the read so the
   // returned sponsor refill account balance is "fresh at return time" rather than
@@ -387,14 +387,14 @@ export function createAdminRoutes(getCtx: () => Promise<AppApiContext>) {
   // closed instead of serialising stale sponsor refill account data as if it were fresh.
   // `feeConfig` uses `relay.getConfig()` which is already TTL-cached in
   // core-api. Other fields are boot-derived constants.
-  app.get('/pool', async (c) => {
+  app.get('/sponsor-operations', async (c) => {
     try {
       const ctx = await getCtx();
       const relay = ctx.relay;
 
       // Await the bounded sponsor refill account probe here. Admin is not a hot path,
       // and awaiting keeps the returned sponsor refill account fields honest.
-      await ctx.sponsorOperations.probeSponsorRefillAccount('admin_pool');
+      await ctx.sponsorOperations.probeSponsorRefillAccount('admin_sponsor_operations');
 
       const [stateView, slotLeases] = await Promise.all([
         ctx.sponsorOperations.readState(),
