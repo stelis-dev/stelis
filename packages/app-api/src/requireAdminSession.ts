@@ -9,7 +9,7 @@
  */
 import type { Context } from 'hono';
 import { ADMIN_COOKIE, verifyAdminJwt } from './adminAuth.js';
-import type { AdminRedisClient } from '@stelis/core-api/admin';
+import type { AdminJwtConfig, AdminRedisClient } from '@stelis/core-api/admin';
 import type { AppApiContext } from './context.js';
 import { createAdminRedisAdapter } from './adminRedis.js';
 
@@ -28,10 +28,15 @@ export interface AdminSession {
 
 export async function requireAdminSessionFromContext(
   c: Context,
-  getCtx: () => Promise<AppApiContext>,
+  contextPromise: Promise<AppApiContext>,
+  jwtConfig: AdminJwtConfig | null,
 ): Promise<AdminSession | null> {
   try {
-    return await requireAdminSession(c, createAdminRedisAdapter((await getCtx()).redis));
+    return await requireAdminSession(
+      c,
+      createAdminRedisAdapter((await contextPromise).redis),
+      jwtConfig,
+    );
   } catch {
     return null;
   }
@@ -44,15 +49,18 @@ export async function requireAdminSessionFromContext(
 export async function requireAdminSession(
   c: Context,
   redis: AdminRedisClient,
+  jwtConfig: AdminJwtConfig | null,
 ): Promise<AdminSession | null> {
   try {
+    if (jwtConfig === null) return null;
+
     // Extract token from cookie
     const cookieHeader = c.req.header('cookie') ?? '';
     const match = cookieHeader.match(new RegExp(`(?:^|;)\\s*${ADMIN_COOKIE}=([^;]+)`));
     const token = match?.[1];
     if (!token) return null;
 
-    const session = await verifyAdminJwt(token);
+    const session = await verifyAdminJwt(token, jwtConfig);
     if (!session) return null;
     // iat, exp, and iatMs are already validated as finite numbers by verifyAdminJwt
 

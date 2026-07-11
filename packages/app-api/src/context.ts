@@ -1,28 +1,25 @@
 /**
- * [app-api] Runtime context creation — host-layer singleton.
+ * [app-api] Runtime context creation.
  *
- * Creates and caches a HostContext (generic) or StudioHostContext (dual mode)
+ * Creates a HostContext (generic) or StudioHostContext (dual mode)
  * using Redis-backed stores for multi-instance runtime operation.
  *
  * Shared references:
  *   - createHostContext → @stelis/core-api
- *   - resolvePrepareConfig, parseHostFeeEnv → @stelis/core-api/prepareConfig
+ *   - resolvePrepareConfig → @stelis/core-api/prepareConfig
  *   - Redis store adapters → @stelis/core-api (RedisPrepareStore, RedisSponsorPool, etc.)
  *   - Studio adapters → @stelis/core-api/studio
  *   - Sponsor operations → app-api/src/sponsor-operations/{bootstrap,redisState,sponsorResultStateUpdater,refillWorker,gate}
  *
  * Ownership rules:
- *   - process.env reads, Redis lifecycle, singleton → app-api (this file)
+ *   - process.env and config-file reads → boot.ts
+ *   - Redis lifecycle and runtime assembly → app-api (this file)
  *   - domain factories, store interfaces → core-api
  *
- * Race condition prevention:
- *   Uses _ctxPromise (not _ctx) so concurrent cold-start requests share
- *   the same initialization promise.
+ * createApp owns the single context promise and injects it into routes.
  */
 import {
   createHostContext,
-  parseSponsorKey,
-  parseSponsorKeys,
   RedisPrepareStore,
   RedisSponsorPool,
   RedisRateLimiter,
@@ -32,10 +29,8 @@ import {
   type HostContext,
   type PreparedTxEntry,
 } from '@stelis/core-api';
-import { STELIS_CONTRACT_IDS, DEEPBOOK_IDS } from '@stelis/contracts';
 import { executeSponsorSlotRefill } from './sponsor-operations/executeRefill.js';
 import { createSponsorOperationsRefillWorker } from './sponsor-operations/refillWorker.js';
-import { SPONSOR_BALANCE_WARN_MIST } from './sponsor-operations/defaults.js';
 import { createRedisSponsorOperationsState } from './sponsor-operations/redisState.js';
 import { createSponsorResultStateUpdater } from './sponsor-operations/sponsorResultStateUpdater.js';
 import { RedisSponsoredLogsStore } from './sponsoredLogs/redisStore.js';
@@ -51,7 +46,6 @@ import { parseChainBalanceMist } from './sponsor-operations/balanceParsing.js';
 import {
   createPrepareSettlementSwapPathDescriptorMap,
   resolvePrepareConfig,
-  parseHostFeeEnv,
 } from '@stelis/core-api/prepareConfig';
 import {
   logStructuredEvent,
@@ -59,11 +53,7 @@ import {
   PREPARE_STORE_EVICT_CLEANUP_THREW,
 } from '@stelis/core-api/observability';
 import type { StudioHostContext, DeveloperJwtTrustConfig } from '@stelis/core-api/studio';
-import {
-  RedisPromotionStore,
-  hashTargets,
-  parseDeveloperJwtTrustConfig,
-} from '@stelis/core-api/studio';
+import { RedisPromotionStore } from '@stelis/core-api/studio';
 import type {
   PromotionStoreAdapter,
   PromotionUsageStoreAdapter,
@@ -71,17 +61,11 @@ import type {
 } from '@stelis/core-api/studio';
 import { RedisPromotionUsageStore, RedisPromotionExecutionLedger } from '@stelis/core-api/studio';
 import type { SuiGrpcClient } from '@mysten/sui/grpc';
-import {
-  requireEnv,
-  parseOptionalBooleanEnv,
-  parseOptionalPositiveBigIntEnv,
-  parseOptionalPositiveIntegerEnv,
-  parseRequiredPositiveIntegerEnv,
-} from './env.js';
+import type { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { createRedisClient, type RedisClient } from './redisClient.js';
 import {
-  getSettlementSwapPathRegistryPath,
-  loadSettlementSwapPathRegistry,
+  resolveSettlementSwapPathRegistry,
+  type ParsedSettlementSwapPathRegistryEntry,
 } from './settlementSwapPathRegistry.js';
 
 const APP_API_RATE_LIMIT_WINDOW_MS = 60_000;
@@ -116,8 +100,6 @@ export interface AppApiContext {
   developerJwtVerifyUrl: string | null;
   /** Failover transport — always present for admin RPC fleet snapshots. */
   failoverTransport: import('./sui/failoverTransport.js').SuiRpcFailoverTransport;
-  /** Configured endpoint URLs (safe for admin — no auth metadata). */
-  rpcEndpointUrls: string[];
   /** Redis client (for admin, rate-limit, etc.) */
   redis: RedisClient;
   /** Sponsor operations runtime — shared-state reader + sponsor refill account probe + refill queue. */
@@ -162,64 +144,48 @@ export interface AppSponsorOperations {
   dispose(): void;
 }
 
-// ── Singleton (Promise-based to prevent race conditions) ─────────────
-
-/**
- * Stores a Promise<AppApiContext> (not AppApiContext | null) so that:
- *   1. Initialization runs exactly once under concurrent cold-start.
- *   2. All parallel callers await the same promise.
- *   3. After resolution, subsequent calls return already-resolved promise.
- */
-let _ctxPromise: Promise<AppApiContext> | null = null;
-
-/**
- * Shared SuiGrpcClient injected by boot. Must be set before getCtx() is called.
- * This ensures boot probe, settlement swap path registry load, and relay context all use the
- * same multi-endpoint client and endpoint selection path.
- */
-let _sharedSuiClient: SuiGrpcClient | null = null;
-let _sharedFailoverTransport: import('./sui/failoverTransport.js').SuiRpcFailoverTransport | null =
-  null;
-let _sharedRpcEndpointUrls: string[] = [];
-
-/** Set the shared Sui client, transport, and endpoint URLs from boot result. Call once before getCtx(). */
-export function setSharedSuiClient(
-  client: SuiGrpcClient,
-  failoverTransport: import('./sui/failoverTransport.js').SuiRpcFailoverTransport,
-  rpcEndpointUrls: string[],
-): void {
-  _sharedSuiClient = client;
-  _sharedFailoverTransport = failoverTransport;
-  _sharedRpcEndpointUrls = rpcEndpointUrls;
-}
-
-/**
- * Lazily creates and caches the runtime context.
- * Must only be called after boot validation has passed.
- */
-export async function getCtx(): Promise<AppApiContext> {
-  if (!_sharedSuiClient || !_sharedFailoverTransport) {
-    throw new Error(
-      '[app-api] Shared Sui client not set. Call setSharedSuiClient() from boot before getCtx().',
-    );
-  }
-  if (!_ctxPromise) {
-    _ctxPromise = initContext().catch((err) => {
-      // Reset on failure so next call retries instead of returning stale rejection
-      _ctxPromise = null;
-      throw err;
-    });
-  }
-  return _ctxPromise;
+export interface ContextRuntimeInput {
+  readonly redisUrl: string;
+  readonly network: 'testnet' | 'mainnet';
+  readonly contractIds: {
+    readonly packageId: string;
+    readonly configId: string;
+    readonly vaultRegistryId: string;
+  };
+  readonly deepbookPackageId: string;
+  readonly suiClient: SuiGrpcClient;
+  readonly failoverTransport: import('./sui/failoverTransport.js').SuiRpcFailoverTransport;
+  readonly settlementSwapPathRegistryEntries: readonly ParsedSettlementSwapPathRegistryEntry[];
+  readonly sponsorKeys: readonly Ed25519Keypair[];
+  readonly sponsorLeaseHmacSecret: string;
+  readonly settlementPayoutRecipientAddress: string;
+  readonly quotedHostFeeMist: bigint;
+  readonly prepareInflightCapacity: number;
+  readonly sponsorOperations: {
+    readonly sponsorRefillAccountKey: Ed25519Keypair;
+    readonly sponsorRefillAccountAddress: string;
+    readonly refillEnabled: boolean;
+    readonly refillTargetMist: bigint | null;
+    readonly warnMist: bigint;
+    readonly slotBalanceTimeoutMs: number;
+    readonly sponsorRefillAccountBalanceTimeoutMs: number;
+    readonly refillTimeoutMs: number;
+    readonly confirmationTimeoutMs: number;
+  };
+  readonly studio: {
+    readonly globalTargetHashes: Set<string>;
+    readonly developerJwtTrustConfig: DeveloperJwtTrustConfig;
+    readonly developerJwtVerifyUrl: string | null;
+  } | null;
 }
 
 /**
  * Internal initialization — creates all resources.
  * Wrapped in try/catch for resource cleanup on partial failure.
  */
-async function initContext(): Promise<AppApiContext> {
+export async function createContext(input: ContextRuntimeInput): Promise<AppApiContext> {
   // ── 1. Redis ──────────────────────────────────────────────────────
-  const redis = await createRedisClient(requireEnv('REDIS_URL'));
+  const redis = await createRedisClient(input.redisUrl);
 
   // Track disposable resources for cleanup on partial failure
   let host: HostContext | null = null;
@@ -227,12 +193,11 @@ async function initContext(): Promise<AppApiContext> {
 
   try {
     // ── 2. Network + Contract IDs ───────────────────────────────────
-    const network = requireEnv('NETWORK') as 'testnet' | 'mainnet';
-    const contractIds = STELIS_CONTRACT_IDS[network]!;
-    const deepbookIds = DEEPBOOK_IDS[network]!;
+    const network = input.network;
+    const contractIds = input.contractIds;
 
     // ── 3. Sponsor keys ─────────────────────────────────────────────
-    const sponsorKeys = parseSponsorKeys(requireEnv('SPONSOR_SECRET_KEY'));
+    const sponsorKeys = [...input.sponsorKeys];
     // `RedisSponsorPool` fences slot signing with
     // `HMAC(secret, receiptId || slotId || commitDigest)`
     // where `commitDigest` is `":reserved"` at `checkout()` and the
@@ -244,10 +209,10 @@ async function initContext(): Promise<AppApiContext> {
     // stored HMAC references the original commit digest.
     //
     // Boot validation has already enforced `SPONSOR_LEASE_HMAC_SECRET`
-    // (≥32 chars); this read exposes the value so the pool can
-    // bind it to the HMAC helper. The secret lives in process env
-    // only — never in Redis, never in logs, never in prepare entries.
-    const sponsorLeaseHmacSecret = requireEnv('SPONSOR_LEASE_HMAC_SECRET');
+    // (≥32 chars) and retained it only in the internal runtime input so
+    // the pool can bind it to the HMAC helper. It is never returned by
+    // createApp, stored in Redis, logged, or copied into prepare entries.
+    const sponsorLeaseHmacSecret = input.sponsorLeaseHmacSecret;
     const sponsorPool = new RedisSponsorPool(redis, sponsorKeys, {
       hmacSecret: sponsorLeaseHmacSecret,
     });
@@ -299,14 +264,11 @@ async function initContext(): Promise<AppApiContext> {
     const prepareRequestNonceStore = new RedisPrepareRequestNonceStore(redis);
 
     // ── 5. Settlement swap path registry (on-chain derivation) ──────
-    // _sharedSuiClient is guaranteed non-null here — getCtx() checks before calling initContext().
-    const suiClient = _sharedSuiClient!;
-    const settlementSwapPathRegistryPath = getSettlementSwapPathRegistryPath();
-    const settlementSwapPaths = await loadSettlementSwapPathRegistry(
+    const suiClient = input.suiClient;
+    const settlementSwapPaths = await resolveSettlementSwapPathRegistry(
       suiClient,
-      deepbookIds.packageId,
-      settlementSwapPathRegistryPath,
-      network,
+      input.deepbookPackageId,
+      input.settlementSwapPathRegistryEntries,
     );
     const settlementSwapPathDescriptors =
       createPrepareSettlementSwapPathDescriptorMap(settlementSwapPaths);
@@ -320,19 +282,15 @@ async function initContext(): Promise<AppApiContext> {
     const prepareConfig = resolvePrepareConfig({
       settlementSwapPaths,
       descriptors: settlementSwapPathDescriptors,
-      deepbookPackageId: deepbookIds.packageId,
-      quotedHostFeeMist: parseHostFeeEnv(process.env.HOST_FEE_MIST),
+      deepbookPackageId: input.deepbookPackageId,
+      quotedHostFeeMist: input.quotedHostFeeMist,
     });
 
     // ── 7. Prepare in-flight limiter (Redis-backed, shared across app instances) ──
     // Explicit injection — official runtime must not fall back to
     // MemoryPrepareInflight. The default preserves the existing
     // sponsor-slot-based capacity heuristic.
-    const prepareInflightCapacity =
-      parseOptionalPositiveIntegerEnv(
-        'PREPARE_INFLIGHT_CAPACITY',
-        process.env.PREPARE_INFLIGHT_CAPACITY,
-      ) ?? sponsorPool.size * 2;
+    const prepareInflightCapacity = input.prepareInflightCapacity;
     const prepareInflightLimiter = new RedisPrepareInflight(redis, prepareInflightCapacity);
 
     // ── 8. Create base HostContext ───────────────────────────────
@@ -345,8 +303,8 @@ async function initContext(): Promise<AppApiContext> {
       vaultRegistryId: contractIds.vaultRegistryId,
       // DeepBook published storage/call-target ID used by quote and PTB paths.
       // MoveAbort classification uses the distinct compiled runtime identity.
-      deepbookPackageId: deepbookIds.packageId,
-      settlementPayoutRecipientAddress: requireEnv('SETTLEMENT_PAYOUT_RECIPIENT_ADDRESS'),
+      deepbookPackageId: input.deepbookPackageId,
+      settlementPayoutRecipientAddress: input.settlementPayoutRecipientAddress,
       sponsorPool,
       prepareStore,
       prepareRequestNonceStore,
@@ -360,60 +318,23 @@ async function initContext(): Promise<AppApiContext> {
     await host.warmUp();
 
     // NOTE: NOT_BEFORE_KEY is set in boot.ts only (not here).
-    // Context init is lazy (first request) — re-setting not_before here
-    // would invalidate admin sessions issued between boot and first relay request.
+    // createApp eagerly awaits context initialization. Re-setting not_before
+    // here would still create a second authority for session invalidation.
 
     // ── 10. Sponsor Refill Account + SponsorOperations ───────────────────────────────
-    const sponsorRefillAccountKey = parseSponsorKey(
-      requireEnv('SPONSOR_REFILL_ACCOUNT_SECRET_KEY'),
-      'SPONSOR_REFILL_ACCOUNT_SECRET_KEY',
-    );
-    const sponsorRefillAccountAddress = sponsorRefillAccountKey.toSuiAddress();
+    const sponsorRefillAccountKey = input.sponsorOperations.sponsorRefillAccountKey;
+    const sponsorRefillAccountAddress = input.sponsorOperations.sponsorRefillAccountAddress;
     const sponsorAddresses = sponsorPool.addresses();
 
-    const refillEnabled =
-      parseOptionalBooleanEnv(
-        'SPONSOR_OPERATIONS_REFILL_ENABLED',
-        process.env.SPONSOR_OPERATIONS_REFILL_ENABLED,
-      ) ?? false;
-    const refillTargetMist = parseOptionalPositiveBigIntEnv(
-      'SPONSOR_BALANCE_REFILL_TARGET_MIST',
-      process.env.SPONSOR_BALANCE_REFILL_TARGET_MIST,
-    );
-    const warnMist =
-      parseOptionalPositiveBigIntEnv(
-        'SPONSOR_BALANCE_WARN_MIST',
-        process.env.SPONSOR_BALANCE_WARN_MIST,
-      ) ?? SPONSOR_BALANCE_WARN_MIST;
-
-    // Strict-injection env: four SPONSOR_OPERATIONS_*_MS budgets are required with no
-    // code-side default. `docs/parameters.md` documents them as deployment-
-    // defined required env values, so operators choose them at deploy time and
-    // boot fails closed if any variable is missing or invalid.
-    const parseRequiredPosIntEnv = (name: string, raw: string | undefined): number => {
-      if (raw === undefined || raw === '') {
-        throw new Error(
-          `[app-api] ${name} is required (see docs/parameters.md Sponsor Operations settings)`,
-        );
-      }
-      return parseRequiredPositiveIntegerEnv(name, raw);
-    };
-    const slotBalanceTimeoutMs = parseRequiredPosIntEnv(
-      'SPONSOR_OPERATIONS_SLOT_BALANCE_TIMEOUT_MS',
-      process.env.SPONSOR_OPERATIONS_SLOT_BALANCE_TIMEOUT_MS,
-    );
-    const sponsorRefillAccountBalanceTimeoutMs = parseRequiredPosIntEnv(
-      'SPONSOR_OPERATIONS_SPONSOR_REFILL_ACCOUNT_BALANCE_TIMEOUT_MS',
-      process.env.SPONSOR_OPERATIONS_SPONSOR_REFILL_ACCOUNT_BALANCE_TIMEOUT_MS,
-    );
-    const refillTimeoutMs = parseRequiredPosIntEnv(
-      'SPONSOR_OPERATIONS_REFILL_TIMEOUT_MS',
-      process.env.SPONSOR_OPERATIONS_REFILL_TIMEOUT_MS,
-    );
-    const confirmationTimeoutMs = parseRequiredPosIntEnv(
-      'SPONSOR_OPERATIONS_CONFIRMATION_TIMEOUT_MS',
-      process.env.SPONSOR_OPERATIONS_CONFIRMATION_TIMEOUT_MS,
-    );
+    const {
+      refillEnabled,
+      refillTargetMist,
+      warnMist,
+      slotBalanceTimeoutMs,
+      sponsorRefillAccountBalanceTimeoutMs,
+      refillTimeoutMs,
+      confirmationTimeoutMs,
+    } = input.sponsorOperations;
 
     // ── 8b. Redis-shared sponsor operations state store ───────────────
     // Single writer path for slot + sponsor refill account operational state. All writes go through
@@ -579,14 +500,9 @@ async function initContext(): Promise<AppApiContext> {
     // ── 9. Studio context ────────────────────────────────────────────
     // Studio auth uses developer JWT trust (STUDIO_DEVELOPER_JWT_TRUST_JSON).
     let studio: StudioHostContext | null = null;
-    const studioEnvComplete = [
-      'ADMIN_JWT_SECRET',
-      'ADMIN_ADDRESS',
-      'STUDIO_ALLOWED_TARGETS',
-      'STUDIO_DEVELOPER_JWT_TRUST_JSON',
-    ].every((k) => !!process.env[k]?.trim());
+    const studioEnabled = input.studio !== null;
 
-    if (studioEnvComplete) {
+    if (studioEnabled) {
       studio = {
         ...host,
         prepareConfig,
@@ -600,30 +516,21 @@ async function initContext(): Promise<AppApiContext> {
     // Pre-compute sha256 hashes of STUDIO_ALLOWED_TARGETS entries at boot.
     // Used by Studio prepare/sponsor sponsored execution policies for global MoveCall target enforcement.
     let studioGlobalTargetHashes: Set<string> | null = null;
-    if (studioEnvComplete) {
-      const rawTargets = requireEnv('STUDIO_ALLOWED_TARGETS')
-        .split(',')
-        .map((t) => t.trim())
-        .filter(Boolean);
-      studioGlobalTargetHashes = new Set(hashTargets(rawTargets));
-    }
+    if (input.studio) studioGlobalTargetHashes = input.studio.globalTargetHashes;
 
     // ── 9b3. Developer JWT trust config ───────────────────────────────
     let developerJwtTrustConfig: DeveloperJwtTrustConfig | null = null;
     let developerJwtVerifyUrl: string | null = null;
-    if (studioEnvComplete) {
-      const trustJsonEnv = process.env.STUDIO_DEVELOPER_JWT_TRUST_JSON?.trim();
-      if (trustJsonEnv) {
-        developerJwtTrustConfig = parseDeveloperJwtTrustConfig(trustJsonEnv);
-      }
-      developerJwtVerifyUrl = process.env.STUDIO_DEVELOPER_JWT_VERIFY_URL?.trim() || null;
+    if (input.studio) {
+      developerJwtTrustConfig = input.studio.developerJwtTrustConfig;
+      developerJwtVerifyUrl = input.studio.developerJwtVerifyUrl;
     }
 
     // ── 9. Promotion stores ──────────────────────────────────────────
     let promotionStore: PromotionStoreAdapter | null = null;
     let usageStore: PromotionUsageStoreAdapter | null = null;
     let executionLedger: PromotionExecutionLedger | null = null;
-    if (studioEnvComplete) {
+    if (studioEnabled) {
       const redisPromotionStore = new RedisPromotionStore(redis);
       promotionStore = redisPromotionStore;
       usageStore = new RedisPromotionUsageStore(redis);
@@ -656,8 +563,7 @@ async function initContext(): Promise<AppApiContext> {
       studioGlobalTargetHashes,
       developerJwtTrustConfig,
       developerJwtVerifyUrl,
-      failoverTransport: _sharedFailoverTransport!,
-      rpcEndpointUrls: _sharedRpcEndpointUrls,
+      failoverTransport: input.failoverTransport,
       redis,
       sponsorOperations: sponsorOperationsRef,
       sponsoredLogsStore,
@@ -666,7 +572,6 @@ async function initContext(): Promise<AppApiContext> {
         hostRef.dispose();
         sponsorOperationsRef.dispose();
         await redis.dispose();
-        _ctxPromise = null;
       },
     };
   } catch (err) {
@@ -676,9 +581,4 @@ async function initContext(): Promise<AppApiContext> {
     await redis.dispose();
     throw err;
   }
-}
-
-/** Reset context — for testing. */
-export function resetCtx(): void {
-  _ctxPromise = null;
 }

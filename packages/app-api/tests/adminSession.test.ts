@@ -4,7 +4,7 @@
  * These tests exercise the REAL adminAuth + requireAdminSession implementation
  * with a mocked Redis layer — no mock on the module under test itself.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { afterEach, describe, it, expect, vi, beforeEach } from 'vitest';
 import { Hono } from 'hono';
 
 // ── Mock Redis only ─────────────────────────────────────────────────────────
@@ -21,19 +21,17 @@ const { mockRedis } = vi.hoisted(() => ({
   },
 }));
 
-// ── Mock env ────────────────────────────────────────────────────────────────
 const TEST_JWT_SECRET = 'test-admin-jwt-secret-at-least-32-chars!!';
-
-vi.mock('../src/env.js', () => ({
-  requireEnv: vi.fn().mockImplementation((key: string) => {
-    const vals: Record<string, string> = {
-      REDIS_URL: 'redis://localhost:6379',
-      ADMIN_JWT_SECRET: TEST_JWT_SECRET,
-    };
-    if (vals[key]) return vals[key];
-    throw new Error(`Missing: ${key}`);
-  }),
-}));
+const TEST_JWT_CONFIG = {
+  jwtSecret: TEST_JWT_SECRET,
+  sessionExpiry: '1h',
+  issuer: 'app-api',
+} as const;
+const TEST_COOKIE_CONFIG = {
+  maxAgeSeconds: 3600,
+  secure: false,
+  domain: null,
+} as const;
 
 // ── Import REAL modules (not mocked) ────────────────────────────────────────
 import {
@@ -43,6 +41,10 @@ import {
   buildAuthCookieHeader,
 } from '../src/adminAuth.js';
 import { requireAdminSession, NOT_BEFORE_KEY } from '../src/requireAdminSession.js';
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 // ────────────────────────────────────────────────────────────────────────────
 // § 1. Constant verification
@@ -62,15 +64,15 @@ describe('admin session policy constants', () => {
 // ────────────────────────────────────────────────────────────────────────────
 describe('issuer boundary', () => {
   it('signAdminJwt embeds issuer = app-api', async () => {
-    const token = await signAdminJwt('0xADMIN');
+    const token = await signAdminJwt('0xADMIN', TEST_JWT_CONFIG);
     // Decode payload (base64url)
     const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString());
     expect(payload.iss).toBe('app-api');
   });
 
   it('verifyAdminJwt accepts token with issuer app-api', async () => {
-    const token = await signAdminJwt('0xADMIN');
-    const session = await verifyAdminJwt(token);
+    const token = await signAdminJwt('0xADMIN', TEST_JWT_CONFIG);
+    const session = await verifyAdminJwt(token, TEST_JWT_CONFIG);
     expect(session).not.toBeNull();
     expect(session!.address).toBe('0xADMIN');
   });
@@ -89,7 +91,7 @@ describe('issuer boundary', () => {
       .setIssuer('wrong-issuer')
       .sign(secret);
 
-    const session = await verifyAdminJwt(token);
+    const session = await verifyAdminJwt(token, TEST_JWT_CONFIG);
     expect(session).toBeNull();
   });
 
@@ -106,8 +108,22 @@ describe('issuer boundary', () => {
       // No issuer set
       .sign(secret);
 
-    const session = await verifyAdminJwt(token);
+    const session = await verifyAdminJwt(token, TEST_JWT_CONFIG);
     expect(session).toBeNull();
+  });
+
+  it('keeps using the injected JWT and cookie snapshot after environment mutation', async () => {
+    const token = await signAdminJwt('0xADMIN', TEST_JWT_CONFIG);
+
+    vi.stubEnv('ADMIN_JWT_SECRET', 'different-admin-jwt-secret-at-least-32-chars');
+    vi.stubEnv('ADMIN_SESSION_EXPIRY', '1s');
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('COOKIE_DOMAIN', '.changed.example');
+
+    await expect(verifyAdminJwt(token, TEST_JWT_CONFIG)).resolves.toMatchObject({
+      address: '0xADMIN',
+    });
+    expect(buildAuthCookieHeader(token, TEST_COOKIE_CONFIG)).not.toMatch(/Secure|Domain=/);
   });
 });
 
@@ -122,14 +138,14 @@ describe('cookie parsing', () => {
     app = new Hono();
     // Test route that exercises requireAdminSession directly
     app.get('/test-session', async (c) => {
-      const session = await requireAdminSession(c, mockRedis);
+      const session = await requireAdminSession(c, mockRedis, TEST_JWT_CONFIG);
       if (!session) return c.json({ ok: false }, 401);
       return c.json({ ok: true, address: session.address });
     });
   });
 
   it('extracts token from stelis_admin cookie', async () => {
-    const token = await signAdminJwt('0xADMIN');
+    const token = await signAdminJwt('0xADMIN', TEST_JWT_CONFIG);
     const now = Date.now();
     mockRedis.get.mockImplementation(async (key: string) => {
       if (key === NOT_BEFORE_KEY) return String(now - 1000);
@@ -145,7 +161,7 @@ describe('cookie parsing', () => {
   });
 
   it('ignores token in wrong cookie name', async () => {
-    const token = await signAdminJwt('0xADMIN');
+    const token = await signAdminJwt('0xADMIN', TEST_JWT_CONFIG);
     mockRedis.get.mockResolvedValue(String(Date.now() - 1000));
 
     // Use a different cookie name
@@ -156,7 +172,7 @@ describe('cookie parsing', () => {
   });
 
   it('rejects token in wrong cookie name (stelis_main_admin)', async () => {
-    const token = await signAdminJwt('0xADMIN');
+    const token = await signAdminJwt('0xADMIN', TEST_JWT_CONFIG);
     mockRedis.get.mockResolvedValue(String(Date.now() - 1000));
 
     const res = await app.request('/test-session', {
@@ -171,7 +187,7 @@ describe('cookie parsing', () => {
   });
 
   it('buildAuthCookieHeader uses stelis_admin cookie name', () => {
-    const header = buildAuthCookieHeader('jwt-token-here');
+    const header = buildAuthCookieHeader('jwt-token-here', TEST_COOKIE_CONFIG);
     expect(header).toMatch(/^stelis_admin=jwt-token-here/);
     expect(header).toContain('HttpOnly');
     expect(header).toContain('SameSite=Strict');
@@ -188,14 +204,14 @@ describe('not_before enforcement', () => {
     vi.clearAllMocks();
     app = new Hono();
     app.get('/test-session', async (c) => {
-      const session = await requireAdminSession(c, mockRedis);
+      const session = await requireAdminSession(c, mockRedis, TEST_JWT_CONFIG);
       if (!session) return c.json({ ok: false }, 401);
       return c.json({ ok: true, address: session.address });
     });
   });
 
   it('accepts session when iatMs >= not_before', async () => {
-    const token = await signAdminJwt('0xADMIN');
+    const token = await signAdminJwt('0xADMIN', TEST_JWT_CONFIG);
     const now = Date.now();
     // not_before is in the past → session should be accepted
     mockRedis.get.mockImplementation(async (key: string) => {
@@ -210,7 +226,7 @@ describe('not_before enforcement', () => {
   });
 
   it('rejects session when iatMs < not_before (server restarted)', async () => {
-    const token = await signAdminJwt('0xADMIN');
+    const token = await signAdminJwt('0xADMIN', TEST_JWT_CONFIG);
     // not_before is in the future → session issued before restart
     mockRedis.get.mockImplementation(async (key: string) => {
       if (key === NOT_BEFORE_KEY) return String(Date.now() + 60000);
@@ -224,7 +240,7 @@ describe('not_before enforcement', () => {
   });
 
   it('reads from the correct Redis key (stelis:app-api:admin:not_before)', async () => {
-    const token = await signAdminJwt('0xADMIN');
+    const token = await signAdminJwt('0xADMIN', TEST_JWT_CONFIG);
     mockRedis.get.mockResolvedValue(String(Date.now() - 1000));
 
     await app.request('/test-session', {
@@ -239,7 +255,7 @@ describe('not_before enforcement', () => {
   });
 
   it('rejects unsafe integer not_before values', async () => {
-    const token = await signAdminJwt('0xADMIN');
+    const token = await signAdminJwt('0xADMIN', TEST_JWT_CONFIG);
     mockRedis.get.mockResolvedValue('9007199254740993');
 
     const res = await app.request('/test-session', {
@@ -259,14 +275,14 @@ describe('fail-closed behavior', () => {
     vi.clearAllMocks();
     app = new Hono();
     app.get('/test-session', async (c) => {
-      const session = await requireAdminSession(c, mockRedis);
+      const session = await requireAdminSession(c, mockRedis, TEST_JWT_CONFIG);
       if (!session) return c.json({ ok: false }, 401);
       return c.json({ ok: true, address: session.address });
     });
   });
 
   it('rejects when Redis not_before key is missing (null)', async () => {
-    const token = await signAdminJwt('0xADMIN');
+    const token = await signAdminJwt('0xADMIN', TEST_JWT_CONFIG);
     mockRedis.get.mockResolvedValue(null);
 
     const res = await app.request('/test-session', {
@@ -276,7 +292,7 @@ describe('fail-closed behavior', () => {
   });
 
   it('rejects when not_before value is non-numeric', async () => {
-    const token = await signAdminJwt('0xADMIN');
+    const token = await signAdminJwt('0xADMIN', TEST_JWT_CONFIG);
     mockRedis.get.mockImplementation(async (key: string) => {
       if (key === NOT_BEFORE_KEY) return 'not-a-number';
       return null;
@@ -289,7 +305,7 @@ describe('fail-closed behavior', () => {
   });
 
   it('rejects when not_before value has trailing characters (parseInt abuse)', async () => {
-    const token = await signAdminJwt('0xADMIN');
+    const token = await signAdminJwt('0xADMIN', TEST_JWT_CONFIG);
     mockRedis.get.mockImplementation(async (key: string) => {
       // parseInt('123abc') = 123, but /^\d+$/ rejects
       if (key === NOT_BEFORE_KEY) return '123abc';
@@ -303,7 +319,7 @@ describe('fail-closed behavior', () => {
   });
 
   it('rejects when Redis throws (connection failure)', async () => {
-    const token = await signAdminJwt('0xADMIN');
+    const token = await signAdminJwt('0xADMIN', TEST_JWT_CONFIG);
     mockRedis.get.mockRejectedValue(new Error('Redis connection reset'));
 
     const res = await app.request('/test-session', {

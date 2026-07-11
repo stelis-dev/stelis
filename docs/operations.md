@@ -159,6 +159,10 @@ Optional refill variables:
 - `SPONSOR_OPERATIONS_REFILL_ENABLED`
 - `SPONSOR_BALANCE_REFILL_TARGET_MIST`
 
+When `SPONSOR_OPERATIONS_REFILL_ENABLED=true`,
+`SPONSOR_BALANCE_REFILL_TARGET_MIST` is required and must be greater than
+`SPONSOR_BALANCE_WARN_MIST`.
+
 `HOST_FEE_MIST` is optional. When unset, the quoted host fee defaults to zero.
 `PREPARE_INFLIGHT_CAPACITY` is optional. When set, it must be a positive integer and becomes the shared prepare in-flight capacity for one Redis write authority.
 

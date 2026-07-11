@@ -14,8 +14,9 @@ const {
   mockRequireAdminSessionFromContext,
   mockCheckAndIncrementAdminOperationAttempt,
   mockVerifySignedMessage,
-  mockParseSponsorKey,
   mockReadJsonBodyWithLimit,
+  mockResolveClientIp,
+  mockSponsorRefillAccountKey,
 } = vi.hoisted(() => ({
   mockRedis: {
     get: vi.fn(),
@@ -30,8 +31,12 @@ const {
   mockRequireAdminSessionFromContext: vi.fn(),
   mockCheckAndIncrementAdminOperationAttempt: vi.fn(),
   mockVerifySignedMessage: vi.fn(),
-  mockParseSponsorKey: vi.fn(),
   mockReadJsonBodyWithLimit: vi.fn(),
+  mockResolveClientIp: vi.fn(),
+  mockSponsorRefillAccountKey: {
+    toSuiAddress: vi.fn(),
+    signAndExecuteTransaction: vi.fn(),
+  },
 }));
 
 vi.mock('@stelis/core-api/admin', () => ({
@@ -43,33 +48,10 @@ vi.mock('../src/requireAdminSession.js', () => ({
   requireAdminSessionFromContext: mockRequireAdminSessionFromContext,
 }));
 
-vi.mock('../src/clientIp.js', () => ({
-  getClientIp: vi.fn().mockReturnValue('127.0.0.1'),
-}));
-
-vi.mock('../src/env.js', () => ({
-  requireEnv: vi.fn().mockImplementation((key: string) => {
-    const vals: Record<string, string> = {
-      REDIS_URL: 'redis://localhost:6379',
-      ADMIN_ADDRESS: '0x' + 'a'.repeat(64),
-      SPONSOR_REFILL_ACCOUNT_SECRET_KEY: 'test-sponsor-refill-account-secret-key',
-    };
-    if (vals[key]) return vals[key];
-    throw new Error(`Missing: ${key}`);
-  }),
-  parseOptionalBooleanEnv: vi.fn().mockReturnValue(false),
-  parseOptionalPositiveBigIntEnv: vi
-    .fn()
-    .mockImplementation((_key: string, raw: string | undefined) =>
-      raw == null || raw.trim() === '' ? undefined : BigInt(raw),
-    ),
-}));
-
 vi.mock('@stelis/core-api', async () => {
   const actual = await vi.importActual('@stelis/core-api');
   return {
     ...actual,
-    parseSponsorKey: mockParseSponsorKey,
     readJsonBodyWithLimit: mockReadJsonBodyWithLimit,
   };
 });
@@ -89,9 +71,32 @@ vi.mock('@mysten/sui/transactions', () => {
   return { Transaction: MockTransaction };
 });
 
-import { createAdminRoutes } from '../src/routes/admin.js';
+import { createAdminRoutes, type AdminRoutesRuntimeInput } from '../src/routes/admin.js';
 import type { AppApiContext } from '../src/context.js';
 import { ADMIN_AUDIT_LOG_KEY } from '../src/adminAuditLog.js';
+
+const ADMIN_ADDRESS = '0x' + 'a'.repeat(64);
+const SPONSOR_REFILL_ACCOUNT_ADDRESS = '0x' + '55'.repeat(32);
+
+function createAdminRuntime(
+  overrides: Partial<AdminRoutesRuntimeInput> = {},
+): AdminRoutesRuntimeInput {
+  return {
+    resolveClientIp: mockResolveClientIp,
+    adminAddress: ADMIN_ADDRESS,
+    adminJwt: {
+      jwtSecret: 'x'.repeat(32),
+      sessionExpiry: '1h',
+      issuer: 'app-api',
+    },
+    sponsorRefillAccountKey: mockSponsorRefillAccountKey as never,
+    sponsorRefillAccountAddress: SPONSOR_REFILL_ACCOUNT_ADDRESS,
+    refillEnabled: false,
+    warnMist: 5_000_000_000n,
+    refillTargetMist: 10_000_000_000n,
+    ...overrides,
+  };
+}
 
 function clientIpResolutionError(): Error {
   return Object.assign(new Error('Client IP could not be resolved'), {
@@ -174,7 +179,6 @@ function createMockCtx(): AppApiContext {
         healthyEndpoints: 1,
       }),
     },
-    rpcEndpointUrls: ['https://fullnode.testnet.sui.io:443'],
     redis: mockRedis as never,
     sponsorOperations: {
       // Default returns a healthy single-slot state. Individual tests
@@ -248,10 +252,14 @@ function resetMockDefaults(): void {
     iatMs: 1000000,
   });
 
+  // Boot-snapshotted request inputs
+  mockResolveClientIp.mockReset();
+  mockResolveClientIp.mockReturnValue('127.0.0.1');
+  mockSponsorRefillAccountKey.toSuiAddress.mockReset();
+  mockSponsorRefillAccountKey.toSuiAddress.mockReturnValue(SPONSOR_REFILL_ACCOUNT_ADDRESS);
+  mockSponsorRefillAccountKey.signAndExecuteTransaction.mockReset();
+
   // core-api
-  mockParseSponsorKey.mockReturnValue({
-    toSuiAddress: () => '0xSPONSOR_REFILL_ACCOUNT_ADDRESS',
-  });
   mockReadJsonBodyWithLimit.mockImplementation(async (req: Request) => {
     const text = await req.text();
     return JSON.parse(text);
@@ -261,13 +269,16 @@ function resetMockDefaults(): void {
 describe('admin routes', () => {
   let app: Hono;
   let mockCtx: AppApiContext;
+  let mountedContextPromise: Promise<AppApiContext>;
+  let mountedRuntime: AdminRoutesRuntimeInput;
 
   beforeEach(() => {
     vi.clearAllMocks();
     resetMockDefaults();
     mockCtx = createMockCtx();
-    const getCtx = async () => mockCtx;
-    const routes = createAdminRoutes(getCtx);
+    mountedContextPromise = Promise.resolve(mockCtx);
+    mountedRuntime = createAdminRuntime();
+    const routes = createAdminRoutes(mountedContextPromise, mountedRuntime);
     app = new Hono();
     app.route('/api', routes);
   });
@@ -277,6 +288,11 @@ describe('admin routes', () => {
       mockRequireAdminSessionFromContext.mockResolvedValueOnce(null);
       const res = await app.request('/api/blocklist');
       expect(res.status).toBe(401);
+      expect(mockRequireAdminSessionFromContext).toHaveBeenCalledWith(
+        expect.anything(),
+        mountedContextPromise,
+        mountedRuntime.adminJwt,
+      );
     });
   });
 
@@ -510,8 +526,7 @@ describe('admin routes', () => {
     });
 
     it('returns 400 without issuing a nonce when client IP cannot be resolved', async () => {
-      const { getClientIp } = await import('../src/clientIp.js');
-      vi.mocked(getClientIp).mockImplementationOnce(() => {
+      mockResolveClientIp.mockImplementationOnce(() => {
         throw clientIpResolutionError();
       });
 
@@ -618,8 +633,7 @@ describe('admin routes', () => {
     });
 
     it('returns 400 before rate-limit or audit writes when client IP cannot be resolved', async () => {
-      const { getClientIp } = await import('../src/clientIp.js');
-      vi.mocked(getClientIp).mockImplementationOnce(() => {
+      mockResolveClientIp.mockImplementationOnce(() => {
         throw clientIpResolutionError();
       });
 
@@ -674,11 +688,8 @@ describe('admin routes', () => {
           },
         }),
       };
-      mockParseSponsorKey.mockReturnValue({
-        toSuiAddress: () => '0xSPONSOR_REFILL_ACCOUNT_ADDRESS',
-        signAndExecuteTransaction: vi.fn().mockResolvedValue({
-          Transaction: { digest: '0xSUCCESS_DIGEST' },
-        }),
+      mockSponsorRefillAccountKey.signAndExecuteTransaction.mockResolvedValueOnce({
+        Transaction: { digest: '0xSUCCESS_DIGEST' },
       });
 
       const res = await app.request('/api/sponsor-refill-account/withdraw', {
@@ -698,10 +709,17 @@ describe('admin routes', () => {
     });
 
     it('returns 400 when runway guard blocks withdrawal (refill enabled)', async () => {
-      // nonce consumed by DEL (default mock returns 1)
-      const { parseOptionalBooleanEnv } = await import('../src/env.js');
-      vi.mocked(parseOptionalBooleanEnv).mockReturnValueOnce(true); // refillEnabled = true
-      process.env.SPONSOR_BALANCE_REFILL_TARGET_MIST = '900000000'; // 0.9 SUI
+      // A separately created app receives a different boot snapshot. The route
+      // never re-reads mutable process.env between requests.
+      const refillEnabledRoutes = createAdminRoutes(
+        Promise.resolve(mockCtx),
+        createAdminRuntime({
+          refillEnabled: true,
+          refillTargetMist: 900_000_000n,
+        }),
+      );
+      app = new Hono();
+      app.route('/api', refillEnabledRoutes);
 
       const res = await app.request('/api/sponsor-refill-account/withdraw', {
         method: 'POST',
@@ -714,8 +732,6 @@ describe('admin routes', () => {
       expect(res.status).toBe(400);
       const body = await res.json();
       expect(body.error).toContain('runway');
-
-      delete process.env.SPONSOR_BALANCE_REFILL_TARGET_MIST;
     });
   });
 
@@ -805,8 +821,7 @@ describe('admin routes', () => {
     });
 
     it('POST /api/promotions returns 400 before body parsing when client IP cannot be resolved', async () => {
-      const { getClientIp } = await import('../src/clientIp.js');
-      vi.mocked(getClientIp).mockImplementationOnce(() => {
+      mockResolveClientIp.mockImplementationOnce(() => {
         throw clientIpResolutionError();
       });
 
@@ -1975,9 +1990,9 @@ describe('admin routes', () => {
       expect(body.network).toBe('testnet');
       expect(body.primaryAddress).toBe('0xSPONSOR1');
       expect(body.settlementPayoutRecipientAddress).toBe('0xRECIPIENT');
-      expect(typeof body.sponsorBalanceWarnMist).toBe('string');
-      expect(typeof body.sponsorBalanceRefillTargetMist).toBe('string');
-      expect(typeof body.refillEnabled).toBe('boolean');
+      expect(body.sponsorBalanceWarnMist).toBe('5000000000');
+      expect(body.sponsorBalanceRefillTargetMist).toBe('10000000000');
+      expect(body.refillEnabled).toBe(false);
       expect(typeof body.quotedHostFeeMist).toBe('string');
       expect(body.feeConfig).toMatchObject({
         maxHostFeeMist: '1000',

@@ -48,20 +48,17 @@ vi.mock('@stelis/core-api', async () => {
   };
 });
 
-// ── Mock client IP ──────────────────────────────────────────────────────
-vi.mock('../src/clientIp.js', () => ({
-  getClientIp: vi.fn().mockReturnValue('127.0.0.1'),
-}));
-
 // ── Mock sponsor operations gate response ───────────────────────────────
 vi.mock('../src/sponsor-operations/gateResponse.js', () => ({
   buildSponsorUnavailableResponse: vi.fn().mockReturnValue(null),
 }));
 
 import { createRelayRoutes } from '../src/routes/relay.js';
-import { getClientIp } from '../src/clientIp.js';
+import type { ResolveClientIp } from '../src/clientIp.js';
 import { buildSponsorUnavailableResponse } from '../src/sponsor-operations/gateResponse.js';
 import type { AppApiContext } from '../src/context.js';
+
+const resolveClientIp = vi.fn<ResolveClientIp>().mockReturnValue('127.0.0.1');
 
 const PREPARE_AUTH_FIELDS = {
   txKindBytesHash: '0x' + '11'.repeat(32),
@@ -230,13 +227,11 @@ describe('relay routes', () => {
 
   beforeEach(async () => {
     mockCtx = createMockCtx();
-    const getCtx = async () => mockCtx;
-    const routes = createRelayRoutes(getCtx);
+    resolveClientIp.mockReset();
+    resolveClientIp.mockReturnValue('127.0.0.1');
+    const routes = createRelayRoutes(Promise.resolve(mockCtx), resolveClientIp);
     app = new Hono();
     app.route('/relay', routes);
-
-    vi.mocked(getClientIp).mockReset();
-    vi.mocked(getClientIp).mockReturnValue('127.0.0.1');
 
     // Reset mocked core-api and sponsor operations module-level functions:
     // clear accumulated call history first, then re-apply default behavior.
@@ -400,7 +395,7 @@ describe('relay routes', () => {
 
     it('returns 400 CLIENT_IP_UNRESOLVED before shared admission keys when client IP cannot be resolved', async () => {
       const coreApi = await import('@stelis/core-api');
-      vi.mocked(getClientIp).mockImplementationOnce(() => {
+      resolveClientIp.mockImplementationOnce(() => {
         const err = new Error('Client IP could not be resolved');
         err.name = 'ClientIpResolutionError';
         (err as { code?: string }).code = 'CLIENT_IP_UNRESOLVED';
@@ -888,7 +883,7 @@ describe('relay routes', () => {
 
     it('returns 400 CLIENT_IP_UNRESOLVED before shared admission keys when client IP cannot be resolved', async () => {
       const coreApi = await import('@stelis/core-api');
-      vi.mocked(getClientIp).mockImplementationOnce(() => {
+      resolveClientIp.mockImplementationOnce(() => {
         const err = new Error('Client IP could not be resolved');
         err.name = 'ClientIpResolutionError';
         (err as { code?: string }).code = 'CLIENT_IP_UNRESOLVED';

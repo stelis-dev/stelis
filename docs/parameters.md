@@ -124,6 +124,10 @@ Optional Host configuration:
 - `SPONSOR_OPERATIONS_REFILL_ENABLED`
 - `SPONSOR_BALANCE_REFILL_TARGET_MIST`
 
+When `SPONSOR_OPERATIONS_REFILL_ENABLED=true`,
+`SPONSOR_BALANCE_REFILL_TARGET_MIST` is required and must be greater than
+`SPONSOR_BALANCE_WARN_MIST`.
+
 Admin dashboard routes require these when the dashboard is used:
 
 - `ADMIN_ADDRESS`

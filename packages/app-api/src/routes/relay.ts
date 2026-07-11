@@ -23,14 +23,17 @@ import {
 import { INTEGRITY_POLICY_VERSION, SLIPPAGE_CAP_BPS, GAS_MARGIN_CAP_BPS } from '@stelis/contracts';
 
 import type { AppApiContext } from '../context.js';
-import { getClientIp } from '../clientIp.js';
+import type { ResolveClientIp } from '../clientIp.js';
 import { buildSponsorUnavailableResponse } from '../sponsor-operations/gateResponse.js';
 import { canonicalizeAddress } from '@stelis/core-api';
 import { mapError, respondMapped } from '../errorMap.js';
 import { safeBigintToNumber } from '../wireNumbers.js';
 import { formatRetryAfterSeconds } from '../retryAfter.js';
 
-export function createRelayRoutes(getCtx: () => Promise<AppApiContext>) {
+export function createRelayRoutes(
+  contextPromise: Promise<AppApiContext>,
+  resolveClientIp: ResolveClientIp,
+) {
   const app = new Hono();
 
   // ── GET /relay/status ─────────────────────────────────────────────
@@ -45,7 +48,7 @@ export function createRelayRoutes(getCtx: () => Promise<AppApiContext>) {
 
   // ── GET /relay/config ─────────────────────────────────────────────
   app.get('/config', async (c) => {
-    const ctx = await getCtx();
+    const ctx = await contextPromise;
     const host = ctx.host;
     try {
       const config = await host.getConfig();
@@ -85,8 +88,8 @@ export function createRelayRoutes(getCtx: () => Promise<AppApiContext>) {
   // ── POST /relay/prepare ───────────────────────────────────────────
   app.post('/prepare', async (c) => {
     try {
-      const ip = getClientIp(c);
-      const ctx = await getCtx();
+      const ip = resolveClientIp(c);
+      const ctx = await contextPromise;
       const host = ctx.host;
 
       // Sponsor operations gate check — shared-state read + pure derivation.
@@ -232,8 +235,8 @@ export function createRelayRoutes(getCtx: () => Promise<AppApiContext>) {
   // ── POST /relay/sponsor ───────────────────────────────────────────
   app.post('/sponsor', async (c) => {
     try {
-      const ip = getClientIp(c);
-      const ctx = await getCtx();
+      const ip = resolveClientIp(c);
+      const ctx = await contextPromise;
       const host = ctx.host;
 
       // Sponsor operations gate check — shared-state read + pure derivation.

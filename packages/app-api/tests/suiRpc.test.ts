@@ -70,7 +70,7 @@ describe('loadRpcConfig', () => {
     const path = '/tmp/test-rpc-load.json';
     writeFileSync(path, rpcConfigJson([{ url: 'https://a.com' }, { url: 'https://b.com' }]));
     try {
-      const result = loadRpcConfig('testnet', path);
+      const result = loadRpcConfig('testnet', path, () => undefined);
       expect(result).toEqual([{ url: 'https://a.com' }, { url: 'https://b.com' }]);
     } finally {
       unlinkSync(path);
@@ -78,7 +78,7 @@ describe('loadRpcConfig', () => {
   });
 
   it('throws on missing file with guidance', () => {
-    expect(() => loadRpcConfig('testnet', '/tmp/nonexistent-rpc.json')).toThrow(
+    expect(() => loadRpcConfig('testnet', '/tmp/nonexistent-rpc.json', () => undefined)).toThrow(
       'tracked packages/app-api/rpc.json',
     );
   });
@@ -103,7 +103,7 @@ describe('loadRpcConfig', () => {
     const path = '/tmp/test-rpc-malformed.json';
     writeFileSync(path, '{bad json');
     try {
-      expect(() => loadRpcConfig('testnet', path)).toThrow('rpc.json');
+      expect(() => loadRpcConfig('testnet', path, () => undefined)).toThrow('rpc.json');
     } finally {
       unlinkSync(path);
     }
@@ -113,7 +113,9 @@ describe('loadRpcConfig', () => {
     const path = '/tmp/test-rpc-empty.json';
     writeFileSync(path, rpcConfigJson([]));
     try {
-      expect(() => loadRpcConfig('testnet', path)).toThrow('at least one endpoint');
+      expect(() => loadRpcConfig('testnet', path, () => undefined)).toThrow(
+        'at least one endpoint',
+      );
     } finally {
       unlinkSync(path);
     }
@@ -123,7 +125,7 @@ describe('loadRpcConfig', () => {
     const path = '/tmp/test-rpc-flat-array.json';
     writeFileSync(path, '[{"url":"https://a.com"}]');
     try {
-      expect(() => loadRpcConfig('testnet', path)).toThrow('object');
+      expect(() => loadRpcConfig('testnet', path, () => undefined)).toThrow('object');
     } finally {
       unlinkSync(path);
     }
@@ -185,7 +187,10 @@ function rpcConfigJson(
   return JSON.stringify({ testnet, mainnet });
 }
 
-function parseTestnetRpcConfig(testnet: unknown, envLookup?: (name: string) => string | undefined) {
+function parseTestnetRpcConfig(
+  testnet: unknown,
+  envLookup: (name: string) => string | undefined = () => undefined,
+) {
   return parseEndpointConfigJson(rpcConfigJson(testnet), 'testnet', envLookup);
 }
 
@@ -425,6 +430,7 @@ describe('parseEndpointConfigJson', () => {
     const result = parseEndpointConfigJson(
       rpcConfigJson([{ url: 'https://testnet-a.com' }], [{ url: 'https://mainnet-a.com' }]),
       'mainnet',
+      () => undefined,
     );
     expect(result).toEqual([{ url: 'https://mainnet-a.com' }]);
   });
@@ -488,15 +494,21 @@ describe('parseEndpointConfigJson', () => {
   });
 
   it('throws on empty JSON', () => {
-    expect(() => parseEndpointConfigJson('', 'testnet')).toThrow('must not be empty');
+    expect(() => parseEndpointConfigJson('', 'testnet', () => undefined)).toThrow(
+      'must not be empty',
+    );
   });
 
   it('throws on invalid JSON', () => {
-    expect(() => parseEndpointConfigJson('{bad', 'testnet')).toThrow('not valid JSON');
+    expect(() => parseEndpointConfigJson('{bad', 'testnet', () => undefined)).toThrow(
+      'not valid JSON',
+    );
   });
 
   it('throws on old flat-array JSON', () => {
-    expect(() => parseEndpointConfigJson('[{"url":"https://a.com"}]', 'testnet')).toThrow('object');
+    expect(() =>
+      parseEndpointConfigJson('[{"url":"https://a.com"}]', 'testnet', () => undefined),
+    ).toThrow('object');
   });
 
   it('throws on missing network section', () => {
@@ -504,6 +516,7 @@ describe('parseEndpointConfigJson', () => {
       parseEndpointConfigJson(
         JSON.stringify({ mainnet: [{ url: 'https://mainnet.com' }] }),
         'testnet',
+        () => undefined,
       ),
     ).toThrow('testnet');
   });
@@ -517,12 +530,15 @@ describe('parseEndpointConfigJson', () => {
           devnet: [{ url: 'https://c.com' }],
         }),
         'testnet',
+        () => undefined,
       ),
     ).toThrow('unsupported network section');
   });
 
   it('throws on empty selected network endpoints', () => {
-    expect(() => parseEndpointConfigJson(rpcConfigJson([]), 'testnet')).toThrow('testnet');
+    expect(() => parseEndpointConfigJson(rpcConfigJson([]), 'testnet', () => undefined)).toThrow(
+      'testnet',
+    );
   });
 
   it('throws on missing url', () => {

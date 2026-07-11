@@ -8,6 +8,7 @@
  * and the shared admin contracts in @stelis/contracts.
  */
 import { Hono } from 'hono';
+import type { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import {
   buildSponsorRefillAccountWithdrawMessage,
   type DeepBookPoolHop,
@@ -16,18 +17,11 @@ import {
 import {
   checkAndIncrementAdminOperationAttempt,
   verifySignedMessage,
+  type AdminJwtConfig,
   type AdminRedisClient,
 } from '@stelis/core-api/admin';
-import {
-  parseSponsorKey,
-  readJsonBodyWithLimit,
-  MAX_SMALL_REQUEST_BODY_BYTES,
-} from '@stelis/core-api';
+import { readJsonBodyWithLimit, MAX_SMALL_REQUEST_BODY_BYTES } from '@stelis/core-api';
 import { MAX_PROMOTION_LEDGER_VALUE_MIST } from '@stelis/core-api/studio';
-import {
-  SPONSOR_BALANCE_WARN_MIST,
-  SPONSOR_BALANCE_REFILL_TARGET_MIST,
-} from '../sponsor-operations/defaults.js';
 import { createAdminRedisAdapter } from '../adminRedis.js';
 import {
   ADMIN_AUDIT_LOG_KEY,
@@ -38,8 +32,7 @@ import {
 import { deriveSponsorAvailabilitySummary } from '../sponsor-operations/gate.js';
 import type { AppApiContext } from '../context.js';
 import { requireAdminSessionFromContext } from '../requireAdminSession.js';
-import { getClientIp } from '../clientIp.js';
-import { requireEnv, parseOptionalBooleanEnv, parseOptionalPositiveBigIntEnv } from '../env.js';
+import type { ResolveClientIp } from '../clientIp.js';
 import { parseChainBalanceMist } from '../sponsor-operations/balanceParsing.js';
 import { safeBigintToNumber } from '../wireNumbers.js';
 import { mapError, respondMapped } from '../errorMap.js';
@@ -263,16 +256,30 @@ function parseSponsoredLogsLimit(raw: string | undefined): number | null {
   return n;
 }
 
-async function getAdminRedis(getCtx: () => Promise<AppApiContext>): Promise<AdminRedisClient> {
-  return createAdminRedisAdapter((await getCtx()).redis);
+async function getAdminRedis(contextPromise: Promise<AppApiContext>): Promise<AdminRedisClient> {
+  return createAdminRedisAdapter((await contextPromise).redis);
 }
 
-export function createAdminRoutes(getCtx: () => Promise<AppApiContext>) {
+export interface AdminRoutesRuntimeInput {
+  readonly resolveClientIp: ResolveClientIp;
+  readonly adminAddress: string | null;
+  readonly adminJwt: AdminJwtConfig | null;
+  readonly sponsorRefillAccountKey: Ed25519Keypair;
+  readonly sponsorRefillAccountAddress: string;
+  readonly refillEnabled: boolean;
+  readonly warnMist: bigint;
+  readonly refillTargetMist: bigint;
+}
+
+export function createAdminRoutes(
+  contextPromise: Promise<AppApiContext>,
+  runtime: AdminRoutesRuntimeInput,
+) {
   const app = new Hono();
 
   // ── Auth guard middleware — all admin routes require session ───────
   app.use('*', async (c, next) => {
-    const session = await requireAdminSessionFromContext(c, getCtx);
+    const session = await requireAdminSessionFromContext(c, contextPromise, runtime.adminJwt);
     if (!session) {
       return c.json({ error: 'Unauthorized' }, 401);
     }
@@ -283,7 +290,7 @@ export function createAdminRoutes(getCtx: () => Promise<AppApiContext>) {
   // ── GET /api/blocklist ────────────────────────────────────────────
   app.get('/blocklist', async (c) => {
     try {
-      const redis = await getAdminRedis(getCtx);
+      const redis = await getAdminRedis(contextPromise);
       const [ipKeys, addrKeys] = await Promise.all([
         redis.scan(`${IP_PREFIX}*`),
         redis.scan(`${ADDR_PREFIX}*`),
@@ -317,7 +324,7 @@ export function createAdminRoutes(getCtx: () => Promise<AppApiContext>) {
         return c.json({ error: 'Unauthorized key prefix' }, 403);
       }
 
-      const redis = await getAdminRedis(getCtx);
+      const redis = await getAdminRedis(contextPromise);
       await redis.del(body.key);
       return c.json({ ok: true, deleted: body.key });
     } catch (err) {
@@ -330,7 +337,7 @@ export function createAdminRoutes(getCtx: () => Promise<AppApiContext>) {
   // ── GET /api/logs ─────────────────────────────────────────────────
   app.get('/logs', async (c) => {
     try {
-      const redis = await getAdminRedis(getCtx);
+      const redis = await getAdminRedis(contextPromise);
       const entries = await redis.lrange(ADMIN_AUDIT_LOG_KEY, 0, ADMIN_AUDIT_LOG_MAX_ENTRIES - 1);
       return c.json({ logs: entries });
     } catch {
@@ -349,7 +356,7 @@ export function createAdminRoutes(getCtx: () => Promise<AppApiContext>) {
       return c.json({ error: 'Invalid mode (expected all|generic|promotion)' }, 400);
     }
     try {
-      const ctx = await getCtx();
+      const ctx = await contextPromise;
       const summary = await ctx.sponsoredLogsStore.getSummary(mode);
       return c.json({ summary });
     } catch {
@@ -371,7 +378,7 @@ export function createAdminRoutes(getCtx: () => Promise<AppApiContext>) {
       return c.json({ error: 'Invalid limit (expected positive integer ≤ 200)' }, 400);
     }
     try {
-      const ctx = await getCtx();
+      const ctx = await contextPromise;
       const [summary, entries] = await Promise.all([
         ctx.sponsoredLogsStore.getSummary(mode),
         ctx.sponsoredLogsStore.getRecent(mode, limit),
@@ -393,7 +400,7 @@ export function createAdminRoutes(getCtx: () => Promise<AppApiContext>) {
   // core-api. Other fields are boot-derived constants.
   app.get('/sponsor-operations', async (c) => {
     try {
-      const ctx = await getCtx();
+      const ctx = await contextPromise;
       const host = ctx.host;
 
       // Await the bounded sponsor refill account probe here. Admin is not a hot path,
@@ -427,18 +434,6 @@ export function createAdminRoutes(getCtx: () => Promise<AppApiContext>) {
         gateErrorCode: aggregates.gateErrorCode,
       };
 
-      // Operational thresholds (env overrides, else internalized defaults)
-      const warnMist =
-        parseOptionalPositiveBigIntEnv(
-          'SPONSOR_BALANCE_WARN_MIST',
-          process.env.SPONSOR_BALANCE_WARN_MIST,
-        ) ?? SPONSOR_BALANCE_WARN_MIST;
-      const refillTargetMist =
-        parseOptionalPositiveBigIntEnv(
-          'SPONSOR_BALANCE_REFILL_TARGET_MIST',
-          process.env.SPONSOR_BALANCE_REFILL_TARGET_MIST,
-        ) ?? SPONSOR_BALANCE_REFILL_TARGET_MIST;
-
       // On-chain fee config (core-api TTL cache; see getConfig() in
       // packages/core-api/src/context.ts).
       let feeConfig: Record<string, string> | null = null;
@@ -469,9 +464,9 @@ export function createAdminRoutes(getCtx: () => Promise<AppApiContext>) {
         primaryAddress: host.sponsorPool.primaryAddress,
         settlementPayoutRecipientAddress: host.settlementPayoutRecipientAddress,
         network: host.network,
-        sponsorBalanceWarnMist: warnMist.toString(),
-        sponsorBalanceRefillTargetMist: refillTargetMist.toString(),
-        refillEnabled: process.env.SPONSOR_OPERATIONS_REFILL_ENABLED === 'true',
+        sponsorBalanceWarnMist: runtime.warnMist.toString(),
+        sponsorBalanceRefillTargetMist: runtime.refillTargetMist.toString(),
+        refillEnabled: runtime.refillEnabled,
         quotedHostFeeMist: ctx.prepareConfig.quotedHostFeeMist.toString(),
         feeConfig,
         supportedSettlementSwapPaths,
@@ -493,8 +488,8 @@ export function createAdminRoutes(getCtx: () => Promise<AppApiContext>) {
   app.get('/sponsor-refill-account/withdraw', async (c) => {
     let ip: string | null = null;
     try {
-      ip = getClientIp(c);
-      const redis = await getAdminRedis(getCtx);
+      ip = runtime.resolveClientIp(c);
+      const redis = await getAdminRedis(contextPromise);
       const nonce = `stelis-withdraw:${crypto.randomUUID()}:${Date.now()}`;
       await redis.set(`${WITHDRAW_NONCE_PREFIX}${nonce}`, '1', {
         px: WITHDRAW_NONCE_TTL_MS,
@@ -505,7 +500,7 @@ export function createAdminRoutes(getCtx: () => Promise<AppApiContext>) {
       const mapped = mapError(err);
       if (mapped) return respondMapped(c, mapped);
       if (ip !== null) {
-        await writeAdminAuditLog(await getAdminRedis(getCtx), {
+        await writeAdminAuditLog(await getAdminRedis(contextPromise), {
           event: 'WITHDRAW_NONCE_ERROR',
           ts: new Date().toISOString(),
           ip,
@@ -520,9 +515,9 @@ export function createAdminRoutes(getCtx: () => Promise<AppApiContext>) {
   app.post('/sponsor-refill-account/withdraw', async (c) => {
     let ip: string | null = null;
     try {
-      ip = getClientIp(c);
+      ip = runtime.resolveClientIp(c);
       const ts = () => new Date().toISOString();
-      const redis = await getAdminRedis(getCtx);
+      const redis = await getAdminRedis(contextPromise);
       // Atomic ops rate-limit check at entry
       const rateCheck = await checkAndIncrementAdminOperationAttempt(redis, ip);
       if (!rateCheck.allowed) {
@@ -581,7 +576,10 @@ export function createAdminRoutes(getCtx: () => Promise<AppApiContext>) {
       }
 
       // Signature verification uses the shared browser/server helper.
-      const adminAddress = requireEnv('ADMIN_ADDRESS');
+      if (runtime.adminAddress === null) {
+        throw new Error('ADMIN_ADDRESS is not configured');
+      }
+      const adminAddress = runtime.adminAddress;
       const message = buildSponsorRefillAccountWithdrawMessage(amountMist, nonce);
       const sigValid = await verifySignedMessage({ message, signature, adminAddress });
       if (!sigValid) {
@@ -595,30 +593,16 @@ export function createAdminRoutes(getCtx: () => Promise<AppApiContext>) {
       }
 
       // Execute withdrawal
-      const ctx = await getCtx();
-      const sponsorRefillAccountKeypair = parseSponsorKey(
-        requireEnv('SPONSOR_REFILL_ACCOUNT_SECRET_KEY'),
-        'SPONSOR_REFILL_ACCOUNT_SECRET_KEY',
-      );
-      const recipientAddress = requireEnv('ADMIN_ADDRESS');
-      const sponsorRefillAccountAddress = sponsorRefillAccountKeypair.toSuiAddress();
+      const ctx = await contextPromise;
+      const sponsorRefillAccountKeypair = runtime.sponsorRefillAccountKey;
+      const recipientAddress = adminAddress;
+      const sponsorRefillAccountAddress = runtime.sponsorRefillAccountAddress;
 
       // Runway guard
-      const refillEnabled =
-        parseOptionalBooleanEnv(
-          'SPONSOR_OPERATIONS_REFILL_ENABLED',
-          process.env.SPONSOR_OPERATIONS_REFILL_ENABLED,
-        ) ?? false;
-
-      if (refillEnabled && !isMax) {
-        const refillTargetMist =
-          parseOptionalPositiveBigIntEnv(
-            'SPONSOR_BALANCE_REFILL_TARGET_MIST',
-            process.env.SPONSOR_BALANCE_REFILL_TARGET_MIST,
-          ) ?? SPONSOR_BALANCE_REFILL_TARGET_MIST;
-        if (refillTargetMist > 0n) {
+      if (runtime.refillEnabled && !isMax) {
+        if (runtime.refillTargetMist > 0n) {
           const poolSize = BigInt(ctx.host.sponsorPool.size);
-          const minRunwayMist = refillTargetMist * poolSize;
+          const minRunwayMist = runtime.refillTargetMist * poolSize;
           const sponsorRefillAccountBalance = await ctx.host.sui.getBalance({
             owner: sponsorRefillAccountAddress,
           });
@@ -643,7 +627,7 @@ export function createAdminRoutes(getCtx: () => Promise<AppApiContext>) {
             );
           }
         }
-      } else if (refillEnabled && isMax) {
+      } else if (runtime.refillEnabled && isMax) {
         await writeAdminAuditLog(redis, {
           event: 'WITHDRAWAL_RUNWAY_BYPASS',
           ts: ts(),
@@ -735,7 +719,7 @@ export function createAdminRoutes(getCtx: () => Promise<AppApiContext>) {
       console.error('[sponsor-refill-account/withdraw] Unexpected error:', safeErrorSummary(err));
       try {
         if (ip !== null) {
-          const r = await getAdminRedis(getCtx);
+          const r = await getAdminRedis(contextPromise);
           await writeAdminAuditLog(r, {
             event: 'WITHDRAWAL_ERROR',
             ts: new Date().toISOString(),
@@ -754,7 +738,7 @@ export function createAdminRoutes(getCtx: () => Promise<AppApiContext>) {
   // Operational inspection: returns the active settlement swap path registry loaded at boot.
   app.get('/settlement-swap-paths', async (c) => {
     try {
-      const ctx = await getCtx();
+      const ctx = await contextPromise;
       const settlementSwapPaths = ctx.prepareConfig.supportedSettlementSwapPaths;
       return c.json({
         count: settlementSwapPaths.length,
@@ -787,7 +771,7 @@ export function createAdminRoutes(getCtx: () => Promise<AppApiContext>) {
   // Budget is per-promotion — use GET /api/promotions/:id for per-promotion KPIs.
   app.get('/studio', async (c) => {
     try {
-      const ctx = await getCtx();
+      const ctx = await contextPromise;
       if (!ctx.studio) {
         return c.json({ enabled: false }, 200);
       }
@@ -806,7 +790,7 @@ export function createAdminRoutes(getCtx: () => Promise<AppApiContext>) {
   // ── GET /api/promotions ──────────────────────────────────────────
   app.get('/promotions', async (c) => {
     try {
-      const ctx = await getCtx();
+      const ctx = await contextPromise;
       if (!ctx.promotionStore) {
         return c.json({ error: 'Promotion store not available (studio not enabled)' }, 503);
       }
@@ -827,8 +811,8 @@ export function createAdminRoutes(getCtx: () => Promise<AppApiContext>) {
   app.post('/promotions', async (c) => {
     let ip: string | null = null;
     try {
-      ip = getClientIp(c);
-      const ctx = await getCtx();
+      ip = runtime.resolveClientIp(c);
+      const ctx = await contextPromise;
       if (!ctx.promotionStore) {
         return c.json({ error: 'Promotion store not available (studio not enabled)' }, 503);
       }
@@ -865,7 +849,7 @@ export function createAdminRoutes(getCtx: () => Promise<AppApiContext>) {
       // Durable admin audit trail: emit the same operation-log event shape used by
       // every other admin write path so `/api/logs` and `app-admin` can
       // attribute promotion creation without bespoke sink wiring.
-      await writeAdminAuditLog(await getAdminRedis(getCtx), {
+      await writeAdminAuditLog(await getAdminRedis(contextPromise), {
         event: 'PROMOTION_CREATE',
         ts: new Date().toISOString(),
         ip,
@@ -887,7 +871,7 @@ export function createAdminRoutes(getCtx: () => Promise<AppApiContext>) {
   // Returns the promotion plus derived admin summary data.
   app.get('/promotions/:id', async (c) => {
     try {
-      const ctx = await getCtx();
+      const ctx = await contextPromise;
       if (!ctx.promotionStore) {
         return c.json({ error: 'Promotion store not available (studio not enabled)' }, 503);
       }
@@ -907,7 +891,7 @@ export function createAdminRoutes(getCtx: () => Promise<AppApiContext>) {
   // ── PUT /api/promotions/:id ──────────────────────────────────────
   app.put('/promotions/:id', async (c) => {
     try {
-      const ctx = await getCtx();
+      const ctx = await contextPromise;
       if (!ctx.promotionStore) {
         return c.json({ error: 'Promotion store not available (studio not enabled)' }, 503);
       }
@@ -967,7 +951,7 @@ export function createAdminRoutes(getCtx: () => Promise<AppApiContext>) {
   // ── POST /api/promotions/:id/status ──────────────────────────────
   app.post('/promotions/:id/status', async (c) => {
     try {
-      const ctx = await getCtx();
+      const ctx = await contextPromise;
       if (!ctx.promotionStore) {
         return c.json({ error: 'Promotion store not available (studio not enabled)' }, 503);
       }
@@ -1005,7 +989,7 @@ export function createAdminRoutes(getCtx: () => Promise<AppApiContext>) {
   // ── DELETE /api/promotions/:id ───────────────────────────────────
   app.delete('/promotions/:id', async (c) => {
     try {
-      const ctx = await getCtx();
+      const ctx = await contextPromise;
       if (!ctx.promotionStore) {
         return c.json({ error: 'Promotion store not available (studio not enabled)' }, 503);
       }
@@ -1028,7 +1012,7 @@ export function createAdminRoutes(getCtx: () => Promise<AppApiContext>) {
   // No pagination; maxParticipants bounds the result size.
   app.get('/promotions/:id/users', async (c) => {
     try {
-      const ctx = await getCtx();
+      const ctx = await contextPromise;
       if (!ctx.promotionStore || !ctx.executionLedger) {
         return c.json({ error: 'Promotion system not available (studio not enabled)' }, 503);
       }
@@ -1050,7 +1034,7 @@ export function createAdminRoutes(getCtx: () => Promise<AppApiContext>) {
   // ── GET /api/promotions/:id/summary ── budget KPIs ──────────────
   app.get('/promotions/:id/summary', async (c) => {
     try {
-      const ctx = await getCtx();
+      const ctx = await contextPromise;
       if (!ctx.promotionStore) {
         return c.json({ error: 'Promotion store not available (studio not enabled)' }, 503);
       }

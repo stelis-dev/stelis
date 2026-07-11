@@ -35,23 +35,29 @@ import {
   MAX_SPONSOR_REQUEST_BODY_BYTES,
 } from '@stelis/core-api';
 import type { AppApiContext } from '../context.js';
+import type { ResolveClientIp } from '../clientIp.js';
 import { buildSponsorUnavailableResponse } from '../sponsor-operations/gateResponse.js';
 import { runStudioAuth } from '../middleware/studioAuth.js';
 import { mapError, respondMapped } from '../errorMap.js';
 
-export function createStudioRoutes(getCtx: () => Promise<AppApiContext>) {
+export function createStudioRoutes(
+  contextPromise: Promise<AppApiContext>,
+  resolveClientIp: ResolveClientIp,
+) {
   const app = new Hono();
 
   // ── GET /studio/promotions — developer-JWT principal promotion list ──
   // Guard precedence: route-local 503 → shared JWT/block/rate-limit prelude.
   app.get('/promotions', async (c) => {
     try {
-      const ctx = await getCtx();
+      const ctx = await contextPromise;
       if (!ctx.promotionStore || !ctx.executionLedger) {
         return c.json({ error: 'Promotion system not available (studio not enabled)' }, 503);
       }
 
-      const auth = await runStudioAuth(c, ctx, { rateLimitPrefix: 'promo_list' });
+      const auth = await runStudioAuth(c, ctx, resolveClientIp, {
+        rateLimitPrefix: 'promo_list',
+      });
       if (!auth.ok) return auth.response;
       const { identity } = auth;
       const userId = identity.userId;
@@ -86,12 +92,14 @@ export function createStudioRoutes(getCtx: () => Promise<AppApiContext>) {
   // Guard precedence: route-local 503 → shared JWT/block/rate-limit prelude.
   app.get('/promotions/:id', async (c) => {
     try {
-      const ctx = await getCtx();
+      const ctx = await contextPromise;
       if (!ctx.promotionStore || !ctx.executionLedger) {
         return c.json({ error: 'Promotion system not available (studio not enabled)' }, 503);
       }
 
-      const auth = await runStudioAuth(c, ctx, { rateLimitPrefix: 'promo_detail' });
+      const auth = await runStudioAuth(c, ctx, resolveClientIp, {
+        rateLimitPrefix: 'promo_detail',
+      });
       if (!auth.ok) return auth.response;
       const { identity } = auth;
       const userId = identity.userId;
@@ -130,14 +138,16 @@ export function createStudioRoutes(getCtx: () => Promise<AppApiContext>) {
   // maps to 500 `{ error: 'Internal server error' }` (no `code` field).
   app.post('/promotions/:id/claim', async (c) => {
     try {
-      const ctx = await getCtx();
+      const ctx = await contextPromise;
       // 503 guards first — infrastructure/availability failures outrank
       // auth and rate-limit.
       if (!ctx.promotionStore || !ctx.executionLedger) {
         return c.json({ error: 'Promotion system not available (studio not enabled)' }, 503);
       }
 
-      const auth = await runStudioAuth(c, ctx, { rateLimitPrefix: 'promo_claim' });
+      const auth = await runStudioAuth(c, ctx, resolveClientIp, {
+        rateLimitPrefix: 'promo_claim',
+      });
       if (!auth.ok) return auth.response;
       const { identity, ip } = auth;
       const userId = identity.userId;
@@ -199,7 +209,7 @@ export function createStudioRoutes(getCtx: () => Promise<AppApiContext>) {
   // Prepare escalates unknown JWT errors to 401 AUTH_JWT_INVALID.
   app.post('/promotions/:id/prepare', async (c) => {
     try {
-      const ctx = await getCtx();
+      const ctx = await contextPromise;
 
       // 503 guards first — infrastructure/availability failures outrank
       // auth and rate-limit.
@@ -226,7 +236,7 @@ export function createStudioRoutes(getCtx: () => Promise<AppApiContext>) {
         return c.json(blocked.body, blocked.status);
       }
 
-      const auth = await runStudioAuth(c, ctx, {
+      const auth = await runStudioAuth(c, ctx, resolveClientIp, {
         rateLimitPrefix: 'promo_prepare',
         unknownJwtErrorAs401: true,
       });
@@ -282,7 +292,7 @@ export function createStudioRoutes(getCtx: () => Promise<AppApiContext>) {
   // Sponsor escalates unknown JWT errors to 401 AUTH_JWT_INVALID.
   app.post('/promotions/:id/sponsor', async (c) => {
     try {
-      const ctx = await getCtx();
+      const ctx = await contextPromise;
 
       // 503 guards first — infrastructure/availability failures outrank
       // auth and rate-limit.
@@ -303,7 +313,7 @@ export function createStudioRoutes(getCtx: () => Promise<AppApiContext>) {
         return c.json(blocked.body, blocked.status);
       }
 
-      const auth = await runStudioAuth(c, ctx, {
+      const auth = await runStudioAuth(c, ctx, resolveClientIp, {
         rateLimitPrefix: 'promo_sponsor',
         unknownJwtErrorAs401: true,
       });

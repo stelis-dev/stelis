@@ -1,14 +1,14 @@
 /**
  * [app-api] Sponsor operations boot-time state sync.
  *
- * Runs once inside `initContext()`, before HTTP listen. Populates the
+ * Runs once inside `createContext()`, before HTTP listen. Populates the
  * shared Redis state store with a fresh chain observation for every
  * slot and the sponsor refill account. HTTP does not accept requests until this function
  * returns, so gate readers observe populated sponsor operations state.
  *
  * Failure policy:
  *   - Redis write failure on any entity → throws. The calling
- *     `initContext()` translates the rejection into a fail-fast boot.
+ *     `createContext()` translates the rejection into a fail-fast boot.
  *     This matches the existing admin `not_before` Redis pattern.
  *   - Chain RPC failure on any slot or sponsor refill account → the degraded state
  *     (`rpc_unreachable` / `healthy=0`) is written via the Lua update
@@ -161,7 +161,7 @@ async function syncOneSlot(
             ...clearRefillAttemptFields(),
           };
   }
-  // Redis write failure here propagates. `initContext()` converts it
+  // Redis write failure here propagates. `createContext()` converts it
   // to a fail-fast boot, matching the existing `admin:not_before` pattern.
   await deps.state.updateSlot(slotAddress, fields);
 }

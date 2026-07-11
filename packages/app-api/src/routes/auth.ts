@@ -18,27 +18,50 @@ import {
 } from '@stelis/core-api/admin';
 import type { AppApiContext } from '../context.js';
 import { createAdminRedisAdapter } from '../adminRedis.js';
-import { signAdminJwt, buildAuthCookieHeader, buildLogoutCookieHeader } from '../adminAuth.js';
+import {
+  signAdminJwt,
+  buildAuthCookieHeader,
+  buildLogoutCookieHeader,
+  type AdminAuthRuntimeConfig,
+} from '../adminAuth.js';
 import { requireAdminSessionFromContext } from '../requireAdminSession.js';
-import { getClientIp } from '../clientIp.js';
-import { requireEnv } from '../env.js';
+import type { ResolveClientIp } from '../clientIp.js';
 import { safeErrorSummary, writeAdminAuditLog } from '../adminAuditLog.js';
 import { mapError, respondMapped } from '../errorMap.js';
 
 const NONCE_TTL_MS = 60_000;
 
-async function getAdminRedis(getCtx: () => Promise<AppApiContext>): Promise<AdminRedisClient> {
-  return createAdminRedisAdapter((await getCtx()).redis);
+export interface AuthRoutesRuntime {
+  readonly resolveClientIp: ResolveClientIp;
+  readonly adminAddress: string | null;
+  readonly adminAuth: AdminAuthRuntimeConfig;
 }
 
-export function createAuthRoutes(getCtx: () => Promise<AppApiContext>) {
+async function getAdminRedis(contextPromise: Promise<AppApiContext>): Promise<AdminRedisClient> {
+  return createAdminRedisAdapter((await contextPromise).redis);
+}
+
+function requireConfiguredAdminAuth(runtime: AuthRoutesRuntime) {
+  if (runtime.adminAddress === null || runtime.adminAuth.jwt === null) {
+    throw new Error('[app-api] admin authentication is not configured');
+  }
+  return {
+    adminAddress: runtime.adminAddress,
+    jwt: runtime.adminAuth.jwt,
+  };
+}
+
+export function createAuthRoutes(
+  contextPromise: Promise<AppApiContext>,
+  runtime: AuthRoutesRuntime,
+) {
   const app = new Hono();
 
   // ── GET /auth/nonce ────────────────────────────────────────────────
   app.get('/nonce', async (c) => {
     try {
-      const redis = await getAdminRedis(getCtx);
-      const ip = getClientIp(c);
+      const redis = await getAdminRedis(contextPromise);
+      const ip = runtime.resolveClientIp(c);
 
       const rateCheck = await checkAndIncrement(redis, ip);
       if (!rateCheck.allowed) {
@@ -61,8 +84,8 @@ export function createAuthRoutes(getCtx: () => Promise<AppApiContext>) {
   app.post('/verify', async (c) => {
     let ip: string | null = null;
     try {
-      const redis = await getAdminRedis(getCtx);
-      ip = getClientIp(c);
+      const redis = await getAdminRedis(contextPromise);
+      ip = runtime.resolveClientIp(c);
       // Atomic rate-limit check at entry — counts all verify attempts
       const rateCheck = await checkAndIncrement(redis, ip);
       if (!rateCheck.allowed) {
@@ -104,8 +127,13 @@ export function createAuthRoutes(getCtx: () => Promise<AppApiContext>) {
       }
 
       // Verify signature + check address matches ADMIN_ADDRESS
-      const adminAddress = requireEnv('ADMIN_ADDRESS');
-      const valid = await verifyAdminSignature({ nonce, signature, address, adminAddress });
+      const configuredAuth = requireConfiguredAdminAuth(runtime);
+      const valid = await verifyAdminSignature({
+        nonce,
+        signature,
+        address,
+        adminAddress: configuredAuth.adminAddress,
+      });
       if (!valid) {
         await writeAdminAuditLog(redis, {
           event: 'ADMIN_LOGIN_FAILED',
@@ -119,8 +147,8 @@ export function createAuthRoutes(getCtx: () => Promise<AppApiContext>) {
       // Success — complete all fallible work before staging the cookie.
       // Hono preserves staged headers even on catch-path 500 responses,
       // so Set-Cookie must only be set right before the final return.
-      const token = await signAdminJwt(address);
-      const cookie = buildAuthCookieHeader(token);
+      const token = await signAdminJwt(address, configuredAuth.jwt);
+      const cookie = buildAuthCookieHeader(token, runtime.adminAuth.cookie);
       await resetAttempts(redis, ip);
       await writeAdminAuditLog(redis, { event: 'ADMIN_LOGIN_SUCCESS', ip, address });
       c.header('Set-Cookie', cookie);
@@ -132,7 +160,7 @@ export function createAuthRoutes(getCtx: () => Promise<AppApiContext>) {
       if (mapped) return respondMapped(c, mapped);
       try {
         if (ip !== null) {
-          const r = await getAdminRedis(getCtx);
+          const r = await getAdminRedis(contextPromise);
           await writeAdminAuditLog(r, {
             event: 'ADMIN_LOGIN_ERROR',
             ip,
@@ -150,8 +178,8 @@ export function createAuthRoutes(getCtx: () => Promise<AppApiContext>) {
   app.post('/renew', async (c) => {
     let ip: string | null = null;
     try {
-      const redis = await getAdminRedis(getCtx);
-      ip = getClientIp(c);
+      const redis = await getAdminRedis(contextPromise);
+      ip = runtime.resolveClientIp(c);
       // Atomic rate-limit check at entry — counts all renew attempts
       const rateCheck = await checkAndIncrement(redis, ip);
       if (!rateCheck.allowed) {
@@ -192,8 +220,13 @@ export function createAuthRoutes(getCtx: () => Promise<AppApiContext>) {
         return c.json({ error: 'Invalid or expired nonce' }, 401);
       }
 
-      const adminAddress = requireEnv('ADMIN_ADDRESS');
-      const valid = await verifyAdminSignature({ nonce, signature, address, adminAddress });
+      const configuredAuth = requireConfiguredAdminAuth(runtime);
+      const valid = await verifyAdminSignature({
+        nonce,
+        signature,
+        address,
+        adminAddress: configuredAuth.adminAddress,
+      });
       if (!valid) {
         await writeAdminAuditLog(redis, {
           event: 'ADMIN_RENEW_FAILED',
@@ -205,8 +238,8 @@ export function createAuthRoutes(getCtx: () => Promise<AppApiContext>) {
       }
 
       // Success — complete all fallible work before staging the cookie.
-      const token = await signAdminJwt(address);
-      const cookie = buildAuthCookieHeader(token);
+      const token = await signAdminJwt(address, configuredAuth.jwt);
+      const cookie = buildAuthCookieHeader(token, runtime.adminAuth.cookie);
       await resetAttempts(redis, ip);
       await writeAdminAuditLog(redis, { event: 'ADMIN_RENEW_SUCCESS', ip, address });
       c.header('Set-Cookie', cookie);
@@ -218,7 +251,7 @@ export function createAuthRoutes(getCtx: () => Promise<AppApiContext>) {
       if (mapped) return respondMapped(c, mapped);
       try {
         if (ip !== null) {
-          const r = await getAdminRedis(getCtx);
+          const r = await getAdminRedis(contextPromise);
           await writeAdminAuditLog(r, {
             event: 'ADMIN_RENEW_ERROR',
             ip,
@@ -234,14 +267,14 @@ export function createAuthRoutes(getCtx: () => Promise<AppApiContext>) {
 
   // ── POST /auth/logout ──────────────────────────────────────────────
   app.post('/logout', async (c) => {
-    c.header('Set-Cookie', buildLogoutCookieHeader());
+    c.header('Set-Cookie', buildLogoutCookieHeader(runtime.adminAuth.cookie));
     return c.json({ ok: true });
   });
 
   // ── GET /auth/session ──────────────────────────────────────────────
   app.get('/session', async (c) => {
     // JWT + Redis not_before guard (fail-closed)
-    const session = await requireAdminSessionFromContext(c, getCtx);
+    const session = await requireAdminSessionFromContext(c, contextPromise, runtime.adminAuth.jwt);
     if (!session) {
       return c.json({ error: 'Unauthorized' }, 401);
     }
