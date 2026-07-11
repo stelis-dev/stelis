@@ -201,6 +201,7 @@ function makePostCtx(): PostConsumeSponsorContext {
   return {
     receiptId: RECEIPT_ID,
     clientIp: '127.0.0.1',
+    executionStage: 'on_chain',
     sponsorSlot: reconstructReservationHandles.sponsorSlot({
       slotId: 'slot-1',
       sponsorAddress: SPONSOR,
@@ -682,6 +683,7 @@ describe('generic sponsor ClassifySponsorResult and Release', () => {
     seedSponsorState(state);
     const failed: ExecResult = {
       success: false,
+      executionStage: 'on_chain',
       digest: '0xdead',
       reason: 'MoveAbort(101)',
       isCongestion: false,
@@ -712,6 +714,7 @@ describe('generic sponsor ClassifySponsorResult and Release', () => {
     seedSponsorState(state);
     const success: Extract<ExecResult, { success: true }> = {
       success: true,
+      executionStage: 'on_chain',
       digest: '0xok',
       effects: { status: 'ok' },
       gasUsed: GAS_USED,
@@ -753,6 +756,7 @@ describe('generic sponsor ClassifySponsorResult and Release', () => {
       seedSponsorState(state);
       const success: Extract<ExecResult, { success: true }> = {
         success: true,
+        executionStage: 'on_chain',
         digest: '0xok',
         effects: { status: 'ok' },
         gasUsed: GAS_USED,

@@ -66,6 +66,7 @@ function metadata(
     slotId: SLOT,
     sponsorAddress: SLOT,
     outcome,
+    executionStage: 'before_sponsor_signature',
     route: 'generic',
     ...overrides,
   };

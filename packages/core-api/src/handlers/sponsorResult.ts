@@ -30,6 +30,17 @@ export type SponsorResultOutcome =
   | 'validation_failure'
   | 'internal_error';
 
+/**
+ * Furthest irreversible execution boundary reached by the sponsor run.
+ *
+ * This is produced by the signing/submission boundary and carried as
+ * structured metadata. Consumers must not reconstruct it from error text.
+ */
+export type SponsorExecutionStage =
+  | 'before_sponsor_signature'
+  | 'after_sponsor_signature'
+  | 'on_chain';
+
 /** Route that produced the sponsor result event. */
 export type SponsorResultRoute = 'generic' | 'promotion';
 
@@ -52,12 +63,10 @@ export type SponsorResultRoute = 'generic' | 'promotion';
  * prove both the recovered amount and the host-paid amount. When
  * the host recorder writes such a row, every monetary field on it is
  * `null` and the row is excluded from net/loss aggregates. Whether
- * such a row is written at all is the recorder's outcome-filter
- * decision (see `packages/app-api/src/sponsoredLogs/recorder.ts`); a
- * `failureReason` carrying the `submit_infra_unknown` marker prefix
- * is the contract this core-api side stamps for the post-signature
- * submit-infra branches on both routes (generic and promotion) so the
- * recorder can opt those rows in.
+ * such a row is written at all is the recorder's outcome-and-stage
+ * decision (see `packages/app-api/src/sponsoredLogs/recorder.ts`).
+ * `failureReason` is diagnostic text only; it is never an execution-stage
+ * discriminator.
  */
 export type SponsorResultEconomics =
   | {
@@ -95,6 +104,8 @@ export interface SponsorResultMetadata {
   readonly sponsorAddress: string;
   /** Classified sponsor result outcome. */
   readonly outcome: SponsorResultOutcome;
+  /** Furthest irreversible execution boundary reached by this run. */
+  readonly executionStage: SponsorExecutionStage;
   /** Which sponsor route produced this event. */
   readonly route: SponsorResultRoute;
   /** Transaction digest when the sponsor run reached submit (success or on-chain revert). */

@@ -62,6 +62,7 @@ export type { SponsorParams, SponsorResult } from './handlers/sponsor.js';
 // Sponsor result host callback — consumed by app-api to drive per-action
 // sponsor operations state updates.
 export type {
+  SponsorExecutionStage,
   SponsorResultOutcome,
   SponsorResultRoute,
   SponsorResultMetadata,

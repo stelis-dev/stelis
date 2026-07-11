@@ -26,7 +26,10 @@ import type {
   PreConsumeSponsorContext,
 } from '../src/session/sponsoredExecution/index.js';
 import { reconstructReservationHandles } from '../src/session/sponsoredExecution/reservationHandles.js';
-import { SenderSignatureError, SponsorSubmitInfraError } from '../src/session/sessionPrimitives.js';
+import {
+  SenderSignatureError,
+  SponsorPostSignatureUncertaintyError,
+} from '../src/session/sessionPrimitives.js';
 import type { ExecResult } from '../src/session/sessionTypes.js';
 import type { PreparedTxEntry, PromotionPreparedTxEntry } from '../src/store/prepareTypes.js';
 import type { PromotionExecutionLedger } from '../src/studio/executionLedger.js';
@@ -256,6 +259,7 @@ function makePostCtx(): PostConsumeSponsorContext {
   return {
     receiptId: RECEIPT_ID,
     clientIp: '127.0.0.1',
+    executionStage: 'on_chain',
     sponsorSlot: reconstructReservationHandles.sponsorSlot({
       slotId: 'slot-1',
       sponsorAddress: SPONSOR,
@@ -724,6 +728,7 @@ describe('studio sponsor ClassifySponsorResult, sign port, and Release', () => {
     seedSponsorState(state);
     const success: Extract<ExecResult, { success: true }> = {
       success: true,
+      executionStage: 'on_chain',
       digest: '0xok',
       effects: { status: 'ok' },
       gasUsed: GAS_USED,
@@ -747,6 +752,7 @@ describe('studio sponsor ClassifySponsorResult, sign port, and Release', () => {
     expect(onSponsorResult).toHaveBeenCalledWith(
       expect.objectContaining({
         outcome: 'success',
+        executionStage: 'on_chain',
         route: 'promotion',
         digest: '0xok',
         promotionId: PROMOTION_ID,
@@ -754,6 +760,13 @@ describe('studio sponsor ClassifySponsorResult, sign port, and Release', () => {
         economics: expect.objectContaining({ economicsStatus: 'known' }),
       }),
     );
+    expect(state.sponsor?.sponsorResultEconomics).toMatchObject({
+      economicsStatus: 'known',
+      recoveredGasMist: '0',
+      hostPaidGasMist: '1300',
+      hostFeeMist: '0',
+      hostNetMist: '-1300',
+    });
   });
 
   test('Release callback failure preserves existing sponsor_handler source', async () => {
@@ -770,6 +783,7 @@ describe('studio sponsor ClassifySponsorResult, sign port, and Release', () => {
       seedSponsorState(state);
       const success: Extract<ExecResult, { success: true }> = {
         success: true,
+        executionStage: 'on_chain',
         digest: '0xok',
         effects: { status: 'ok' },
         gasUsed: GAS_USED,
@@ -810,6 +824,7 @@ describe('studio sponsor ClassifySponsorResult, sign port, and Release', () => {
     seedSponsorState(state);
     const failed: ExecResult = {
       success: false,
+      executionStage: 'on_chain',
       digest: '0xrevert',
       reason: 'MoveAbort(101)',
       isCongestion: false,
@@ -855,8 +870,9 @@ describe('studio sponsor ClassifySponsorResult, sign port, and Release', () => {
     seedSponsorState(state);
     const failed: ExecResult = {
       success: false,
+      executionStage: 'after_sponsor_signature',
       digest: '',
-      reason: 'ExecutionCancelledDueToSharedObjectCongestion',
+      reason: 'confirmed shared-object congestion',
       isCongestion: true,
       gasUsed: null,
     };
@@ -887,6 +903,7 @@ describe('studio sponsor ClassifySponsorResult, sign port, and Release', () => {
     seedSponsorState(state);
     const success: Extract<ExecResult, { success: true }> = {
       success: true,
+      executionStage: 'on_chain',
       digest: '0xmissing-gas',
       effects: { status: 'ok' },
       gasUsed: null,
@@ -913,6 +930,7 @@ describe('studio sponsor ClassifySponsorResult, sign port, and Release', () => {
 
   test('ClassifySponsorResult maps post-success ledger consume failure to CONSUME_FAILED known loss', async () => {
     const consume = vi.fn(async () => ({ ok: false, reason: 'reservation_not_found' as const }));
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const { policy, state } = createStudioExecutionPolicy(
       makeSponsorOptions({
         ctx: makeContext({
@@ -926,6 +944,7 @@ describe('studio sponsor ClassifySponsorResult, sign port, and Release', () => {
     seedSponsorState(state);
     const success: Extract<ExecResult, { success: true }> = {
       success: true,
+      executionStage: 'on_chain',
       digest: '0xconsume-failed',
       effects: { status: 'ok' },
       gasUsed: GAS_USED,
@@ -938,11 +957,76 @@ describe('studio sponsor ClassifySponsorResult, sign port, and Release', () => {
     expect(state.sponsor?.sponsorResultOutcome).toBe('success');
     expect(state.sponsor?.sponsorResultEconomics).toMatchObject({
       economicsStatus: 'known',
+      recoveredGasMist: '0',
+      hostPaidGasMist: '1300',
+      hostNetMist: '-1300',
       failureReason: 'PROMOTION_LEDGER_CONSUME_FAILED: reservation_not_found',
     });
+    const events = consoleErrorSpy.mock.calls.flatMap((args: unknown[]) => {
+      try {
+        return [JSON.parse(args[0] as string) as Record<string, unknown>];
+      } catch {
+        return [];
+      }
+    });
+    expect(
+      events.filter((entry) => entry.event === 'LEDGER_CONSUME_FAILED_IN_HANDLER'),
+    ).toHaveLength(1);
+    expect(events.some((entry) => entry.event === 'PROMOTION_LEDGER_CONSUME_FAILED')).toBe(false);
+    consoleErrorSpy.mockRestore();
   });
 
-  test('signAndSubmit port handles submit-infra before runner Release observes final state', async () => {
+  test('post-success ledger consume throw keeps known gas loss and maps to CONSUME_FAILED', async () => {
+    const consume = vi.fn(async () => {
+      throw new Error('redis transport down');
+    });
+    const { policy, state } = createStudioExecutionPolicy(
+      makeSponsorOptions({
+        ctx: makeContext({
+          executionLedger: {
+            ...makeContext().executionLedger,
+            consume,
+          } as unknown as PromotionExecutionLedger,
+        }),
+      }),
+    );
+    seedSponsorState(state);
+    const success: Extract<ExecResult, { success: true }> = {
+      success: true,
+      executionStage: 'on_chain',
+      digest: '0xconsume-threw',
+      effects: { status: 'ok' },
+      gasUsed: GAS_USED,
+    };
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    await expect(policy.hooks.ClassifySponsorResult(makePostCtx(), success)).rejects.toMatchObject({
+      code: 'CONSUME_FAILED',
+    });
+    expect(state.sponsor?.sponsorResultEconomics).toMatchObject({
+      economicsStatus: 'known',
+      recoveredGasMist: '0',
+      hostPaidGasMist: '1300',
+      hostNetMist: '-1300',
+      failureReason: 'PROMOTION_LEDGER_CONSUME_THREW: redis transport down',
+    });
+
+    const events = consoleErrorSpy.mock.calls.flatMap((args: unknown[]) => {
+      try {
+        return [JSON.parse(args[0] as string) as Record<string, unknown>];
+      } catch {
+        return [];
+      }
+    });
+    expect(
+      events.filter((entry) => entry.event === 'LEDGER_CONSUME_THREW_IN_HANDLER'),
+    ).toHaveLength(1);
+    expect(events.some((entry) => entry.event === 'PROMOTION_LEDGER_CONSUME_FAILED')).toBe(false);
+
+    consoleErrorSpy.mockRestore();
+  });
+
+  test('signAndSubmit port handles post-signature cleanup and preserves typed stage for runner', async () => {
     const consumeLedgerReservationWithLog = vi.fn(async () => ({ ok: true }));
     const usageRows: CreateUsageEventInput[] = [];
     const rawCause = new Error('rpc transport error');
@@ -950,7 +1034,7 @@ describe('studio sponsor ClassifySponsorResult, sign port, and Release', () => {
       ctx: makeContext({}, usageRows),
       deps: {
         signAndSubmit: vi.fn(async () => {
-          throw new SponsorSubmitInfraError(rawCause);
+          throw new SponsorPostSignatureUncertaintyError(rawCause);
         }) as unknown as StudioExecutionPolicyDependencies['signAndSubmit'],
         consumeLedgerReservationWithLog:
           consumeLedgerReservationWithLog as unknown as StudioExecutionPolicyDependencies['consumeLedgerReservationWithLog'],
@@ -960,26 +1044,28 @@ describe('studio sponsor ClassifySponsorResult, sign port, and Release', () => {
     seedSponsorState(state);
     const port = createStudioSignAndSubmitPort(options, state);
 
-    await expect(port('slot-1', RECEIPT_ID, new Uint8Array([1, 2, 3]), 'sig')).rejects.toBe(
-      rawCause,
+    const thrown = await port('slot-1', RECEIPT_ID, new Uint8Array([1, 2, 3]), 'sig').catch(
+      (err: unknown) => err,
     );
+    expect(thrown).toBeInstanceOf(SponsorPostSignatureUncertaintyError);
+    expect((thrown as SponsorPostSignatureUncertaintyError).cause).toBe(rawCause);
 
     expect(consumeLedgerReservationWithLog).toHaveBeenCalledWith(
       expect.anything(),
       RECEIPT_ID,
       RESERVED_GAS,
-      'submit_infra_unknown',
+      'post_signature_uncertainty',
       expect.objectContaining({ txDigest: null }),
     );
     expect(usageRows[0]).toMatchObject({
       result: 'failed',
-      failureReason: 'submit_infra_unknown',
+      failureReason: 'post_signature_uncertainty',
       consumedGasMist: RESERVED_GAS.toString(),
     });
     expect(state.sponsor?.sponsorResultOutcome).toBe('internal_error');
     expect(state.sponsor?.sponsorResultEconomics).toMatchObject({
       economicsStatus: 'unknown',
-      failureReason: expect.stringContaining('submit_infra_unknown'),
+      failureReason: expect.stringContaining('post_signature_uncertainty'),
     });
   });
 

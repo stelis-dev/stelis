@@ -82,7 +82,7 @@ import {
   runPreflight,
   SenderSignatureError,
   signAndSubmit,
-  SponsorSubmitInfraError,
+  SponsorPostSignatureUncertaintyError,
   verifyGasOwner,
   verifySenderSignature,
 } from '../sessionPrimitives.js';
@@ -504,14 +504,14 @@ export function createGenericSignAndSubmitPort(
         userSignature,
       );
     } catch (err) {
-      if (err instanceof SponsorSubmitInfraError) {
+      if (err instanceof SponsorPostSignatureUncertaintyError) {
         const sponsorState = requireSponsorState(state);
         sponsorState.sponsorResultOutcome = 'internal_error';
         sponsorState.sponsorResultDigest = undefined;
         sponsorState.sponsorResultEconomics = serializeSponsoredExecutionEconomics(
-          unknownSponsoredExecutionEconomics(`submit_infra_unknown: ${err.message}`),
+          unknownSponsoredExecutionEconomics(`post_signature_uncertainty: ${err.message}`),
         );
-        throw err.cause;
+        throw err;
       }
       if (err instanceof SponsorLeaseExpiredError) {
         const sponsorState = requireSponsorState(state);
@@ -1226,6 +1226,7 @@ async function runGenericRelease(
       slotId: prepared.slotId,
       sponsorAddress: prepared.sponsorAddress,
       outcome: state.sponsorResultOutcome,
+      executionStage: ctx.executionStage,
       route: 'generic',
       digest: state.sponsorResultDigest,
       receiptId: prepared.receiptId,

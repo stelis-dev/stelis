@@ -55,6 +55,15 @@ import {
 import type { PrepareStoreAdapter } from '../src/store/prepareTypes.js';
 import type { SponsorPoolAdapter } from '../src/context.js';
 import { MemoryPrepareStore } from '../src/store/memoryPrepareStore.js';
+import {
+  congestedObjectsExecutionError,
+  grpcExecutionFailure,
+  grpcExecutionSuccess,
+  grpcSimulationFailure,
+  grpcSimulationSuccess,
+  moveAbortExecutionError,
+  unknownExecutionError,
+} from './helpers/suiGrpcExecutionFixtures.js';
 
 // ─────────────────────────────────────────────
 // Test constants
@@ -443,22 +452,19 @@ function makeMockSponsorPool(): SponsorPoolAdapter {
   };
 }
 
-function makeSuccessSimResult(digest = '0xdigest123') {
-  return {
-    Transaction: {
-      digest,
-      status: { success: true },
-      effects: {
-        gasUsed: { computationCost: '3000000', storageCost: '2000000', storageRebate: '500000' },
-      },
-    },
-  };
-}
-
 function makeMockSui(simResult?: unknown, execResult?: unknown) {
+  const gasUsed = {
+    computationCost: '3000000',
+    storageCost: '2000000',
+    storageRebate: '500000',
+  };
   return {
-    simulateTransaction: vi.fn().mockResolvedValue(simResult ?? makeSuccessSimResult()),
-    executeTransaction: vi.fn().mockResolvedValue(execResult ?? makeSuccessSimResult()),
+    simulateTransaction: vi
+      .fn()
+      .mockResolvedValue(simResult ?? grpcSimulationSuccess('0xdigest123', gasUsed)),
+    executeTransaction: vi
+      .fn()
+      .mockResolvedValue(execResult ?? grpcExecutionSuccess('0xdigest123', gasUsed)),
     getObject: vi.fn().mockResolvedValue({
       object: {
         json: {
@@ -471,6 +477,28 @@ function makeMockSui(simResult?: unknown, execResult?: unknown) {
         },
       },
     }),
+  };
+}
+
+function executionSuccessWithoutValidGas(digest: string) {
+  const result = grpcExecutionSuccess(digest);
+  return {
+    ...result,
+    Transaction: {
+      ...result.Transaction,
+      effects: { ...result.Transaction.effects, gasUsed: {} },
+    },
+  };
+}
+
+function simulationSuccessWithoutValidGas(digest: string) {
+  const result = grpcSimulationSuccess(digest);
+  return {
+    ...result,
+    Transaction: {
+      ...result.Transaction,
+      effects: { ...result.Transaction.effects, gasUsed: {} },
+    },
   };
 }
 
@@ -1031,12 +1059,7 @@ describe('handleSponsor', () => {
     const userSig = await buildValidSignature(txBytes);
     const abuseBlocker = makeMockAbuseBlocker();
     const sponsorPool = makeMockSponsorPool();
-    const failedSim = {
-      Transaction: {
-        digest: '0xfail',
-        effects: { status: { success: false, error: { message: 'InsufficientBalance' } } },
-      },
-    };
+    const failedSim = grpcSimulationFailure('0xfail', unknownExecutionError('InsufficientBalance'));
     const ctx = makeMockContext({
       prepareStore: makeMockPrepareStore(prepared, prepared),
       abuseBlocker,
@@ -1080,12 +1103,7 @@ describe('handleSponsor', () => {
       new Error('redis unreachable'),
     );
     const sponsorPool = makeMockSponsorPool();
-    const failedSim = {
-      Transaction: {
-        digest: '0xfail',
-        effects: { status: { success: false, error: { message: 'InsufficientBalance' } } },
-      },
-    };
+    const failedSim = grpcSimulationFailure('0xfail', unknownExecutionError('InsufficientBalance'));
     const ctx = makeMockContext({
       prepareStore: makeMockPrepareStore(prepared, prepared),
       abuseBlocker,
@@ -1144,10 +1162,7 @@ describe('handleSponsor', () => {
     const prepared = makePreparedEntry(txHash);
     const userSig = await buildValidSignature(txBytes);
     const abuseBlocker = makeMockAbuseBlocker();
-    const failedSim = {
-      $kind: 'FailedTransaction',
-      FailedTransaction: { status: { error: { message: 'MoveAbort', $kind: 'MoveAbort' } } },
-    };
+    const failedSim = grpcSimulationFailure('0xmove-abort', moveAbortExecutionError('MoveAbort'));
     const ctx = makeMockContext({
       prepareStore: makeMockPrepareStore(prepared, prepared),
       abuseBlocker,
@@ -1184,18 +1199,12 @@ describe('handleSponsor', () => {
     const userSig = await buildValidSignature(txBytes);
     const sponsorPool = makeMockSponsorPool();
     const abuseBlocker = makeMockAbuseBlocker();
-    const staleNonceSim = {
-      Transaction: {
-        digest: '0xstale',
-        status: {
-          success: false,
-          error: {
-            message:
-              'MoveAbort(0x1111111111111111111111111111111111111111111111111111111111111111::vault::check_and_advance_nonce, 1) in command 0',
-          },
-        },
-      },
-    };
+    const staleNonceReason =
+      'MoveAbort(0x1111111111111111111111111111111111111111111111111111111111111111::vault::check_and_advance_nonce, 1) in command 0';
+    const staleNonceSim = grpcSimulationFailure(
+      '0xstale',
+      moveAbortExecutionError(staleNonceReason, '1'),
+    );
     const ctx = makeMockContext({
       prepareStore: makeMockPrepareStore(prepared, prepared),
       abuseBlocker,
@@ -1228,15 +1237,11 @@ describe('handleSponsor', () => {
     const userSig = await buildValidSignature(txBytes);
     const sponsorPool = makeMockSponsorPool();
     const abuseBlocker = makeMockAbuseBlocker();
-    const execResult = {
-      Transaction: {
-        digest: '0xrevert',
-        effects: {
-          status: { success: false, error: { message: 'MoveAbort(code: 7)' } },
-          gasUsed: { computationCost: '1000000', storageCost: '1000000', storageRebate: '500000' },
-        },
-      },
-    };
+    const execResult = grpcExecutionFailure(
+      '0xrevert',
+      moveAbortExecutionError('MoveAbort(code: 7)', '7'),
+      { computationCost: '1000000', storageCost: '1000000', storageRebate: '500000' },
+    );
     const ctx = makeMockContext({
       prepareStore: makeMockPrepareStore(prepared, prepared),
       sponsorPool,
@@ -1280,18 +1285,7 @@ describe('handleSponsor', () => {
     const prepared = makePreparedEntry(txHash);
     const userSig = await buildValidSignature(txBytes);
     const sponsorPool = makeMockSponsorPool();
-    const execResult = {
-      $kind: 'FailedTransaction',
-      FailedTransaction: {
-        digest: '0xcongested',
-        status: {
-          error: {
-            $kind: 'ExecutionCancelledDueToSharedObjectCongestion',
-            message: 'ExecutionCancelledDueToSharedObjectCongestion',
-          },
-        },
-      },
-    };
+    const execResult = grpcExecutionFailure('0xcongested', congestedObjectsExecutionError());
     const ctx = makeMockContext({
       prepareStore: makeMockPrepareStore(prepared, prepared),
       sponsorPool,
@@ -1370,12 +1364,7 @@ describe('handleSponsor', () => {
     const prepared = makePreparedEntry(txHash);
     const userSig = await buildValidSignature(txBytes);
     const sponsorPool = makeMockSponsorPool();
-    const failedSim = {
-      Transaction: {
-        digest: '0xfail',
-        effects: { status: { success: false, error: { message: 'Fail' } } },
-      },
-    };
+    const failedSim = grpcSimulationFailure('0xfail', unknownExecutionError('Fail'));
     const ctx = makeMockContext({
       prepareStore: makeMockPrepareStore(prepared, prepared),
       sponsorPool,
@@ -1400,15 +1389,11 @@ describe('handleSponsor', () => {
     const prepared = makePreparedEntry(txHash);
     const userSig = await buildValidSignature(txBytes);
     const sponsorPool = makeMockSponsorPool();
-    const execResult = {
-      Transaction: {
-        digest: '0xrevert2',
-        effects: {
-          status: { success: false, error: { message: 'Abort' } },
-          gasUsed: { computationCost: '1', storageCost: '1', storageRebate: '0' },
-        },
-      },
-    };
+    const execResult = grpcExecutionFailure('0xrevert2', unknownExecutionError('Abort'), {
+      computationCost: '1',
+      storageCost: '1',
+      storageRebate: '0',
+    });
     const ctx = makeMockContext({
       prepareStore: makeMockPrepareStore(prepared, prepared),
       sponsorPool,
@@ -1819,18 +1804,12 @@ describe('handleSponsor', () => {
     const prepared = makePreparedEntry(txHash);
     const userSig = await buildValidSignature(txBytes);
 
-    // Simulate a response where effects has no gasUsed
-    const simResult = {
-      Transaction: {
-        digest: '0xdigest_no_gas',
-        status: { success: true },
-        effects: {}, // no gasUsed
-      },
-    };
+    // Terminal status is valid, but the gas summary is not usable.
+    const simResult = simulationSuccessWithoutValidGas('0xdigest_no_gas');
     const sponsorPool = makeMockSponsorPool();
     const ctx = makeMockContext({
       prepareStore: makeMockPrepareStore(prepared, prepared),
-      sui: makeMockSui(simResult, makeSuccessSimResult()),
+      sui: makeMockSui(simResult),
       sponsorPool,
     });
 
@@ -1860,24 +1839,18 @@ describe('handleSponsor', () => {
     const userSig = await buildValidSignature(txBytes);
 
     // Simulation returns storageRebate > comp+storage → negative raw simGas
-    const negativeGasSimResult = {
-      Transaction: {
-        digest: '0xdigest_negative_gas',
-        status: { success: true },
-        effects: {
-          gasUsed: {
-            computationCost: '1000000',
-            storageCost: '500000',
-            storageRebate: '3000000', // 3M > 1M + 0.5M = 1.5M → raw = -1.5M → clamp to 0
-          },
-        },
-      },
+    const negativeGas = {
+      computationCost: '1000000',
+      storageCost: '500000',
+      storageRebate: '3000000', // 3M > 1M + 0.5M = 1.5M → raw = -1.5M → clamp to 0
     };
+    const negativeGasSimResult = grpcSimulationSuccess('0xdigest_negative_gas', negativeGas);
+    const negativeGasExecResult = grpcExecutionSuccess('0xdigest_negative_gas', negativeGas);
     const sponsorPool = makeMockSponsorPool();
     const ctx = makeMockContext({
       prepareStore: makeMockPrepareStore(prepared, prepared),
       sponsorPool,
-      sui: makeMockSui(negativeGasSimResult, negativeGasSimResult),
+      sui: makeMockSui(negativeGasSimResult, negativeGasExecResult),
     });
 
     const result = await handleSponsor(
@@ -2022,21 +1995,13 @@ describe('handleSponsor', () => {
     const userSig = await buildValidSignature(txBytes);
     const abuseBlocker = makeMockAbuseBlocker();
     const sponsorPool = makeMockSponsorPool();
-    const failedSim = {
-      Transaction: {
-        digest: '0xfail_claim',
-        status: {
-          success: false,
-          error: {
-            message:
-              'MoveAbort(0x1111111111111111111111111111111111111111111111111111111111111111::settle, 101) in command 0',
-          },
-        },
-        effects: {
-          gasUsed: { computationCost: '1000', storageCost: '500', storageRebate: '200' },
-        },
-      },
-    };
+    const reason =
+      'MoveAbort(0x1111111111111111111111111111111111111111111111111111111111111111::settle, 101) in command 0';
+    const failedSim = grpcSimulationFailure(
+      '0xfail_claim',
+      moveAbortExecutionError(reason, '101'),
+      { computationCost: '1000', storageCost: '500', storageRebate: '200' },
+    );
     const ctx = makeMockContext({
       prepareStore: makeMockPrepareStore(prepared, prepared),
       abuseBlocker,
@@ -2063,21 +2028,13 @@ describe('handleSponsor', () => {
     const userSig = await buildValidSignature(txBytes);
     const sponsorPool = makeMockSponsorPool();
     const abuseBlocker = makeMockAbuseBlocker();
-    const execResult = {
-      Transaction: {
-        digest: '0xrevert_claim',
-        effects: {
-          status: {
-            success: false,
-            error: {
-              message:
-                'MoveAbort(0x1111111111111111111111111111111111111111111111111111111111111111::settle, 101) in command 0',
-            },
-          },
-          gasUsed: { computationCost: '1000000', storageCost: '1000000', storageRebate: '500000' },
-        },
-      },
-    };
+    const reason =
+      'MoveAbort(0x1111111111111111111111111111111111111111111111111111111111111111::settle, 101) in command 0';
+    const execResult = grpcExecutionFailure(
+      '0xrevert_claim',
+      moveAbortExecutionError(reason, '101'),
+      { computationCost: '1000000', storageCost: '1000000', storageRebate: '500000' },
+    );
     const ctx = makeMockContext({
       prepareStore: makeMockPrepareStore(prepared, prepared),
       sponsorPool,
@@ -2107,21 +2064,13 @@ describe('handleSponsor', () => {
     const userSig = await buildValidSignature(txBytes);
     const abuseBlocker = makeMockAbuseBlocker();
     const sponsorPool = makeMockSponsorPool();
-    const failedSim = {
-      Transaction: {
-        digest: '0xfail_spread',
-        status: {
-          success: false,
-          error: {
-            message:
-              'MoveAbort(0x1111111111111111111111111111111111111111111111111111111111111111::settle, 110) in command 1',
-          },
-        },
-        effects: {
-          gasUsed: { computationCost: '1000', storageCost: '500', storageRebate: '200' },
-        },
-      },
-    };
+    const reason =
+      'MoveAbort(0x1111111111111111111111111111111111111111111111111111111111111111::settle, 110) in command 1';
+    const failedSim = grpcSimulationFailure(
+      '0xfail_spread',
+      moveAbortExecutionError(reason, '110'),
+      { computationCost: '1000', storageCost: '500', storageRebate: '200' },
+    );
     const sui = makeMockSui(failedSim);
     attachVaultLookup(sui, { kind: 'no_vault' });
     const ctx = makeMockContext({
@@ -2154,21 +2103,13 @@ describe('handleSponsor', () => {
     const userSig = await buildValidSignature(txBytes);
     const sponsorPool = makeMockSponsorPool();
     const abuseBlocker = makeMockAbuseBlocker();
-    const execResult = {
-      Transaction: {
-        digest: '0xrevert_spread',
-        effects: {
-          status: {
-            success: false,
-            error: {
-              message:
-                'MoveAbort(0x1111111111111111111111111111111111111111111111111111111111111111::settle, 110) in command 1',
-            },
-          },
-          gasUsed: { computationCost: '1000000', storageCost: '1000000', storageRebate: '500000' },
-        },
-      },
-    };
+    const reason =
+      'MoveAbort(0x1111111111111111111111111111111111111111111111111111111111111111::settle, 110) in command 1';
+    const execResult = grpcExecutionFailure(
+      '0xrevert_spread',
+      moveAbortExecutionError(reason, '110'),
+      { computationCost: '1000000', storageCost: '1000000', storageRebate: '500000' },
+    );
     const sui = makeMockSui(undefined, execResult);
     attachVaultLookup(sui, { kind: 'no_vault' });
     const ctx = makeMockContext({
@@ -2202,20 +2143,12 @@ describe('handleSponsor', () => {
     const userSig = await buildValidSignature(txBytes);
     const abuseBlocker = makeMockAbuseBlocker();
     const sponsorPool = makeMockSponsorPool();
-    const failedSim = {
-      Transaction: {
-        digest: '0xfail_slippage',
-        status: {
-          success: false,
-          error: {
-            message: `Transaction resolution failed: MoveAbort in 2nd command, abort code: ${DEEPBOOK_MIN_OUT_ABORT.code}, in '${DEEPBOOK_MIN_OUT_ABORT.runtimePackageId}::${DEEPBOOK_MIN_OUT_ABORT.modulePath}' (instruction 165)`,
-          },
-        },
-        effects: {
-          gasUsed: { computationCost: '1000', storageCost: '500', storageRebate: '200' },
-        },
-      },
-    };
+    const reason = `Transaction resolution failed: MoveAbort in 2nd command, abort code: ${DEEPBOOK_MIN_OUT_ABORT.code}, in '${DEEPBOOK_MIN_OUT_ABORT.runtimePackageId}::${DEEPBOOK_MIN_OUT_ABORT.modulePath}' (instruction 165)`;
+    const failedSim = grpcSimulationFailure(
+      '0xfail_slippage',
+      moveAbortExecutionError(reason, String(DEEPBOOK_MIN_OUT_ABORT.code)),
+      { computationCost: '1000', storageCost: '500', storageRebate: '200' },
+    );
     const sui = makeMockSui(failedSim);
     attachVaultLookup(sui, { kind: 'no_vault' });
     const ctx = makeMockContext({
@@ -2248,20 +2181,12 @@ describe('handleSponsor', () => {
     const userSig = await buildValidSignature(txBytes);
     const sponsorPool = makeMockSponsorPool();
     const abuseBlocker = makeMockAbuseBlocker();
-    const execResult = {
-      Transaction: {
-        digest: '0xrevert_slippage',
-        effects: {
-          status: {
-            success: false,
-            error: {
-              message: `Transaction resolution failed: MoveAbort in 2nd command, abort code: ${DEEPBOOK_MIN_OUT_ABORT.code}, in '${DEEPBOOK_MIN_OUT_ABORT.runtimePackageId}::${DEEPBOOK_MIN_OUT_ABORT.modulePath}' (instruction 165)`,
-            },
-          },
-          gasUsed: { computationCost: '1000000', storageCost: '1000000', storageRebate: '500000' },
-        },
-      },
-    };
+    const reason = `Transaction resolution failed: MoveAbort in 2nd command, abort code: ${DEEPBOOK_MIN_OUT_ABORT.code}, in '${DEEPBOOK_MIN_OUT_ABORT.runtimePackageId}::${DEEPBOOK_MIN_OUT_ABORT.modulePath}' (instruction 165)`;
+    const execResult = grpcExecutionFailure(
+      '0xrevert_slippage',
+      moveAbortExecutionError(reason, String(DEEPBOOK_MIN_OUT_ABORT.code)),
+      { computationCost: '1000000', storageCost: '1000000', storageRebate: '500000' },
+    );
     const sui = makeMockSui(undefined, execResult);
     attachVaultLookup(sui, { kind: 'no_vault' });
     const ctx = makeMockContext({
@@ -2596,14 +2521,8 @@ describe('handleSponsor', () => {
     const prepared = makePreparedEntry(txHash);
     const userSig = await buildValidSignature(txBytes);
 
-    // Execution succeeds but effects have no gasUsed — Sui gRPC edge case.
-    const execResultNoGas = {
-      Transaction: {
-        digest: '0xdigest_exec_no_gas',
-        status: { success: true },
-        effects: {}, // no gasUsed
-      },
-    };
+    // Terminal evidence is valid, but the gas summary is unusable.
+    const execResultNoGas = executionSuccessWithoutValidGas('0xdigest_exec_no_gas');
     const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const sponsorPool = makeMockSponsorPool();
     const abuseBlocker = makeMockAbuseBlocker();
@@ -2713,6 +2632,7 @@ describe('handleSponsor', () => {
         slotId: SLOT_ID,
         sponsorAddress: SPONSOR_ADDRESS,
         outcome: 'success',
+        executionStage: 'on_chain',
         route: 'generic',
         digest: '0xdigest123',
       });
@@ -2722,8 +2642,13 @@ describe('handleSponsor', () => {
       if (probe.calls[0].economics.economicsStatus === 'known') {
         expect(probe.calls[0].economics.grossGasMist).not.toBeNull();
         expect(probe.calls[0].economics.storageRebateMist).not.toBeNull();
-        expect(probe.calls[0].economics.recoveredGasMist).toBeDefined();
-        expect(probe.calls[0].economics.hostPaidGasMist).toBeDefined();
+        expect(probe.calls[0].economics.recoveredGasMist).toBe(
+          DEFAULT_TX_SETTLE_VALUES.executionCostClaim.toString(),
+        );
+        expect(probe.calls[0].economics.hostFeeMist).toBe(
+          DEFAULT_TX_SETTLE_VALUES.quotedHostFeeMist.toString(),
+        );
+        expect(probe.calls[0].economics.hostPaidGasMist).toBe('4500000');
       }
       // Ordering: pool.checkin fires before callback.
       expect(order).toEqual(['checkin', 'callback']);
@@ -2736,13 +2661,7 @@ describe('handleSponsor', () => {
       const { encodedTxBytes, txBytes, txHash } = await buildValidTx(SPONSOR_ADDRESS);
       const prepared = makePreparedEntry(txHash);
       const userSig = await buildValidSignature(txBytes);
-      const execResultNoGas = {
-        Transaction: {
-          digest: '0xdigest_exec_no_gas',
-          status: { success: true },
-          effects: {},
-        },
-      };
+      const execResultNoGas = executionSuccessWithoutValidGas('0xdigest_exec_no_gas');
       const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
       const probe = collectingCallback();
       const ctx = makeMockContext({
@@ -2766,6 +2685,7 @@ describe('handleSponsor', () => {
       expect(probe.calls[0]).toMatchObject({
         slotId: SLOT_ID,
         outcome: 'success',
+        executionStage: 'on_chain',
         digest: '0xdigest_exec_no_gas',
       });
       // Economics block: gasUsed-missing edge path → unknown economics
@@ -2781,21 +2701,12 @@ describe('handleSponsor', () => {
       const { encodedTxBytes, txBytes, txHash } = await buildValidTx(SPONSOR_ADDRESS);
       const prepared = makePreparedEntry(txHash);
       const userSig = await buildValidSignature(txBytes);
-      // `signAndSubmit` classifies an on-chain revert via
-      // `tx.effects.status.success === false` on a `Transaction` result.
-      const execRevert = {
-        Transaction: {
-          digest: '0xreverted_digest',
-          effects: {
-            status: { success: false, error: { message: 'MoveAbort(code: 7)' } },
-            gasUsed: {
-              computationCost: '1000000',
-              storageCost: '1000000',
-              storageRebate: '500000',
-            },
-          },
-        },
-      };
+      // Use the current Sui client's discriminated terminal union.
+      const execRevert = grpcExecutionFailure(
+        '0xreverted_digest',
+        moveAbortExecutionError('MoveAbort(code: 7)', '7'),
+        { computationCost: '1000000', storageCost: '1000000', storageRebate: '500000' },
+      );
       const probe = collectingCallback();
       const ctx = makeMockContext({
         prepareStore: makeMockPrepareStore(prepared, prepared),
@@ -2812,6 +2723,7 @@ describe('handleSponsor', () => {
       expect(err).toBeInstanceOf(SponsorOnchainError);
       expect(probe.calls).toHaveLength(1);
       expect(probe.calls[0].outcome).toBe('onchain_revert');
+      expect(probe.calls[0].executionStage).toBe('on_chain');
       expect(probe.calls[0].digest).toBe('0xreverted_digest');
     });
 
@@ -2821,18 +2733,7 @@ describe('handleSponsor', () => {
       const userSig = await buildValidSignature(txBytes);
       // `signAndSubmit` classifies shared-object congestion via the
       // `$kind: 'FailedTransaction'` wrapper + congestion error kind.
-      const execCongestion = {
-        $kind: 'FailedTransaction',
-        FailedTransaction: {
-          digest: '0xcongested',
-          status: {
-            error: {
-              $kind: 'ExecutionCancelledDueToSharedObjectCongestion',
-              message: 'ExecutionCancelledDueToSharedObjectCongestion',
-            },
-          },
-        },
-      };
+      const execCongestion = grpcExecutionFailure('0xcongested', congestedObjectsExecutionError());
       const probe = collectingCallback();
       const ctx = makeMockContext({
         prepareStore: makeMockPrepareStore(prepared, prepared),
@@ -2849,25 +2750,28 @@ describe('handleSponsor', () => {
       expect(err).toBeInstanceOf(SponsorCongestionError);
       expect(probe.calls).toHaveLength(1);
       expect(probe.calls[0].outcome).toBe('congestion');
+      expect(probe.calls[0].executionStage).toBe('after_sponsor_signature');
     });
 
-    it('submit-infra exception → outcome=internal_error with submit_infra_unknown marker on sponsor result callback (sponsor signature already issued before throw, TX may have landed)', async () => {
-      // Generic submit-infra branch parity check with the promotion
+    it('RPC exception after signing remains uncertain even when its message mentions congestion', async () => {
+      // Generic post-signature branch parity check with the promotion
       // handler. `signAndSubmit` issues the sponsor signature inside
-      // `pool.sign()` BEFORE calling `executeTransaction()`
-      // (`packages/core-api/src/session/sessionPrimitives.ts:285-293`).
+      // `pool.sign()` before calling `executeTransaction()`.
       // Any non-congestion `executeTransaction` throw therefore happens
       // post-signature, and the TX may have reached the network and
-      // burned gas. The sponsor result callback must see the
-      // `submit_infra_unknown` marker so the host recorder can opt this
-      // row into Sponsored Executions; the outer-catch fall-through
-      // must NOT overwrite the marker with the raw RPC error message.
+      // burned gas. `executionStage` is the recorder authority;
+      // Diagnostic text cannot turn a rejected RPC promise into confirmed
+      // congestion; only a validated terminal CongestedObjects result can.
       const { encodedTxBytes, txBytes, txHash } = await buildValidTx(SPONSOR_ADDRESS);
       const prepared = makePreparedEntry(txHash);
       const userSig = await buildValidSignature(txBytes);
       const probe = collectingCallback();
       const sui = makeMockSui();
-      sui.executeTransaction = vi.fn().mockRejectedValue(new Error('rpc transport error'));
+      sui.executeTransaction = vi
+        .fn()
+        .mockRejectedValue(
+          new Error('ExecutionCancelledDueToSharedObjectCongestion: rpc transport rejected'),
+        );
       const ctx = makeMockContext({
         prepareStore: makeMockPrepareStore(prepared, prepared),
         sui,
@@ -2881,26 +2785,136 @@ describe('handleSponsor', () => {
       ).catch((e: unknown) => e);
 
       expect(err).toBeInstanceOf(Error);
-      expect((err as Error).message).toContain('rpc transport error');
+      expect((err as Error).message).toContain('rpc transport rejected');
 
       expect(probe.calls).toHaveLength(1);
       expect(probe.calls[0].outcome).toBe('internal_error');
+      expect(probe.calls[0].executionStage).toBe('after_sponsor_signature');
       expect(probe.calls[0].route).toBe('generic');
       expect(probe.calls[0].economics.economicsStatus).toBe('unknown');
       if (probe.calls[0].economics.economicsStatus === 'unknown') {
-        expect(probe.calls[0].economics.failureReason).toContain('submit_infra_unknown');
-        expect(probe.calls[0].economics.failureReason).toContain('rpc transport error');
+        expect(probe.calls[0].economics.failureReason).toContain('post_signature_uncertainty');
+        expect(probe.calls[0].economics.failureReason).toContain('rpc transport rejected');
       }
     });
 
-    it('pre-sign pool.sign() rejection (SponsorLeaseExpiredError) → sponsor result callback must NOT carry submit_infra_unknown (sponsor signature was never issued)', async () => {
-      // Boundary regression: `pool.sign()` runs BEFORE
-      // `executeTransaction()` inside `signAndSubmit`
-      // (`packages/core-api/src/session/sessionPrimitives.ts:285-289`).
+    it('missing terminal result after sponsor signature is typed as post-signature uncertainty', async () => {
+      const { encodedTxBytes, txBytes, txHash } = await buildValidTx(SPONSOR_ADDRESS);
+      const prepared = makePreparedEntry(txHash);
+      const userSig = await buildValidSignature(txBytes);
+      const probe = collectingCallback();
+      const sui = makeMockSui();
+      sui.executeTransaction = vi.fn().mockResolvedValue({ $kind: 'Transaction' });
+      const ctx = makeMockContext({
+        prepareStore: makeMockPrepareStore(prepared, prepared),
+        sui,
+        onSponsorResult: probe.callback,
+      });
+
+      const err = await handleSponsor(
+        ctx,
+        { txBytes: encodedTxBytes, userSignature: userSig, receiptId: PAYMENT_ID },
+        CLIENT_IP,
+      ).catch((cause: unknown) => cause);
+
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toContain('malformed terminal result');
+      expect(probe.calls).toHaveLength(1);
+      expect(probe.calls[0]).toMatchObject({
+        outcome: 'internal_error',
+        executionStage: 'after_sponsor_signature',
+        route: 'generic',
+      });
+      expect(probe.calls[0].economics.economicsStatus).toBe('unknown');
+    });
+
+    it('rejects a hybrid terminal union instead of selecting one branch', async () => {
+      const { encodedTxBytes, txBytes, txHash } = await buildValidTx(SPONSOR_ADDRESS);
+      const prepared = makePreparedEntry(txHash);
+      const userSig = await buildValidSignature(txBytes);
+      const success = grpcExecutionSuccess('0xhybrid');
+      const failure = grpcExecutionFailure(
+        '0xhybrid',
+        moveAbortExecutionError('MoveAbort(code: 7)', '7'),
+      );
+      const sui = makeMockSui();
+      sui.executeTransaction = vi.fn().mockResolvedValue({
+        ...success,
+        FailedTransaction: failure.FailedTransaction,
+      });
+      const probe = collectingCallback();
+      const ctx = makeMockContext({
+        prepareStore: makeMockPrepareStore(prepared, prepared),
+        sui,
+        onSponsorResult: probe.callback,
+      });
+
+      const err = await handleSponsor(
+        ctx,
+        { txBytes: encodedTxBytes, userSignature: userSig, receiptId: PAYMENT_ID },
+        CLIENT_IP,
+      ).catch((cause: unknown) => cause);
+
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toContain('malformed terminal result');
+      expect(probe.calls).toHaveLength(1);
+      expect(probe.calls[0]).toMatchObject({
+        outcome: 'internal_error',
+        executionStage: 'after_sponsor_signature',
+        route: 'generic',
+      });
+    });
+
+    it('rejects disagreement between transaction and effects status', async () => {
+      const { encodedTxBytes, txBytes, txHash } = await buildValidTx(SPONSOR_ADDRESS);
+      const prepared = makePreparedEntry(txHash);
+      const userSig = await buildValidSignature(txBytes);
+      const success = grpcExecutionSuccess('0xstatus-mismatch');
+      const failure = grpcExecutionFailure(
+        '0xstatus-mismatch',
+        moveAbortExecutionError('MoveAbort(code: 9)', '9'),
+      );
+      const sui = makeMockSui();
+      sui.executeTransaction = vi.fn().mockResolvedValue({
+        ...success,
+        Transaction: {
+          ...success.Transaction,
+          effects: {
+            ...success.Transaction.effects,
+            status: failure.FailedTransaction.status,
+          },
+        },
+      });
+      const probe = collectingCallback();
+      const ctx = makeMockContext({
+        prepareStore: makeMockPrepareStore(prepared, prepared),
+        sui,
+        onSponsorResult: probe.callback,
+      });
+
+      const err = await handleSponsor(
+        ctx,
+        { txBytes: encodedTxBytes, userSignature: userSig, receiptId: PAYMENT_ID },
+        CLIENT_IP,
+      ).catch((cause: unknown) => cause);
+
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toContain('malformed terminal result');
+      expect(probe.calls).toHaveLength(1);
+      expect(probe.calls[0]).toMatchObject({
+        outcome: 'internal_error',
+        executionStage: 'after_sponsor_signature',
+        route: 'generic',
+      });
+    });
+
+    it('pre-sign pool.sign() rejection does not carry post-signature uncertainty', async () => {
+      // `pool.sign()` runs before `executeTransaction()` inside
+      // `signAndSubmit`.
       // A `SponsorLeaseExpiredError` from `pool.sign()` therefore
-      // means the sponsor signature was NEVER issued, and the leak-
-      // free post-signature submit-infra policy must NOT apply. The
-      // host recorder must not see the row as `submit_infra_unknown`,
+      // means the sponsor signature was never issued, so the
+      // post-signature uncertainty policy must not apply. The
+      // host recorder must not see the row as post-signature uncertainty,
       // and the sponsor result economics must be classified as
       // `validation_failure` by the outer-catch path (existing
       // classification rule for `SponsorLeaseExpiredError`).
@@ -2925,13 +2939,16 @@ describe('handleSponsor', () => {
       expect(err).toBeInstanceOf(SponsorLeaseExpiredError);
       expect(probe.calls).toHaveLength(1);
       expect(probe.calls[0].outcome).toBe('validation_failure');
-      // Critical: NO `submit_infra_unknown` marker. If this assertion
+      expect(probe.calls[0].executionStage).toBe('before_sponsor_signature');
+      // Critical: no post-signature uncertainty marker. If this assertion
       // ever fires, the recorder would have falsely reported a
       // post-signature gas burn for a request whose sponsor signature
       // was never issued.
       expect(probe.calls[0].economics.economicsStatus).toBe('unknown');
       if (probe.calls[0].economics.economicsStatus === 'unknown') {
-        expect(probe.calls[0].economics.failureReason ?? '').not.toContain('submit_infra_unknown');
+        expect(probe.calls[0].economics.failureReason ?? '').not.toContain(
+          'post_signature_uncertainty',
+        );
       }
     });
 
@@ -2949,19 +2966,11 @@ describe('handleSponsor', () => {
       const probe = collectingCallback();
       // computation + storage = 800_000; storageRebate = 2_000_000 →
       // rawNet = -1_200_000 → clamp to 0.
-      const successExec = {
-        Transaction: {
-          digest: 'tx-success-rebate',
-          status: { success: true },
-          effects: {
-            gasUsed: {
-              computationCost: '500000',
-              storageCost: '300000',
-              storageRebate: '2000000',
-            },
-          },
-        },
-      };
+      const successExec = grpcExecutionSuccess('tx-success-rebate', {
+        computationCost: '500000',
+        storageCost: '300000',
+        storageRebate: '2000000',
+      });
       const sui = makeMockSui(undefined, successExec);
       const ctx = makeMockContext({
         prepareStore: makeMockPrepareStore(prepared, prepared),
@@ -3008,19 +3017,11 @@ describe('handleSponsor', () => {
       const { encodedTxBytes, txBytes, txHash } = await buildValidTx(SPONSOR_ADDRESS);
       const prepared = makePreparedEntry(txHash);
       const userSig = await buildValidSignature(txBytes);
-      const successExec = {
-        Transaction: {
-          digest: 'tx-rebate-event-log',
-          status: { success: true },
-          effects: {
-            gasUsed: {
-              computationCost: '500000',
-              storageCost: '300000',
-              storageRebate: '2000000',
-            },
-          },
-        },
-      };
+      const successExec = grpcExecutionSuccess('tx-rebate-event-log', {
+        computationCost: '500000',
+        storageCost: '300000',
+        storageRebate: '2000000',
+      });
       const sui = makeMockSui(undefined, successExec);
       const ctx = makeMockContext({
         prepareStore: makeMockPrepareStore(prepared, prepared),
@@ -3078,20 +3079,15 @@ describe('handleSponsor', () => {
       const probe = collectingCallback();
       // computation + storage = 1_000_000; storageRebate = 1_500_000
       // → rawNet = -500_000 → clamp to 0.
-      const failedExec = {
-        $kind: 'FailedTransaction' as const,
-        FailedTransaction: {
-          digest: 'tx-revert-rebate',
-          status: { error: { message: 'rebate-positive revert' } },
-          effects: {
-            gasUsed: {
-              computationCost: '700000',
-              storageCost: '300000',
-              storageRebate: '1500000',
-            },
-          },
+      const failedExec = grpcExecutionFailure(
+        'tx-revert-rebate',
+        unknownExecutionError('rebate-positive revert'),
+        {
+          computationCost: '700000',
+          storageCost: '300000',
+          storageRebate: '1500000',
         },
-      };
+      );
       const sui = makeMockSui(undefined, failedExec);
       const ctx = makeMockContext({
         prepareStore: makeMockPrepareStore(prepared, prepared),
@@ -3279,17 +3275,13 @@ describe('handleSponsor', () => {
       // `EVaultAlreadyRegistered` abort. The test asserts preflight is
       // never invoked, so this stub value would be observed only if the
       // ordering regressed.
-      const vaultAlreadyRegisteredSim = {
-        Transaction: {
-          digest: '0xstubbed-not-reached',
-          status: {
-            success: false,
-            error: {
-              message: `MoveAbort(${MOCK_CONFIG.packageId}::vault::register_vault, 1) in command 0`,
-            },
-          },
-        },
-      };
+      const vaultAlreadyRegisteredSim = grpcSimulationFailure(
+        '0xstubbed-not-reached',
+        moveAbortExecutionError(
+          `MoveAbort(${MOCK_CONFIG.packageId}::vault::register_vault, 1) in command 0`,
+          '1',
+        ),
+      );
       const sui = makeMockSui(vaultAlreadyRegisteredSim);
       const lookup = attachVaultLookup(sui, { kind: 'vault_exists' });
       const sponsorPool = makeMockSponsorPool();

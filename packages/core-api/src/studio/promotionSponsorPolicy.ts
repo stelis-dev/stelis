@@ -91,11 +91,12 @@ export type ConsumeLedgerOutcome =
   | { ok: false; kind: 'threw'; error: string };
 
 /**
- * Failure-path ledger consume helper.
+ * Post-signature ledger consume helper.
  *
- * Used by post-signature/post-submit promotion failure branches
- * (submit-infra exception, on-chain revert with/without `gasUsed`,
- * post-success `GAS_EFFECTS_MISSING`). Behavior contract:
+ * Used by post-signature/post-submit promotion ledger updates
+ * (post-signature uncertainty, on-chain revert with/without `gasUsed`,
+ * post-success `GAS_EFFECTS_MISSING`, and success-side entitlement
+ * consumption). Behavior contract:
  *
  *   - On `ConsumeResult.ok === true` returns `{ ok: true }`.
  *   - On `ConsumeResult.ok === false` emits
@@ -105,10 +106,10 @@ export type ConsumeLedgerOutcome =
  *     same context and returns `{ ok: false, kind: 'threw', error }`.
  *
  * The helper does NOT throw and does NOT fall back to `release()`. A
- * failure-path consume failure leaves the reservation eligible for the
+ * consume failure leaves the reservation eligible for the
  * ExecutionLedger reservation reaper release path, which is documented
- * operator follow-up — call sites must mark sponsor result economics as
- * unknown/loss instead of pretending the ledger settled successfully.
+ * operator follow-up. Callers derive economic certainty from on-chain gas
+ * evidence, never from whether this entitlement update succeeded.
  *
  * Branch-specific failure reasons stay at the call site (they go into the
  * UsageEvent `failureReason`); this helper only logs ledger-call outcome.

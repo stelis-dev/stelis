@@ -38,6 +38,7 @@ import type {
   SponsorSlotReservationHandle,
 } from './index.js';
 import type { ExecResult } from '../sessionTypes.js';
+import type { SponsorExecutionStage } from '../../handlers/sponsorResult.js';
 
 type MaybePromise<T> = Promise<T> | T;
 
@@ -177,6 +178,8 @@ export interface PreConsumeSponsorContext {
 export interface PostConsumeSponsorContext {
   readonly receiptId: string;
   readonly clientIp: string;
+  /** Runner-owned irreversible execution boundary; never inferred by a policy. */
+  readonly executionStage: SponsorExecutionStage;
   readonly sponsorSlot: SponsorSlotReservationHandle;
   readonly nonce?: NonceReservationHandle;
   readonly ledgerReservation?: LedgerReservationHandle;
@@ -321,7 +324,7 @@ export interface StateHookSignatures<D extends PolicyDiscriminator = PolicyDiscr
   // will classify next. The hook receives only the post-consume context;
   // `ClassifySponsorResult` is the single owner of result classification and
   // accounting. Pre-sign failures (e.g. `SponsorLeaseExpiredError`) and
-  // post-sign submit-infra failures (`SponsorSubmitInfraError`) propagate
+  // post-signature uncertainty (`SponsorPostSignatureUncertaintyError`) propagates
   // from the port without invoking this hook — the public route adapter's
   // outer catch handles those.
   readonly Submit: (ctx: PostConsumeSponsorContext) => Promise<void> | void;

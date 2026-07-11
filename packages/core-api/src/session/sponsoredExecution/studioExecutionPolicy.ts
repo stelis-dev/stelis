@@ -34,9 +34,8 @@ import {
   PREPARE_ENTRY_CORRUPT,
   PREPARE_STAGE,
   PROMOTION_GAS_OVERRUN_WARNING,
-  PROMOTION_LEDGER_CONSUME_FAILED,
   PROMOTION_SPONSOR_EXECUTION,
-  PROMOTION_SPONSOR_SUBMIT_INFRA_EXCEPTION,
+  PROMOTION_SPONSOR_POST_SIGNATURE_UNCERTAINTY,
   PROMOTION_USAGE_RECORDER_FAILED,
   SPONSOR_RESULT_CALLBACK_FAILED,
 } from '../../observability/events.js';
@@ -80,7 +79,7 @@ import {
   runPreflight,
   SenderSignatureError,
   signAndSubmit,
-  SponsorSubmitInfraError,
+  SponsorPostSignatureUncertaintyError,
   verifyGasOwner,
   verifySenderSignature,
 } from '../sessionPrimitives.js';
@@ -1006,25 +1005,26 @@ async function classifyStudioSponsorResult(
 
     state.sponsorResultOutcome = 'onchain_revert';
     state.sponsorResultDigest = result.digest;
+    const ledgerNote = consumeOutcome.ok ? '' : ` (ledger consume ${consumeOutcome.kind})`;
     if (
       revert.actualMist !== null &&
-      consumeOutcome.ok &&
       revert.grossGasMist !== null &&
       revert.storageRebateMist !== null
     ) {
       state.sponsorResultEconomics = serializeSponsoredExecutionEconomics(
         deriveSponsoredExecutionEconomics({
-          recoveredGasMist: revert.actualMist,
+          // Promotion entitlement consumption is budget accounting, not
+          // settlement recovery paid back to the Host.
+          recoveredGasMist: 0n,
           hostPaidGasMist: revert.actualMist,
           hostFeeMist: 0n,
           grossGasMist: revert.grossGasMist,
           storageRebateMist: revert.storageRebateMist,
           protocolFeeMist: null,
-          failureReason: `onchain_revert: ${result.reason}`,
+          failureReason: `onchain_revert${ledgerNote}: ${result.reason}`,
         }),
       );
     } else {
-      const ledgerNote = consumeOutcome.ok ? '' : ` (ledger consume ${consumeOutcome.kind})`;
       state.sponsorResultEconomics = serializeSponsoredExecutionEconomics(
         unknownSponsoredExecutionEconomics(
           `${revert.triggerReason}${ledgerNote}: ${result.reason}`,
@@ -1104,21 +1104,25 @@ async function classifyStudioSponsorResult(
 
   const deltaReleasedMist =
     actualGasMist <= prepared.reservedGasMist ? prepared.reservedGasMist - actualGasMist : 0n;
-  const consumeResult = await options.context.executionLedger.consume(
+  const consumeOutcome = await d.consumeLedgerReservationWithLog(
+    options.context.executionLedger,
     sponsor.params.receiptId,
     actualGasMist,
+    'success',
+    {
+      promotionId: sponsor.params.promotionId,
+      userId: identity.userId,
+      senderAddress: peekedPromotion.senderAddress,
+      txDigest: result.digest,
+    },
   );
-  if (!consumeResult.ok) {
-    logStructuredEvent(
-      PROMOTION_LEDGER_CONSUME_FAILED,
-      {
-        promotionId: sponsor.params.promotionId,
-        userId: identity.userId,
-        digest: result.digest,
-        reason: consumeResult.reason,
-      },
-      'error',
-    );
+  if (!consumeOutcome.ok) {
+    const consumeFailure =
+      consumeOutcome.kind === 'failed' ? consumeOutcome.reason : consumeOutcome.error;
+    const consumeFailureCode =
+      consumeOutcome.kind === 'failed'
+        ? 'PROMOTION_LEDGER_CONSUME_FAILED'
+        : 'PROMOTION_LEDGER_CONSUME_THREW';
     state.sponsorResultEconomics = serializeSponsoredExecutionEconomics(
       deriveSponsoredExecutionEconomics({
         recoveredGasMist: 0n,
@@ -1127,11 +1131,11 @@ async function classifyStudioSponsorResult(
         grossGasMist,
         storageRebateMist,
         protocolFeeMist: null,
-        failureReason: `PROMOTION_LEDGER_CONSUME_FAILED: ${consumeResult.reason}`,
+        failureReason: `${consumeFailureCode}: ${consumeFailure}`,
       }),
     );
     throw sponsor.errors.sponsor(
-      `Budget consume failed after successful TX: ${consumeResult.reason}. Digest: ${result.digest}`,
+      `Budget consume failed after successful TX: ${consumeFailure}. Digest: ${result.digest}`,
       'CONSUME_FAILED',
       500,
     );
@@ -1179,7 +1183,9 @@ async function classifyStudioSponsorResult(
 
   state.sponsorResultEconomics = serializeSponsoredExecutionEconomics(
     deriveSponsoredExecutionEconomics({
-      recoveredGasMist: actualGasMist,
+      // Consuming promotion allowance proves entitlement usage only. It does
+      // not transfer settlement value back to the Host.
+      recoveredGasMist: 0n,
       hostPaidGasMist: actualGasMist,
       hostFeeMist: 0n,
       grossGasMist,
@@ -1192,7 +1198,7 @@ async function classifyStudioSponsorResult(
 async function runStudioRelease(
   options: StudioExecutionPolicyOptions,
   runtime: StudioExecutionPolicyState,
-  _ctx: PostConsumeSponsorContext,
+  ctx: PostConsumeSponsorContext,
 ): Promise<void> {
   const sponsor = requireSponsor(options);
   const state = requireSponsorState(runtime);
@@ -1206,6 +1212,7 @@ async function runStudioRelease(
       slotId: prepared.slotId,
       sponsorAddress: prepared.sponsorAddress,
       outcome: state.sponsorResultOutcome,
+      executionStage: ctx.executionStage,
       route: 'promotion',
       digest: state.sponsorResultDigest,
       receiptId: prepared.receiptId,
@@ -1248,7 +1255,7 @@ async function handleStudioSignAndSubmitThrow(
   const peekedPromotion = requireValue(state.peekedPromotion, 'peeked promotion prepared entry');
   const identity = sponsor.params.verifiedIdentity;
 
-  if (!(err instanceof SponsorSubmitInfraError)) {
+  if (!(err instanceof SponsorPostSignatureUncertaintyError)) {
     await d.releaseLedgerReservationWithLog(
       options.context.executionLedger,
       sponsor.params.receiptId,
@@ -1266,7 +1273,7 @@ async function handleStudioSignAndSubmitThrow(
     options.context.executionLedger,
     sponsor.params.receiptId,
     prepared.reservedGasMist,
-    'submit_infra_unknown',
+    'post_signature_uncertainty',
     {
       promotionId: sponsor.params.promotionId,
       userId: identity.userId,
@@ -1283,10 +1290,10 @@ async function handleStudioSignAndSubmitThrow(
     reservedGasMist: prepared.reservedGasMist,
     consumedGasMist: consumeOutcome.ok ? prepared.reservedGasMist : 0n,
     releasedGasMist: 0n,
-    failureReason: 'submit_infra_unknown',
+    failureReason: 'post_signature_uncertainty',
   });
   logStructuredEvent(
-    PROMOTION_SPONSOR_SUBMIT_INFRA_EXCEPTION,
+    PROMOTION_SPONSOR_POST_SIGNATURE_UNCERTAINTY,
     {
       promotionId: sponsor.params.promotionId,
       receiptId: sponsor.params.receiptId,
@@ -1306,11 +1313,11 @@ async function handleStudioSignAndSubmitThrow(
   state.sponsorResultEconomics = serializeSponsoredExecutionEconomics(
     unknownSponsoredExecutionEconomics(
       consumeOutcome.ok
-        ? `submit_infra_unknown: ${err.message}`
-        : `submit_infra_unknown (ledger consume ${consumeOutcome.kind}): ${err.message}`,
+        ? `post_signature_uncertainty: ${err.message}`
+        : `post_signature_uncertainty (ledger consume ${consumeOutcome.kind}): ${err.message}`,
     ),
   );
-  return err.cause;
+  return err;
 }
 
 // -------------------------------------------------------------

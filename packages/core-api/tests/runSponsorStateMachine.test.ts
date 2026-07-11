@@ -42,6 +42,7 @@ import type { ExecResult } from '../src/session/sessionTypes.js';
 import { MemoryPrepareStore } from '../src/store/memoryPrepareStore.js';
 import { MemoryPromotionExecutionLedger } from '../src/studio/executionLedgerMemory.js';
 import { SponsorPool } from '../src/context.js';
+import { SponsorPostSignatureUncertaintyError } from '../src/session/sessionPrimitives.js';
 import {
   runSponsorConsumePhase,
   type SponsorConsumePolicyAdapter,
@@ -69,6 +70,7 @@ const TEST_USER_SIGNATURE = 'mock-user-sig';
 
 const SUCCESS_EXEC: Extract<ExecResult, { success: true }> = {
   success: true,
+  executionStage: 'on_chain',
   digest: 'mock-digest',
   effects: undefined,
   gasUsed: {
@@ -81,6 +83,7 @@ const SUCCESS_EXEC: Extract<ExecResult, { success: true }> = {
 
 const FAILED_EXEC_ONCHAIN: ExecResult = {
   success: false,
+  executionStage: 'on_chain',
   digest: 'failed-digest',
   reason: 'MoveAbort',
   isCongestion: false,
@@ -89,8 +92,9 @@ const FAILED_EXEC_ONCHAIN: ExecResult = {
 
 const FAILED_EXEC_CONGESTION: ExecResult = {
   success: false,
+  executionStage: 'after_sponsor_signature',
   digest: '',
-  reason: 'ExecutionCancelledDueToSharedObjectCongestion',
+  reason: 'confirmed shared-object congestion',
   isCongestion: true,
   gasUsed: null,
 };
@@ -300,7 +304,7 @@ interface HostBuild {
   signAndSubmitMock: ReturnType<typeof vi.fn>;
 }
 
-function makeHost(opts?: { execResult?: ExecResult; signThrows?: Error }): HostBuild {
+function makeHost(opts?: { execResult?: ExecResult; signThrows?: unknown }): HostBuild {
   const sponsorPool = new SponsorPool([SPONSOR_KP], { hmacSecret: TEST_HMAC_SECRET });
   const prepareStore = new MemoryPrepareStore((slotId, receiptId, txBytesHash) =>
     sponsorPool.checkin(slotId, receiptId, txBytesHash),
@@ -641,7 +645,7 @@ describe('runSponsorStateMachine — finally slot checkin parity', () => {
     const preSignErr = new Error('SponsorLeaseExpired-equivalent');
     const host = makeHost({ signThrows: preSignErr });
     const slotId = await pinGenericEntry(host);
-    const { policy } = makeGenericPolicy({ emitNonce: true });
+    const { policy, log } = makeGenericPolicy({ emitNonce: true });
     const adapter = makeMockConsumeAdapter('generic');
 
     const checkinSpy = vi.spyOn(host.sponsorPool, 'checkin');
@@ -651,6 +655,29 @@ describe('runSponsorStateMachine — finally slot checkin parity', () => {
     ).rejects.toBe(preSignErr);
 
     expect(checkinSpy).toHaveBeenCalledWith(slotId, TEST_RECEIPT_ID, TEST_TX_BYTES_HASH);
+    const release = log.find((entry) => entry.state === 'Release');
+    expect((release?.args[0] as PostConsumeSponsorContext).executionStage).toBe(
+      'before_sponsor_signature',
+    );
+  });
+
+  test('typed post-signature uncertainty updates Release metadata before rethrowing the original cause', async () => {
+    const cause = new Error('rpc transport error');
+    const host = makeHost({
+      signThrows: new SponsorPostSignatureUncertaintyError(cause),
+    });
+    await pinGenericEntry(host);
+    const { policy, log } = makeGenericPolicy({ emitNonce: true });
+    const adapter = makeMockConsumeAdapter('generic');
+
+    await expect(
+      runSponsorStateMachine(host.host, makeGenericRequest(), policy, adapter),
+    ).rejects.toBe(cause);
+
+    const release = log.find((entry) => entry.state === 'Release');
+    expect((release?.args[0] as PostConsumeSponsorContext).executionStage).toBe(
+      'after_sponsor_signature',
+    );
   });
 
   test('execResult.success === false → ClassifySponsorResult throws (route classification); finally still runs safeSlotCheckin', async () => {
@@ -703,6 +730,7 @@ describe('runSponsorStateMachine — Submit hook non-masking', () => {
     expect(submit?.args).toHaveLength(1);
     expect(sponsorResult?.args).toHaveLength(2);
     expect(sponsorResult?.args[1]).toBe(SUCCESS_EXEC);
+    expect((sponsorResult?.args[0] as PostConsumeSponsorContext).executionStage).toBe('on_chain');
   });
 
   test('Submit throws on success path → ClassifySponsorResult still fires (success branch); primary success result still returned', async () => {

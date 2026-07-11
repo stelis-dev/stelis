@@ -43,7 +43,8 @@ import type { PreparedTxEntry, PrepareStoreAdapter } from '../../store/prepareTy
 import type { SponsorPoolAdapter } from '../../context.js';
 import type { PromotionExecutionLedger } from '../../studio/executionLedger.js';
 import { runSponsorConsumePhase, type SponsorConsumePolicyAdapter } from '../sponsorLifecycle.js';
-import { safeSlotCheckin } from '../sessionPrimitives.js';
+import { safeSlotCheckin, SponsorPostSignatureUncertaintyError } from '../sessionPrimitives.js';
+import type { SponsorExecutionStage } from '../../handlers/sponsorResult.js';
 
 // ─────────────────────────────────────────────
 // Host adapters + request shape
@@ -60,10 +61,9 @@ import { safeSlotCheckin } from '../sessionPrimitives.js';
  *   - `SponsorLeaseExpiredError` (or other `pool.sign` failures) throw
  *     before the sponsor signature is issued — the runner rethrows
  *     unchanged.
- *   - `SponsorSubmitInfraError` (post-signature submit-infra
- *     uncertainty) throws AFTER the sponsor signature was issued — the
- *     runner rethrows unchanged so the route handler can stamp
- *     `submit_infra_unknown` on sponsor result economics.
+ *   - `SponsorPostSignatureUncertaintyError` throws AFTER the sponsor
+ *     signature was issued. The runner captures its typed stage for the
+ *     Release metadata and rethrows the original cause.
  *   - Any other thrown value propagates unchanged.
  *   - On a normalized failed `ExecResult`, the runner forwards the
  *     result to `ClassifySponsorResult` so the policy can classify
@@ -267,6 +267,7 @@ export async function runSponsorStateMachine<TResult>(
   // Undefined until `runSponsorConsumePhase` returns success.
   let preparedEntry: PreparedTxEntry | undefined;
   let postCtxSnapshot: PostConsumeSponsorContext | undefined;
+  let executionStage: SponsorExecutionStage = 'before_sponsor_signature';
 
   try {
     // ── State 1: DecodeSponsorSubmission ──────────────────────────────
@@ -306,6 +307,7 @@ export async function runSponsorStateMachine<TResult>(
     const buildPostCtx = (): PostConsumeSponsorContext => ({
       receiptId: preCtx.receiptId,
       clientIp: preCtx.clientIp,
+      executionStage,
       sponsorSlot,
       nonce: nonceHandle,
       ledgerReservation: ledgerReservationHandle,
@@ -364,18 +366,30 @@ export async function runSponsorStateMachine<TResult>(
     await callHook(policy.hooks.SponsorSign, postCtxSnapshot);
 
     // ── State 9: Submit ───────────────────────────────────────────────
-    // Pre-sign failures (`SponsorLeaseExpiredError`) and post-sign
-    // submit-infra failures (`SponsorSubmitInfraError`) propagate from
-    // the port unchanged. On a normalized failed `ExecResult`, the
+    // Pre-sign failures (`SponsorLeaseExpiredError`) propagate from the
+    // port unchanged. Typed post-signature uncertainty updates the runner-
+    // owned stage before the original cause is rethrown. On a normalized failed `ExecResult`, the
     // runner does NOT classify — it forwards the result to
     // `ClassifySponsorResult` so the policy can decide whether to throw
     // congestion vs on-chain revert.
-    const execResult = await host.signAndSubmit(
-      preparedEntry.slotId,
-      preparedEntry.receiptId,
-      request.txBytes,
-      request.userSignature,
-    );
+    let execResult: ExecResult;
+    try {
+      execResult = await host.signAndSubmit(
+        preparedEntry.slotId,
+        preparedEntry.receiptId,
+        request.txBytes,
+        request.userSignature,
+      );
+      executionStage = execResult.executionStage;
+      postCtxSnapshot = buildPostCtx();
+    } catch (err) {
+      if (err instanceof SponsorPostSignatureUncertaintyError) {
+        executionStage = err.executionStage;
+        postCtxSnapshot = buildPostCtx();
+        throw err.cause;
+      }
+      throw err;
+    }
 
     // Submit hook fires after both success and normalized-failure
     // results are available, but result classification stays owned by

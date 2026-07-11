@@ -9,7 +9,7 @@
  *     on release error.
  *   - `SponsorSlotReservationImpl` delegates release to
  *     `safeSlotCheckin`, which emits `SPONSOR_POOL_CHECKIN_FAILED`
- *     internally (covered by `sessionPrimitives.ts:417-426`).
+ *     internally.
  *   - `NonceReservationImpl` swallows release errors silently.
  *   - `LedgerBudgetReservationImpl` emits
  *     `LEDGER_RELEASE_FAILED_IN_HANDLER` on `result.ok === false` and
