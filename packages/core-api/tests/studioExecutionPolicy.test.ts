@@ -38,6 +38,7 @@ const RECEIPT_ID = `0x${'ab'.repeat(32)}`;
 const PROMOTION_ID = 'promo-1';
 const USER_ID = 'user-1';
 const SENDER = `0x${'11'.repeat(32)}`;
+const DEEPBOOK_PACKAGE_ID = `0x${'77'.repeat(32)}`;
 const OTHER_SENDER = `0x${'33'.repeat(32)}`;
 const SPONSOR = `0x${'22'.repeat(32)}`;
 const TX_HASH = 'a'.repeat(64);
@@ -166,7 +167,7 @@ function makeContext(
   return {
     sui: {} as StudioPolicyContext['sui'],
     packageId: `0x${'66'.repeat(32)}`,
-    deepbookPackageId: `0x${'77'.repeat(32)}`,
+    deepbookPackageId: DEEPBOOK_PACKAGE_ID,
     promotionStore: {
       get: vi.fn(async () => makePromotion()),
     } as unknown as StudioPolicyContext['promotionStore'],
@@ -279,7 +280,7 @@ function seedSponsorState(
     txSender: SENDER,
     peeked: makePromotionEntry(),
     peekedPromotion: makePromotionEntry(),
-    builtTxForValidation: {} as Transaction,
+    builtTxForValidation: new Transaction(),
     prepared: makePromotionEntry(),
     sponsorResultOutcome: 'internal_error',
     sponsorResultEconomics: { economicsStatus: 'unknown', failureReason: null },

@@ -27,6 +27,7 @@ import { Transaction } from '@mysten/sui/transactions';
 import { fromBase64 } from '@mysten/sui/utils';
 import { buildSwapAndSettlePtb, buildSettleWithCreditPtb } from '@stelis/core-relay/browser';
 import { parseSettleArgs, convertSdkCommands } from '@stelis/core-relay';
+import { settlementParameterIndex } from '@stelis/contracts';
 import type { GenericPrepareBuildOutput } from '../src/prepare/build.js';
 import { composePreparedCommit } from '../src/session/sponsoredExecution/preparedCommit.js';
 
@@ -55,7 +56,7 @@ const AUDIT_FIELDS = {
   quotedHostFeeMist: 100_000n,
   expectedProtocolFeeMist: 20_000n,
   expectedConfigVersion: 1n,
-  quoteTimestampMs: 1_741_680_000_000,
+  quoteTimestampMs: 1_741_680_000_000n,
   policyHash: new Uint8Array(32).fill(0xbb),
   orderIdHash: new Uint8Array(0),
 };
@@ -185,23 +186,19 @@ function makeGenericPrepareBuildOutput(
 /**
  * Test-only: decode the tail `use_credit_amount` u64 from a with_vault PTB.
  *
- * with_vault MoveCall arg layout:
- *   0-2   common (config, registry, clock)
- *   3     vault object
- *   4     pool object
- *   5     payment_coin
- *   6-7   swap pures (swapAmount, minSuiOut)
- *   8-20  settle block (13 fields, settleStartIndex=8)
- *   21    use_credit_amount tail u64
- *
- * We follow the Input reference at MoveCall argument position 21 and
+ * We resolve the compiled `use_credit_amount` position, follow its Input reference, and
  * BCS-decode the 8-byte little-endian u64 from the Pure input bytes.
  * Does not use parseSettleArgs — exercises the raw PTB input structure.
  */
 function decodeTailCreditFromPtb(tx: Transaction): bigint {
-  const TAIL_ARG_INDEX = 21; // settleStartIndex(8) + SETTLE_FIELD_COUNT(13)
   const data = tx.getData() as { commands: unknown[]; inputs: unknown[] };
   const mc = (data.commands[0] as Record<string, unknown>).MoveCall as Record<string, unknown>;
+  const functionName = mc.function;
+  if (typeof functionName !== 'string') throw new Error('Expected MoveCall function name');
+  const TAIL_ARG_INDEX = settlementParameterIndex(functionName, 'use_credit_amount');
+  if (TAIL_ARG_INDEX === undefined) {
+    throw new Error(`Compiled ${functionName} has no use_credit_amount parameter`);
+  }
   const mcArgs = mc.arguments as Array<Record<string, unknown>>;
   const tailRef = mcArgs[TAIL_ARG_INDEX];
   if (!tailRef || tailRef.$kind !== 'Input' || typeof tailRef.Input !== 'number') {

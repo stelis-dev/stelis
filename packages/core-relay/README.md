@@ -169,7 +169,7 @@ For user-supplied transaction-kind bytes, see [User TransactionKind rules](../..
 | L3    | `L3_GAS_BUDGET_EXCEEDED`      | gasBudget > maxClaimMist                                          |
 | L3    | `L3_SIM_GAS_OUT_OF_RANGE`     | simGas > maxClaimMist                                             |
 
-Dust prevention (`totalIn < minSettleMist`) is not a sponsor-time L3 code. `totalIn` is a runtime value not visible at sponsor time, so the on-chain `S-3` (`ETotalInTooLow`) assert remains the dust defense and is reported as `SPONSOR_ONCHAIN_FAILED` if it fires.
+For swap settlements, dust prevention (`totalIn < minSettleMist`) is not a sponsor-time L3 code. `totalIn` is a runtime value not visible at sponsor time, so the on-chain `S-3` (`ETotalInTooLow`) assert remains that path's dust defense and is reported as `SPONSOR_ONCHAIN_FAILED` if it fires. The Host planner applies the threshold before choosing credit-only settlement; `settle_with_credit` intentionally disables the on-chain `S-3` guard.
 
 ## Build & Test
 

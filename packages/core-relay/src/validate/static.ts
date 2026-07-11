@@ -250,14 +250,12 @@ export function validateSettleArgs(
     );
   }
 
-  // (2) VaultRegistry object ID check — vault-backed variants only.
-  if (args.registryObjectId !== undefined) {
-    if (args.registryObjectId !== env.vaultRegistryId) {
-      return fail(
-        'L2_WRONG_REGISTRY',
-        `VaultRegistry object ID mismatch: got ${args.registryObjectId}, expected ${env.vaultRegistryId}`,
-      );
-    }
+  // (2) VaultRegistry object ID check — required by every compiled settlement function.
+  if (args.registryObjectId !== env.vaultRegistryId) {
+    return fail(
+      'L2_WRONG_REGISTRY',
+      `VaultRegistry object ID mismatch: got ${args.registryObjectId}, expected ${env.vaultRegistryId}`,
+    );
   }
 
   // (3) Settlement payout recipient check

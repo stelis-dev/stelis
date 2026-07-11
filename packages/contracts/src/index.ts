@@ -21,14 +21,34 @@ export type {
   ExpectedSettleEventFields,
 } from './types.js';
 
+export type {
+  SettleVariantClass,
+  SettleFieldValues,
+  SettleEventFieldMoveType,
+  SettleEventValue,
+} from './settlementContract.js';
+
 export {
+  SETTLEMENT_CONTRACT_NETWORK,
   SETTLE_MODULE,
   SETTLE_WITH_CREDIT_FUNCTION,
+  SETTLEMENT_ENTRY_FUNCTIONS,
   SETTLE_FUNCTIONS,
+  settlementParameterIndex,
   SETTLEMENT_SWAP_DIRECTION_FUNCTIONS,
+  settlementSwapDirectionFromFunctionName,
+  SETTLE_FIELD_SCHEMA,
+  SETTLE_EVENT_MODULE,
+  SETTLE_EVENT_NAME,
+  SETTLE_EVENT_FIELDS,
+  SETTLE_ABORT,
+  VAULT_ABORT,
+  DEEPBOOK_MIN_OUT_ABORT,
+} from './settlementContract.js';
+
+export {
   SETTLEMENT_SWAP_DIRECTION_VECTORS,
   VALID_SETTLEMENT_SWAP_DIRECTIONS,
-  settlementSwapDirectionFromFunctionName,
   settlementSwapDirectionFromSwapDirections,
   PROFILE_RANKS,
   SUI_TYPE,

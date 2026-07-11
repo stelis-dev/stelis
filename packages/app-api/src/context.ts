@@ -343,11 +343,8 @@ async function initContext(): Promise<AppApiContext> {
       packageId: contractIds.packageId,
       configId: contractIds.configId,
       vaultRegistryId: contractIds.vaultRegistryId,
-      // Server-only trust-root for sponsor-time DeepBook abort
-      // classification. Same package ID (`DEEPBOOK_IDS[network].packageId`) as
-      // `prepareConfig.deepbookPackageId` above; both are wired from the
-      // shared contract constants without env override or synthetic
-      // default.
+      // DeepBook published storage/call-target ID used by quote and PTB paths.
+      // MoveAbort classification uses the distinct compiled runtime identity.
       deepbookPackageId: deepbookIds.packageId,
       settlementPayoutRecipientAddress: requireEnv('SETTLEMENT_PAYOUT_RECIPIENT_ADDRESS'),
       sponsorPool,

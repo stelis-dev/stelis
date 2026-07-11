@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Transaction } from '@mysten/sui/transactions';
+import { toBase64 } from '@mysten/sui/utils';
 import { convertSdkCommands } from '../src/convert.js';
 import {
   extractPaymentInputTrace,
@@ -7,7 +8,7 @@ import {
 } from '../src/paymentInputIntegrity.js';
 import { extractSettlePaymentInputContract } from '../src/server/index.js';
 import { buildSettleWithCreditPtb, buildSwapAndSettlePtb } from '../src/ptb/builders.js';
-import type { MoveCallCommand, PtbCommand } from '@stelis/contracts';
+import { settlementParameterIndex, type MoveCallCommand, type PtbCommand } from '@stelis/contracts';
 
 const PKG = '0x' + '1'.repeat(64);
 const CONFIG = '0x' + '2'.repeat(64);
@@ -34,7 +35,7 @@ const SETTLE_SHARED = {
   quotedHostFeeMist: 100_000n,
   expectedProtocolFeeMist: 20_000n,
   expectedConfigVersion: 1n,
-  quoteTimestampMs: 1_741_680_000_000,
+  quoteTimestampMs: 1_741_680_000_000n,
   policyHash: new Uint8Array(32).fill(0xbb),
   orderIdHash: new Uint8Array(0),
 };
@@ -61,6 +62,19 @@ function findSettleCommand(commands: PtbCommand[]): MoveCallCommand {
     throw new Error('Missing settle command');
   }
   return settle;
+}
+
+function patchSettlePureInput(
+  settle: MoveCallCommand,
+  inputs: unknown[],
+  argumentIndex: number,
+  bytes: Uint8Array,
+): unknown[] {
+  const ref = settle.arguments[argumentIndex] as { Input: number };
+  const input = inputs[ref.Input] as { Pure: Record<string, unknown> };
+  const patched = [...inputs];
+  patched[ref.Input] = { ...input, Pure: { ...input.Pure, bytes: toBase64(bytes) } };
+  return patched;
 }
 
 describe('paymentInputIntegrity extraction', () => {
@@ -121,6 +135,35 @@ describe('paymentInputIntegrity extraction', () => {
       splitAmount: SWAP_AMOUNT,
     });
   });
+
+  for (const width of [7, 9]) {
+    it(`rejects ${width}-byte Pure u64 swap amounts`, () => {
+      const { commands, inputs } = getCommands((tx) => {
+        const [paymentCoin] = tx.splitCoins(tx.object(PAYMENT_BASE), [SWAP_AMOUNT]);
+        buildSwapAndSettlePtb(tx, {
+          variant: 'new_user',
+          settlementSwapDirection: 'baseForQuote',
+          settlementTokenType: PAYMENT_TYPE,
+          poolId: POOL,
+          paymentCoinId: paymentCoin,
+          swapAmount: SWAP_AMOUNT,
+          minSuiOut: 900_000n,
+          ...SETTLE_SHARED,
+        });
+      });
+      const settle = findSettleCommand(commands);
+      const patchedInputs = patchSettlePureInput(
+        settle,
+        inputs,
+        settlementParameterIndex(settle.function, 'swap_amount')!,
+        new Uint8Array(width),
+      );
+
+      expect(() => extractPaymentInputTrace(commands, patchedInputs, settle)).toThrow(
+        `Pure u64 must be exactly 8 bytes, got ${width}`,
+      );
+    });
+  }
 
   it('extracts address_balance from redeem_funds payment coin', () => {
     const { commands, inputs } = getCommands((tx) => {

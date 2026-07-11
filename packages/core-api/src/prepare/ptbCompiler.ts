@@ -28,6 +28,15 @@ import type { PrefixUsage, SettlementPlan } from './settlePlanTypes.js';
 import { pickPreferredPaymentBaseCoin, selectPaymentCoin } from './coinSelection.js';
 import { PrepareValidationError } from './replay.js';
 
+function compiledQuoteTimestampMs(value: number): bigint {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error(
+      `[SETTLEMENT_PLAN] quoteTimestampMs must be a non-negative safe integer, got ${value}`,
+    );
+  }
+  return BigInt(value);
+}
+
 // ─────────────────────────────────────────────
 // Compiler: credit-only path
 // ─────────────────────────────────────────────
@@ -41,6 +50,7 @@ export function compileCreditSettlement(
   config: { packageId: string; configId: string; vaultRegistryId: string },
   vaultId: string,
 ): void {
+  const quoteTimestampMs = compiledQuoteTimestampMs(plan.audit.quoteTimestampMs);
   if (plan.audit.slippageBufferMist !== 0n) {
     throw new Error(
       `[SETTLEMENT_PLAN] Credit-only PTB requires slippageBufferMist=0, got ${plan.audit.slippageBufferMist}`,
@@ -62,7 +72,7 @@ export function compileCreditSettlement(
     quotedHostFeeMist: plan.audit.quotedHostFeeMist,
     expectedProtocolFeeMist: plan.audit.expectedProtocolFeeMist,
     expectedConfigVersion: plan.audit.expectedConfigVersion,
-    quoteTimestampMs: plan.audit.quoteTimestampMs,
+    quoteTimestampMs,
     policyHash: plan.audit.policyHash,
     orderIdHash: plan.audit.orderIdHash,
   });
@@ -102,6 +112,7 @@ export async function compileSwapSettlement(
   vaultObjectId: string | null,
   prefixUsage: PrefixUsage,
 ): Promise<void> {
+  const quoteTimestampMs = compiledQuoteTimestampMs(plan.audit.quoteTimestampMs);
   const settlementSwapPath = plan.settlementSwapPath;
 
   // ── Payment coin selection ──────────────────────────────────────────────
@@ -184,7 +195,7 @@ export async function compileSwapSettlement(
     quotedHostFeeMist: plan.audit.quotedHostFeeMist,
     expectedProtocolFeeMist: plan.audit.expectedProtocolFeeMist,
     expectedConfigVersion: plan.audit.expectedConfigVersion,
-    quoteTimestampMs: plan.audit.quoteTimestampMs,
+    quoteTimestampMs,
     policyHash: plan.audit.policyHash,
     orderIdHash: plan.audit.orderIdHash,
   };

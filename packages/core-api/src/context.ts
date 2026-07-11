@@ -402,20 +402,12 @@ export interface HostRuntimeConfig {
   /** VaultRegistry shared object ID */
   vaultRegistryId: string;
   /**
-   * Trusted DeepBook package ID for the active network.
+   * Current published DeepBook storage/call-target package ID.
    *
-   * Server-only trust-root data used by sponsor-time abort
-   * classification: the sponsor failure subcode classifier binds
-   * DeepBook `pool::swap_exact_quantity` aborts to this exact package
-   * ID before emitting `SLIPPAGE_EXCEEDED`. External packages with the
-   * same module name and abort code do not classify.
-   *
-   * Shared reference: `DEEPBOOK_IDS[network].packageId` from
-   * `@stelis/contracts`. Hosts must provide it here; no env
-   * override or synthetic default is permitted.
-   *
-   * Not a browser/SDK helper export — server-side host integrators
-   * pass it explicitly at boot.
+   * Prepare quote and PTB paths consume this value. MoveAbort classification
+   * uses the distinct generated original/runtime ModuleId. Shared reference:
+   * `DEEPBOOK_IDS[network].packageId`; no env override or synthetic default is
+   * permitted.
    */
   deepbookPackageId: string;
   /** Config cache TTL in milliseconds. Default: DEFAULT_CONFIG_CACHE_TTL_MS. */
@@ -500,12 +492,7 @@ export interface HostContext {
   packageId: string;
   configId: string;
   vaultRegistryId: string;
-  /**
-   * Trusted DeepBook package ID for the active network. See
-   * `HostRuntimeConfig.deepbookPackageId` for the contract.
-   * Sponsor-time abort classifier reads this to package-bind
-   * DeepBook min-out aborts.
-   */
+  /** Published DeepBook storage/call target used by prepare quote and PTB paths. */
   deepbookPackageId: string;
   /**
    * Rate limiter — host-injected. Production hosts inject

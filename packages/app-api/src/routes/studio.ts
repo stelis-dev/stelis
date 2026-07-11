@@ -331,11 +331,11 @@ export function createStudioRoutes(getCtx: () => Promise<AppApiContext>) {
 
       const sponsorCtx: PromotionSponsorContext = {
         sui: ctx.host.sui,
-        // Trusted package IDs for sponsor-time abort classification.
-        // Same package IDs (`HostContext.{packageId, deepbookPackageId}`) as
-        // the generic /relay/sponsor route — bound at app-api boot via
-        // `DEEPBOOK_IDS[network].packageId`.
+        // Trusted active Stelis package ID for sponsor-time abort classification.
+        // DeepBook abort identity comes from the generated compiled contract.
         packageId: ctx.host.packageId,
+        // Published call target is separate provenance evidence; the generated
+        // runtime ModuleId remains the abort identity trust root.
         deepbookPackageId: ctx.host.deepbookPackageId,
         promotionStore: ctx.promotionStore,
         executionLedger: ctx.executionLedger,

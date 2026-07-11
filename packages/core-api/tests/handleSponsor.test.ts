@@ -21,6 +21,7 @@ import { toBase64, toBase58 } from '@mysten/sui/utils';
 import { bcs } from '@mysten/sui/bcs';
 import { GAS_VARIANCE_FIXED_MIST, sha256Bytes } from '@stelis/core-relay';
 import {
+  DEEPBOOK_MIN_OUT_ABORT,
   SETTLEMENT_SWAP_DIRECTION_FUNCTIONS,
   SETTLE_WITH_CREDIT_FUNCTION,
   SLIPPAGE_CAP_BPS,
@@ -491,12 +492,8 @@ function makeMockContext(
     packageId: MOCK_CONFIG.packageId,
     configId: MOCK_CONFIG.configId,
     vaultRegistryId: MOCK_CONFIG.vaultRegistryId,
-    // Trusted DeepBook package ID for sponsor-time abort classification.
-    // Test fixtures use the same Stelis package ID for DeepBook so an
-    // abort message like `MoveAbort(0xPKG::pool::swap_exact_quantity, 12)`
-    // would classify; however the mock fixtures below do not exercise
-    // that path, so any value matching the test's abort fixtures is
-    // sufficient.
+    // Published DeepBook call-target ID retained for prepare/quote paths.
+    // Abort classification uses the generated runtime identity instead.
     deepbookPackageId: MOCK_CONFIG.packageId,
     rateLimiter: {} as HostContext['rateLimiter'],
     abuseBlocker: overrides.abuseBlocker ?? makeMockAbuseBlocker(),
@@ -2032,7 +2029,7 @@ describe('handleSponsor', () => {
           success: false,
           error: {
             message:
-              'MoveAbort(0x1111111111111111111111111111111111111111111111111111111111111111::settle, 101) in command 5',
+              'MoveAbort(0x1111111111111111111111111111111111111111111111111111111111111111::settle, 101) in command 0',
           },
         },
         effects: {
@@ -2074,7 +2071,7 @@ describe('handleSponsor', () => {
             success: false,
             error: {
               message:
-                'MoveAbort(0x1111111111111111111111111111111111111111111111111111111111111111::settle, 101) in command 3',
+                'MoveAbort(0x1111111111111111111111111111111111111111111111111111111111111111::settle, 101) in command 0',
             },
           },
           gasUsed: { computationCost: '1000000', storageCost: '1000000', storageRebate: '500000' },
@@ -2103,8 +2100,10 @@ describe('handleSponsor', () => {
   // ── 23: Preflight abort 110 → subcode: SPREAD_EXCEEDED ────────────────
 
   it('throws SponsorPreflightError with subcode SPREAD_EXCEEDED on abort 110 in preflight', async () => {
-    const { encodedTxBytes, txBytes, txHash } = await buildValidTx(SPONSOR_ADDRESS);
-    const prepared = makePreparedEntry(txHash);
+    const { encodedTxBytes, txBytes, txHash } = await buildAddressBalanceSwapTx(SPONSOR_ADDRESS);
+    const prepared = makePreparedEntry(txHash, {
+      executionPathKey: _buildExecutionPathKey(SWAP_ALLOWED_ROUTE),
+    });
     const userSig = await buildValidSignature(txBytes);
     const abuseBlocker = makeMockAbuseBlocker();
     const sponsorPool = makeMockSponsorPool();
@@ -2115,7 +2114,7 @@ describe('handleSponsor', () => {
           success: false,
           error: {
             message:
-              'MoveAbort(0x1111111111111111111111111111111111111111111111111111111111111111::settle, 110) in command 5',
+              'MoveAbort(0x1111111111111111111111111111111111111111111111111111111111111111::settle, 110) in command 1',
           },
         },
         effects: {
@@ -2123,12 +2122,16 @@ describe('handleSponsor', () => {
         },
       },
     };
+    const sui = makeMockSui(failedSim);
+    attachVaultLookup(sui, { kind: 'no_vault' });
     const ctx = makeMockContext({
       prepareStore: makeMockPrepareStore(prepared, prepared),
       abuseBlocker,
       sponsorPool,
-      sui: makeMockSui(failedSim),
+      sui,
     });
+    ctx.allowedSettlementSwapPaths = [SWAP_ALLOWED_ROUTE];
+    (ctx as { vaultsTableId: string }).vaultsTableId = M1_VAULTS_TABLE_ID;
 
     const err = await handleSponsor(
       ctx,
@@ -2144,8 +2147,10 @@ describe('handleSponsor', () => {
   // ── 24: On-chain revert abort 110 → subcode: SPREAD_EXCEEDED ──────────
 
   it('throws SponsorOnchainError with subcode SPREAD_EXCEEDED on abort 110 in execution', async () => {
-    const { encodedTxBytes, txBytes, txHash } = await buildValidTx(SPONSOR_ADDRESS);
-    const prepared = makePreparedEntry(txHash);
+    const { encodedTxBytes, txBytes, txHash } = await buildAddressBalanceSwapTx(SPONSOR_ADDRESS);
+    const prepared = makePreparedEntry(txHash, {
+      executionPathKey: _buildExecutionPathKey(SWAP_ALLOWED_ROUTE),
+    });
     const userSig = await buildValidSignature(txBytes);
     const sponsorPool = makeMockSponsorPool();
     const abuseBlocker = makeMockAbuseBlocker();
@@ -2157,19 +2162,23 @@ describe('handleSponsor', () => {
             success: false,
             error: {
               message:
-                'MoveAbort(0x1111111111111111111111111111111111111111111111111111111111111111::settle, 110) in command 3',
+                'MoveAbort(0x1111111111111111111111111111111111111111111111111111111111111111::settle, 110) in command 1',
             },
           },
           gasUsed: { computationCost: '1000000', storageCost: '1000000', storageRebate: '500000' },
         },
       },
     };
+    const sui = makeMockSui(undefined, execResult);
+    attachVaultLookup(sui, { kind: 'no_vault' });
     const ctx = makeMockContext({
       prepareStore: makeMockPrepareStore(prepared, prepared),
       sponsorPool,
       abuseBlocker,
-      sui: makeMockSui(undefined, execResult),
+      sui,
     });
+    ctx.allowedSettlementSwapPaths = [SWAP_ALLOWED_ROUTE];
+    (ctx as { vaultsTableId: string }).vaultsTableId = M1_VAULTS_TABLE_ID;
 
     const err = await handleSponsor(
       ctx,
@@ -2186,8 +2195,10 @@ describe('handleSponsor', () => {
   // ── 25: Preflight abort 12 (DeepBook min_out) → subcode: SLIPPAGE_EXCEEDED ─
 
   it('throws SponsorPreflightError with subcode SLIPPAGE_EXCEEDED on abort 12 in preflight', async () => {
-    const { encodedTxBytes, txBytes, txHash } = await buildValidTx(SPONSOR_ADDRESS);
-    const prepared = makePreparedEntry(txHash);
+    const { encodedTxBytes, txBytes, txHash } = await buildAddressBalanceSwapTx(SPONSOR_ADDRESS);
+    const prepared = makePreparedEntry(txHash, {
+      executionPathKey: _buildExecutionPathKey(SWAP_ALLOWED_ROUTE),
+    });
     const userSig = await buildValidSignature(txBytes);
     const abuseBlocker = makeMockAbuseBlocker();
     const sponsorPool = makeMockSponsorPool();
@@ -2197,8 +2208,7 @@ describe('handleSponsor', () => {
         status: {
           success: false,
           error: {
-            message:
-              "Transaction resolution failed: MoveAbort in 5th command, abort code: 12, in '0x1111111111111111111111111111111111111111111111111111111111111111::pool::swap_exact_quantity' (instruction 165)",
+            message: `Transaction resolution failed: MoveAbort in 2nd command, abort code: ${DEEPBOOK_MIN_OUT_ABORT.code}, in '${DEEPBOOK_MIN_OUT_ABORT.runtimePackageId}::${DEEPBOOK_MIN_OUT_ABORT.modulePath}' (instruction 165)`,
           },
         },
         effects: {
@@ -2206,12 +2216,16 @@ describe('handleSponsor', () => {
         },
       },
     };
+    const sui = makeMockSui(failedSim);
+    attachVaultLookup(sui, { kind: 'no_vault' });
     const ctx = makeMockContext({
       prepareStore: makeMockPrepareStore(prepared, prepared),
       abuseBlocker,
       sponsorPool,
-      sui: makeMockSui(failedSim),
+      sui,
     });
+    ctx.allowedSettlementSwapPaths = [SWAP_ALLOWED_ROUTE];
+    (ctx as { vaultsTableId: string }).vaultsTableId = M1_VAULTS_TABLE_ID;
 
     const err = await handleSponsor(
       ctx,
@@ -2227,8 +2241,10 @@ describe('handleSponsor', () => {
   // ── 26: On-chain revert abort 12 (DeepBook min_out) → subcode: SLIPPAGE_EXCEEDED ─
 
   it('throws SponsorOnchainError with subcode SLIPPAGE_EXCEEDED on abort 12 in execution', async () => {
-    const { encodedTxBytes, txBytes, txHash } = await buildValidTx(SPONSOR_ADDRESS);
-    const prepared = makePreparedEntry(txHash);
+    const { encodedTxBytes, txBytes, txHash } = await buildAddressBalanceSwapTx(SPONSOR_ADDRESS);
+    const prepared = makePreparedEntry(txHash, {
+      executionPathKey: _buildExecutionPathKey(SWAP_ALLOWED_ROUTE),
+    });
     const userSig = await buildValidSignature(txBytes);
     const sponsorPool = makeMockSponsorPool();
     const abuseBlocker = makeMockAbuseBlocker();
@@ -2239,20 +2255,23 @@ describe('handleSponsor', () => {
           status: {
             success: false,
             error: {
-              message:
-                "Transaction resolution failed: MoveAbort in 5th command, abort code: 12, in '0x1111111111111111111111111111111111111111111111111111111111111111::pool::swap_exact_quantity' (instruction 165)",
+              message: `Transaction resolution failed: MoveAbort in 2nd command, abort code: ${DEEPBOOK_MIN_OUT_ABORT.code}, in '${DEEPBOOK_MIN_OUT_ABORT.runtimePackageId}::${DEEPBOOK_MIN_OUT_ABORT.modulePath}' (instruction 165)`,
             },
           },
           gasUsed: { computationCost: '1000000', storageCost: '1000000', storageRebate: '500000' },
         },
       },
     };
+    const sui = makeMockSui(undefined, execResult);
+    attachVaultLookup(sui, { kind: 'no_vault' });
     const ctx = makeMockContext({
       prepareStore: makeMockPrepareStore(prepared, prepared),
       sponsorPool,
       abuseBlocker,
-      sui: makeMockSui(undefined, execResult),
+      sui,
     });
+    ctx.allowedSettlementSwapPaths = [SWAP_ALLOWED_ROUTE];
+    (ctx as { vaultsTableId: string }).vaultsTableId = M1_VAULTS_TABLE_ID;
 
     const err = await handleSponsor(
       ctx,

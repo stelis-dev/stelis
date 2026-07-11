@@ -14,7 +14,7 @@
  */
 import { Transaction } from '@mysten/sui/transactions';
 import type { ExecutionCostClaimEstimate, SimulationGasUsed } from '@stelis/core-relay';
-import type { SingleHopSettlementSwapPath, SettleProfile } from '@stelis/contracts';
+import type { PtbCommand, SingleHopSettlementSwapPath, SettleProfile } from '@stelis/contracts';
 import type {
   ExecutableSwapQuote,
   PaymentInputSource,
@@ -23,6 +23,7 @@ import type {
 import {
   batchGetHopMidPrices,
   classifyUserTxCoins,
+  convertSdkCommands,
   extractPrefixWithdrawals,
   computeExecutionCostClaim,
   CONVERGENCE_TOLERANCE_BPS,
@@ -182,7 +183,7 @@ type CreditProbeMeasurement =
 function extractSuccessfulDryRunGas(
   simResult: unknown,
   stelisPackageId: string,
-  deepbookPackageId: string,
+  commands: readonly PtbCommand[],
   meta: Record<string, string>,
 ): SimulationGasUsed {
   const simTx = (
@@ -200,14 +201,14 @@ function extractSuccessfulDryRunGas(
     };
     if (simFailed.$kind === 'FailedTransaction') {
       const reason = simFailed.FailedTransaction?.status?.error?.message ?? 'unknown';
-      throw classifyDryRunFailure(reason, stelisPackageId, deepbookPackageId, meta);
+      throw classifyDryRunFailure(reason, stelisPackageId, commands, meta);
     }
     throw new PrepareValidationError('DRY_RUN_FAILED', 'Dry-run returned no transaction result');
   }
 
   if (!simTx.status?.success) {
     const reason = (simTx.status as { error?: { message?: string } })?.error?.message ?? 'unknown';
-    throw classifyDryRunFailure(reason, stelisPackageId, deepbookPackageId, meta);
+    throw classifyDryRunFailure(reason, stelisPackageId, commands, meta);
   }
 
   const gasUsed = simTx.effects?.gasUsed;
@@ -243,10 +244,11 @@ async function dryRunForGas(
   // `...identifier` spreads).
   const poolId = failureContext.poolId;
   const settlementTokenSymbol = failureContext.settlementTokenSymbol;
+  const commands = convertSdkCommands(tx.getData().commands as unknown[]);
 
   let dryRunBytes: Uint8Array;
   try {
-    dryRunBytes = await safeBuild(tx, ctx.sui, ctx.packageId, ctx.deepbookPackageId, meta);
+    dryRunBytes = await safeBuild(tx, ctx.sui, ctx.packageId, meta);
   } catch (err) {
     logPrepareBuildStage('dryrun_safebuild_failed', {
       pass,
@@ -301,7 +303,7 @@ async function dryRunForGas(
   });
 
   try {
-    return extractSuccessfulDryRunGas(simResult, ctx.packageId, ctx.deepbookPackageId, meta);
+    return extractSuccessfulDryRunGas(simResult, ctx.packageId, commands, meta);
   } catch (err) {
     logPrepareBuildStage('dryrun_extract_failed', {
       pass,
@@ -682,7 +684,7 @@ async function buildFinalGenericPrepareResult(
   });
 
   // Fail-closed before pass2 build: on-chain settle enforces execution_cost_claim_mist <= max_claim_mist
-  // (settle.move EClaimTooHigh = 101). Reject here with an explicit typed error so
+  // (`settle::EClaimTooHigh`). Reject here with an explicit typed error so
   // we do not rely on downstream MoveAbort parsing for this deterministic boundary.
   if (executionCostClaim > ctx.maxClaimMist) {
     throwClaimWouldExceedMax(ctx, finalCosts);
@@ -787,7 +789,7 @@ async function buildFinalGenericPrepareResult(
   const settleMeta = buildSettleMeta(ctx, executionCostClaim, false);
   let txBytes: Uint8Array;
   try {
-    txBytes = await safeBuild(pass2Tx, ctx.sui, ctx.packageId, ctx.deepbookPackageId, settleMeta);
+    txBytes = await safeBuild(pass2Tx, ctx.sui, ctx.packageId, settleMeta);
   } catch (err) {
     // Final-build failure is the last gap before `two_pass_complete`. Without
     // this emit the request loses phase-local context for the failure (the

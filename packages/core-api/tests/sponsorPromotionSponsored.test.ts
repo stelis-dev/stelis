@@ -49,6 +49,7 @@ const PER_USER_ALLOWANCE = '100000000'; // 0.1 SUI
 const ALLOWED_TARGET =
   '0x0000000000000000000000000000000000000000000000000000000000000002::coin::Coin';
 const GLOBAL_TARGET_HASHES = new Set(hashTargets([ALLOWED_TARGET]));
+const TEST_DEEPBOOK_PACKAGE_ID = '0xdef';
 
 // Fixed test keypairs
 const SPONSOR_KP = Ed25519Keypair.generate();
@@ -305,11 +306,11 @@ async function setup(opts?: {
 
   const ctx: PromotionSponsorContext = {
     sui: createMockSui(opts),
-    // Trusted package IDs for sponsor-time abort classification. The
+    // Trusted Stelis package ID for sponsor-time abort classification. The
     // fixtures below use `0xabc::vault` / `0xabc::settle` for trusted
     // Stelis aborts, so the test ctx must carry the matching package ID.
     packageId: '0xabc',
-    deepbookPackageId: '0xabc',
+    deepbookPackageId: TEST_DEEPBOOK_PACKAGE_ID,
     promotionStore,
     executionLedger,
     sponsorPool,
@@ -844,13 +845,9 @@ describe('handlePromotionSponsor', () => {
     expect(ent!.consumedGasAllowanceMist).toBe('2000000');
   });
 
-  // Promotion preflight: a recognizable Move abort reason flows through the
-  // shared classifier (`classifySponsorFailureSubcode`) so the structured
-  // subcode reaches the abuse recorder AND the thrown
-  // `PromotionSponsorError.subcode`. Ledger release uses its fixed
-  // `'preflight_simulation_failed'` reason, and the unclassified fallback
-  // literal `simulation_failed` stays in abuse meta only.
-  test('classifies promotion preflight EReplayNonce as REPLAY_NONCE in abuse meta and on the thrown error', async () => {
+  // The actual promotion command is 0x2::coin::Coin. A Stelis abort string at
+  // that outer command is impossible provenance and must stay unclassified.
+  test('does not classify an unrelated Stelis abort string for a promotion coin command', async () => {
     const { ctx, signed, receiptId } = await setup({
       simFail: true,
       simFailReason: 'MoveAbort(0xabc::vault::check_and_advance_nonce, 1) in command 0',
@@ -868,13 +865,13 @@ describe('handlePromotionSponsor', () => {
 
     expect(err).toBeInstanceOf(PromotionSponsorError);
     expect((err as PromotionSponsorError).code).toBe('PREFLIGHT_FAILED');
-    expect((err as PromotionSponsorError).subcode).toBe('REPLAY_NONCE');
+    expect((err as PromotionSponsorError).subcode).toBeUndefined();
 
     const preflightCalls = recordSpy.mock.calls.filter((args) => args[2] === 'PREFLIGHT_FAILED');
     expect(preflightCalls.length).toBe(1);
     const [, , , meta] = preflightCalls[0]!;
     expect(meta).toEqual({
-      subcode: 'REPLAY_NONCE',
+      subcode: 'simulation_failed',
       executionPathKey: `promotion:${TEST_PROMO_ID}`,
     });
 
@@ -915,12 +912,8 @@ describe('handlePromotionSponsor', () => {
     recordSpy.mockRestore();
   });
 
-  // Promotion on-chain revert: same classifier wiring as preflight. A
-  // recognizable Move abort reason produces the typed subcode in abuse
-  // meta and on the thrown `PromotionSponsorError.subcode`; an
-  // unclassified reason keeps the `'onchain_revert'` fallback inside
-  // abuse meta only.
-  test('classifies promotion on-chain revert EReplayNonce as REPLAY_NONCE in abuse meta and on the thrown error', async () => {
+  // The same provenance rule applies to the terminal execution result.
+  test('does not classify an unrelated Stelis on-chain abort for a promotion coin command', async () => {
     const { ctx, signed, receiptId } = await setup({
       execFail: true,
       execFailReason: 'MoveAbort(0xabc::vault::check_and_advance_nonce, 1) in command 0',
@@ -938,13 +931,13 @@ describe('handlePromotionSponsor', () => {
 
     expect(err).toBeInstanceOf(PromotionSponsorError);
     expect((err as PromotionSponsorError).code).toBe('ONCHAIN_REVERT');
-    expect((err as PromotionSponsorError).subcode).toBe('REPLAY_NONCE');
+    expect((err as PromotionSponsorError).subcode).toBeUndefined();
 
     const onchainCalls = recordSpy.mock.calls.filter((args) => args[2] === 'ONCHAIN_REVERT');
     expect(onchainCalls.length).toBe(1);
     const [, , , meta] = onchainCalls[0]!;
     expect(meta).toEqual({
-      subcode: 'REPLAY_NONCE',
+      subcode: 'onchain_revert',
       executionPathKey: `promotion:${TEST_PROMO_ID}`,
     });
 
@@ -1355,6 +1348,8 @@ describe('handlePromotionSponsor', () => {
 
     const ctx: PromotionSponsorContext = {
       sui: createMockSui(),
+      packageId: '0xabc',
+      deepbookPackageId: TEST_DEEPBOOK_PACKAGE_ID,
       promotionStore,
       executionLedger,
       sponsorPool,
@@ -1454,6 +1449,8 @@ describe('handlePromotionSponsor', () => {
 
     const ctx: PromotionSponsorContext = {
       sui: createMockSui(),
+      packageId: '0xabc',
+      deepbookPackageId: TEST_DEEPBOOK_PACKAGE_ID,
       promotionStore,
       executionLedger,
       sponsorPool,

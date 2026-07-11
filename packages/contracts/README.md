@@ -24,7 +24,8 @@ This package is intentionally narrow:
 Primary source files:
 
 - `src/types.ts` — shared request and response types such as `SingleHopSettlementSwapPath`, `SettlementSwapDirection`, and PTB/admin/studio contracts
-- `src/constants.ts` — `SETTLE_FUNCTIONS`, settlement swap direction tables, contract IDs, `INTEGRITY_POLICY_VERSION`, `SLIPPAGE_CAP_BPS`, `GAS_MARGIN_CAP_BPS`
+- `src/settlementContract.ts` — generated compiled settlement entry descriptors, SettleEvent schema, and Stelis/DeepBook runtime abort identities
+- `src/constants.ts` — settlement swap direction vectors, published contract IDs, `INTEGRITY_POLICY_VERSION`, `SLIPPAGE_CAP_BPS`, `GAS_MARGIN_CAP_BPS`
 - `src/admin.ts` — sponsor operation gate/status/admin payload types plus the shared pool-withdraw message builder used by `app-api` and `app-admin`
 - `src/index.ts` — package entrypoint
 

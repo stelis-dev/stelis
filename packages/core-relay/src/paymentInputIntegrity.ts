@@ -1,13 +1,14 @@
-import { fromBase64, normalizeSuiAddress } from '@mysten/sui/utils';
+import { normalizeSuiAddress } from '@mysten/sui/utils';
 import { parseSettleArgs } from './parseSettleArgs.js';
 import { findSettleCommand } from './settleCommand.js';
 import {
-  VARIANT_LAYOUTS,
-  variantClassFromFnName,
+  SETTLEMENT_ENTRY_FUNCTIONS,
+  settlementParameterIndex,
   type SettleVariantClass,
-} from './settlePayloadContract.js';
+} from '@stelis/contracts';
 import type { MoveCallCommand, PtbCommand } from '@stelis/contracts';
 import type { SettleArgs } from './types.js';
+import { decodeExactPureU64Base64 } from './decodePureU64.js';
 
 const SUI_FRAMEWORK_ADDRESS = normalizeSuiAddress('0x2');
 
@@ -97,7 +98,12 @@ export class PaymentInputContractError extends Error {
 }
 
 const SWAP_VARIANTS = new Set(
-  (Object.keys(VARIANT_LAYOUTS) as SettleVariantClass[]).filter((k) => k !== 'credit'),
+  Object.values(SETTLEMENT_ENTRY_FUNCTIONS)
+    .map((entry) => entry.variantClass)
+    .filter(
+      (variantClass): variantClass is Exclude<SettleVariantClass, 'credit'> =>
+        variantClass !== 'credit',
+    ),
 );
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -162,16 +168,7 @@ function decodePureU64Input(ref: CommandRef | null, inputs: unknown[]): bigint {
     throw new Error(`Input[${ref.input}] Pure has no bytes`);
   }
 
-  const decoded = fromBase64(pure.bytes);
-  if (decoded.length < 8) {
-    throw new Error(`Pure u64 needs 8 bytes, got ${decoded.length}`);
-  }
-
-  let value = 0n;
-  for (let idx = 7; idx >= 0; idx--) {
-    value = (value << 8n) | BigInt(decoded[idx]!);
-  }
-  return value;
+  return decodeExactPureU64Base64(pure.bytes);
 }
 
 function decodeFundsWithdrawal(
@@ -362,10 +359,15 @@ export function extractPaymentInputTrace(
   inputs: unknown[],
   settleCmd: MoveCallCommand,
 ): PaymentInputTrace {
-  const variantClass = variantClassFromFnName(settleCmd.function);
-  if (!variantClass) {
+  const entry = (
+    SETTLEMENT_ENTRY_FUNCTIONS as Readonly<
+      Record<string, (typeof SETTLEMENT_ENTRY_FUNCTIONS)[keyof typeof SETTLEMENT_ENTRY_FUNCTIONS]>
+    >
+  )[settleCmd.function];
+  if (!entry) {
     throw new Error(`Unknown settle function for payment-input integrity: ${settleCmd.function}`);
   }
+  const variantClass = entry.variantClass;
 
   if (variantClass === 'credit') {
     return {
@@ -380,7 +382,8 @@ export function extractPaymentInputTrace(
     throw new Error(`Settle function ${settleCmd.function} has no settlement token type argument`);
   }
 
-  const { paymentCoinIndex, swapAmountIndex } = VARIANT_LAYOUTS[variantClass];
+  const paymentCoinIndex = settlementParameterIndex(settleCmd.function, 'payment_coin');
+  const swapAmountIndex = settlementParameterIndex(settleCmd.function, 'swap_amount');
   if (paymentCoinIndex === undefined || swapAmountIndex === undefined) {
     throw new Error(`Payment arg indices missing for settle variant ${variantClass}`);
   }

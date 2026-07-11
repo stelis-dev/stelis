@@ -26,6 +26,7 @@ import { reconstructReservationHandles } from '../src/session/sponsoredExecution
 import { SenderSignatureError } from '../src/session/sessionPrimitives.js';
 import { PrepareValidationError } from '../src/prepare/replay.js';
 import { getFailurePolicy } from '../src/failures.js';
+import { SETTLE_MODULE, SETTLE_WITH_CREDIT_FUNCTION, type PtbCommand } from '@stelis/contracts';
 import type {
   GenericPreparedTxEntry,
   PromotionPreparedTxEntry,
@@ -38,6 +39,7 @@ const SENDER = `0x${'11'.repeat(32)}`;
 const OTHER_SENDER = `0x${'33'.repeat(32)}`;
 const SPONSOR = `0x${'22'.repeat(32)}`;
 const SETTLEMENT_TOKEN_TYPE = `0x${'88'.repeat(32)}::deep::DEEP`;
+const STELIS_PACKAGE_ID = `0x${'66'.repeat(32)}`;
 const TX_BYTES = new Uint8Array([1, 2, 3, 4]);
 const GAS_USED = {
   computationCost: '1000',
@@ -112,7 +114,7 @@ function makeContext(overrides: Partial<HostContext> = {}): HostContext {
     settlementPayoutRecipientAddress: `0x${'33'.repeat(32)}`,
     configId: `0x${'44'.repeat(32)}`,
     vaultRegistryId: `0x${'55'.repeat(32)}`,
-    packageId: `0x${'66'.repeat(32)}`,
+    packageId: STELIS_PACKAGE_ID,
     deepbookPackageId: `0x${'77'.repeat(32)}`,
     vaultsTableId: undefined,
     sui: {} as HostContext['sui'],
@@ -129,6 +131,19 @@ function makeContext(overrides: Partial<HostContext> = {}): HostContext {
     onSponsorResult: undefined,
     ...overrides,
   } as HostContext;
+}
+
+function creditSettlementCommands(): readonly PtbCommand[] {
+  return [
+    {
+      kind: 'MoveCall',
+      packageId: STELIS_PACKAGE_ID,
+      module: SETTLE_MODULE,
+      function: SETTLE_WITH_CREDIT_FUNCTION,
+      typeArguments: [],
+      arguments: [],
+    },
+  ];
 }
 
 function makeSponsorOptions(
@@ -256,6 +271,7 @@ function seedSponsorState(
     prepared: makePrepared(),
     revalidation: {
       builtTx: {} as Transaction,
+      commands: creditSettlementCommands(),
       freshConfig: {
         protocolFlatFeeMist: 10n,
       } as NonNullable<GenericExecutionPolicyState['sponsor']>['revalidation']['freshConfig'],
@@ -575,6 +591,7 @@ describe('generic sponsor postconsume hooks', () => {
           checkBlockedRequest: vi.fn(async () => ({ blocked: false })),
           revalidateGenericSponsorPolicy: vi.fn(async () => ({
             builtTx: {} as Transaction,
+            commands: creditSettlementCommands(),
             freshConfig: { protocolFlatFeeMist: 10n },
             settleArgs: { nonce: 7n },
             isNewUserSettle: false,
@@ -606,6 +623,7 @@ describe('generic sponsor postconsume hooks', () => {
           checkBlockedRequest: vi.fn(async () => ({ blocked: false })),
           revalidateGenericSponsorPolicy: vi.fn(async () => ({
             builtTx: {} as Transaction,
+            commands: creditSettlementCommands(),
             freshConfig: { protocolFlatFeeMist: 10n },
             settleArgs: { nonce: 8n },
             isNewUserSettle: false,

@@ -132,6 +132,33 @@ describe('compileCreditSettlement', () => {
     expect(args[1].useCreditAmount).toBe(5_120_000n);
     expect(args[1].executionCostClaim).toBe(BASE_AUDIT.executionCostClaim);
     expect(args[1].slippageBufferMist).toBe(0n);
+    expect(args[1].quoteTimestampMs).toBe(BigInt(BASE_AUDIT.quoteTimestampMs));
+  });
+
+  it('rejects an unsafe quote timestamp before calling the PTB builder', () => {
+    const tx = new Transaction();
+    const plan = makeSwapPlan({
+      profile: 'credit_general',
+      funding: {
+        source: 'none_credit_only',
+        usableCoins: [],
+        usableCoinTotal: 0n,
+        addressBalance: 0n,
+        redeemDelta: 0n,
+        useCreditAmount: 5_120_000n,
+      },
+      swap: { swapAmountSmallest: 0n, minSuiOut: 0n },
+      audit: {
+        ...BASE_AUDIT,
+        slippageBufferMist: 0n,
+        quoteTimestampMs: Number.MAX_SAFE_INTEGER + 1,
+      },
+    });
+
+    expect(() => compileCreditSettlement(tx, plan, CTX, ADDR_VAULT)).toThrow(
+      /quoteTimestampMs must be a non-negative safe integer/,
+    );
+    expect(mockBuildSettleWithCreditPtb).not.toHaveBeenCalled();
   });
 
   it('rejects credit plans with non-zero slippage buffer', () => {

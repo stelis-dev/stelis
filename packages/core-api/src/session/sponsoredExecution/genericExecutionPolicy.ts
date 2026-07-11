@@ -12,7 +12,7 @@
 
 import { Transaction } from '@mysten/sui/transactions';
 import { fromHex, toBase64 } from '@mysten/sui/utils';
-import type { SettleProfile, SingleHopSettlementSwapPath } from '@stelis/contracts';
+import type { PtbCommand, SettleProfile, SingleHopSettlementSwapPath } from '@stelis/contracts';
 import { GAS_MARGIN_CAP_BPS, SLIPPAGE_CAP_BPS } from '@stelis/contracts';
 import {
   convertSdkCommands,
@@ -221,6 +221,7 @@ export class GenericSponsorPolicyError extends Error {
 
 export interface RevalidateGenericResult {
   readonly builtTx: Transaction;
+  readonly commands: readonly PtbCommand[];
   readonly freshConfig: OnchainConfig;
   readonly settleArgs: ExtractedSettleArgs;
   readonly isNewUserSettle: boolean;
@@ -1030,15 +1031,15 @@ async function runGenericPreflight(
   const state = requireSponsorState(runtime);
   const d = getDeps(options);
   const prepared = requireValue(state.prepared, 'consumed generic prepared entry');
+  const revalidation = requireValue(state.revalidation, 'sponsor revalidation');
   const txSender = requireValue(state.txSender, 'tx sender');
   const preflight = await d.runPreflight(options.hostContext.sui, sponsor.txBytes);
 
   if (!preflight.success) {
-    const subcode = classifySponsorFailureSubcode(
-      preflight.reason,
-      options.hostContext.packageId,
-      options.hostContext.deepbookPackageId,
-    );
+    const subcode = classifySponsorFailureSubcode(preflight.reason, options.hostContext.packageId, {
+      kind: 'settlement',
+      commands: revalidation.commands,
+    });
     await d.recordSponsorFailureForAbuse(
       options.hostContext.abuseBlocker,
       ctx.clientIp,
@@ -1105,11 +1106,10 @@ async function classifyGenericSponsorResult(
       throw sponsor.errors.sponsorCongestion(result.reason);
     }
 
-    const subcode = classifySponsorFailureSubcode(
-      result.reason,
-      options.hostContext.packageId,
-      options.hostContext.deepbookPackageId,
-    );
+    const subcode = classifySponsorFailureSubcode(result.reason, options.hostContext.packageId, {
+      kind: 'settlement',
+      commands: revalidation.commands,
+    });
     await d.recordSponsorFailureForAbuse(
       options.hostContext.abuseBlocker,
       ctx.clientIp,
@@ -1436,7 +1436,7 @@ async function revalidateGenericSponsorPolicy(
 
   const isNewUserSettle = isNewUserSettleMoveCall(builtCommands, env.packageId);
 
-  return { builtTx, freshConfig, settleArgs, isNewUserSettle };
+  return { builtTx, commands: builtCommands, freshConfig, settleArgs, isNewUserSettle };
 }
 
 function validateGenericSponsorNonloss(

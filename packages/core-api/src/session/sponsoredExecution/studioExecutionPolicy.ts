@@ -889,6 +889,8 @@ async function runStudioPreflight(
   const sponsorContext = requireSponsorPolicyContext(options.context);
   const prepared = requireValue(state.prepared, 'consumed promotion prepared entry');
   const peekedPromotion = requireValue(state.peekedPromotion, 'peeked promotion prepared entry');
+  const builtTx = requireValue(state.builtTxForValidation, 'validated promotion transaction');
+  const commands = convertSdkCommands(builtTx.getData().commands as unknown[]);
   const preflight = await d.runPreflight(options.context.sui, sponsor.txBytes);
 
   if (!preflight.success) {
@@ -897,11 +899,11 @@ async function runStudioPreflight(
       sponsor.params.receiptId,
       'preflight_simulation_failed',
     );
-    const subcode = d.classifySponsorFailureSubcode(
-      preflight.reason,
-      sponsorContext.packageId,
-      sponsorContext.deepbookPackageId,
-    );
+    const subcode = d.classifySponsorFailureSubcode(preflight.reason, sponsorContext.packageId, {
+      kind: 'direct',
+      commands,
+      deepbookPackageId: sponsorContext.deepbookPackageId,
+    });
     await d.recordSponsorFailureForAbuse(
       sponsorContext.abuseBlocker,
       ctx.clientIp,
@@ -936,6 +938,8 @@ async function classifyStudioSponsorResult(
   const sponsorContext = requireSponsorPolicyContext(options.context);
   const prepared = requireValue(state.prepared, 'consumed promotion prepared entry');
   const peekedPromotion = requireValue(state.peekedPromotion, 'peeked promotion prepared entry');
+  const builtTx = requireValue(state.builtTxForValidation, 'validated promotion transaction');
+  const commands = convertSdkCommands(builtTx.getData().commands as unknown[]);
   const identity = sponsor.params.verifiedIdentity;
 
   if (!result.success) {
@@ -953,7 +957,11 @@ async function classifyStudioSponsorResult(
     const classifiedSubcode = d.classifySponsorFailureSubcode(
       result.reason,
       sponsorContext.packageId,
-      sponsorContext.deepbookPackageId,
+      {
+        kind: 'direct',
+        commands,
+        deepbookPackageId: sponsorContext.deepbookPackageId,
+      },
     );
     const revert = computeRevertAccounting(result.gasUsed, prepared.reservedGasMist);
     const consumeOutcome = await d.consumeLedgerReservationWithLog(

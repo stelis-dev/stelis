@@ -12,7 +12,8 @@
  *   - runGenericPrepareBuildPipeline orchestrator (coordinates multi-pass flow)
  *
  * Does not own: settlement swap direction tables (constants.ts), settle field schema
- * (settlePayloadContract.ts), on-chain types (types.ts), or persisted store types
+ * (the generated `@stelis/contracts` settlement contract), on-chain types
+ * (types.ts), or persisted store types
  * (prepareTypes.ts).
  */
 
@@ -143,7 +144,8 @@ export interface SettlementPlan {
  *
  * These are the 13 fields from SETTLE_FIELD_SCHEMA, plus the
  * settlement payout recipient address. All values are determined at plan time
- * and passed through to the PTB compiler without modification.
+ * without being re-decided by the PTB compiler. The JSON-facing timestamp is
+ * checked and converted to the compiled u64 bigint representation there.
  */
 export interface SettlePlanAuditFields {
   readonly executionCostClaim: bigint;
