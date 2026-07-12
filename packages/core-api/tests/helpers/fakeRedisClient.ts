@@ -578,14 +578,15 @@ export class FakeRedisClient implements RedisClientLike {
 
     // ── PromotionStore CREATE_LUA emulation ──
     if (
-      script.includes("redis.call('SET', KEYS[1], ARGV[1])") &&
+      script.includes("redis.call('EXISTS', KEYS[1])") &&
       script.includes("redis.call('SADD', KEYS[2], ARGV[2])") &&
       script.includes("redis.call('SADD', KEYS[3], ARGV[2])")
     ) {
+      if ((await this.get(keys[0])) !== null) return 'CURRENT_CONFLICT';
       await this.set(keys[0], args[0]);
       this._sadd(keys[1], args[1]);
       this._sadd(keys[2], args[1]);
-      return 1;
+      return 'OK';
     }
 
     // ── PromotionStore LIST_LUA emulation ──
@@ -602,36 +603,49 @@ export class FakeRedisClient implements RedisClientLike {
       return results;
     }
 
-    // ── PromotionStore TRANSITION_LUA (CAS-guarded) emulation ──
-    if (script.includes("'CAS_FAIL:'") && script.includes('cjson.decode(currentRaw)')) {
+    // ── PromotionStore UPDATE_LUA (exact-record CAS) emulation ──
+    if (
+      script.includes('currentRaw ~= ARGV[1]') &&
+      script.includes("redis.call('SET', KEYS[1], ARGV[2])") &&
+      !script.includes("redis.call('SREM', KEYS[2], ARGV[3])")
+    ) {
       const raw = await this.get(keys[0]);
-      if (raw === null) return 'NOT_FOUND';
-      let current: { status?: string };
-      try {
-        current = JSON.parse(raw) as { status?: string };
-      } catch {
-        return 'NOT_FOUND';
-      }
-      const expected = args[2];
-      if (current.status !== expected) {
-        return `CAS_FAIL:${current.status ?? ''}`;
-      }
-      await this.set(keys[0], args[0]);
-      this._srem(keys[1], args[1]);
-      this._sadd(keys[2], args[1]);
+      if (raw === null || raw !== args[0]) return 'CURRENT_CONFLICT';
+      await this.set(keys[0], args[1]);
+      return 'OK';
+    }
+
+    // ── PromotionStore STATUS_LUA (record CAS + index move) emulation ──
+    if (
+      script.includes('currentRaw ~= ARGV[1]') &&
+      script.includes("redis.call('SET', KEYS[1], ARGV[2])") &&
+      script.includes("redis.call('SREM', KEYS[2], ARGV[3])") &&
+      script.includes("redis.call('SADD', KEYS[3], ARGV[3])")
+    ) {
+      const raw = await this.get(keys[0]);
+      if (raw === null || raw !== args[0]) return 'CURRENT_CONFLICT';
+      await this.set(keys[0], args[1]);
+      this._srem(keys[1], args[2]);
+      this._sadd(keys[2], args[2]);
       return 'OK';
     }
 
     // ── PromotionStore DELETE_LUA emulation ──
     if (
+      script.includes("current.status ~= 'draft'") &&
       script.includes("redis.call('DEL', KEYS[1])") &&
-      script.includes("redis.call('SREM', KEYS[2], ARGV[1])") &&
-      script.includes("redis.call('SREM', KEYS[3], ARGV[1])")
+      script.includes("redis.call('SREM', KEYS[2], ARGV[2])") &&
+      script.includes("redis.call('SREM', KEYS[3], ARGV[2])")
     ) {
+      const raw = await this.get(keys[0]);
+      if (raw === null) return args[0] === '' ? 'NOT_FOUND' : 'CURRENT_CONFLICT';
+      if (args[0] === '' || raw !== args[0]) return 'CURRENT_CONFLICT';
+      const current = JSON.parse(raw) as { status?: string };
+      if (current.status !== 'draft') return 'NOT_DELETABLE';
       await this.del(keys[0]);
-      this._srem(keys[1], args[0]);
-      this._srem(keys[2], args[0]);
-      return 1;
+      this._srem(keys[1], args[1]);
+      this._srem(keys[2], args[1]);
+      return 'OK';
     }
 
     throw new Error(`FakeRedisClient: unsupported eval script\n${script}`);

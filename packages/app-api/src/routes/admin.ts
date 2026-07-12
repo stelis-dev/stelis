@@ -22,7 +22,10 @@ import {
   type AdminRedisClient,
 } from '@stelis/core-api/admin';
 import { readJsonBodyWithLimit, MAX_SMALL_REQUEST_BODY_BYTES } from '@stelis/core-api';
-import { MAX_PROMOTION_LEDGER_VALUE_MIST } from '@stelis/core-api/studio';
+import {
+  MAX_PROMOTION_LEDGER_VALUE_MIST,
+  PromotionCurrentConflictError,
+} from '@stelis/core-api/studio';
 import { createAdminRedisAdapter } from '../adminRedis.js';
 import {
   ADMIN_AUDIT_LOG_KEY,
@@ -215,10 +218,12 @@ function tryPromotionErrorResponse(c: Parameters<typeof tryBodyErrorResponse>[0]
     }
     if (
       err.name === 'InvalidStatusTransitionError' ||
-      err.name === 'ConcurrentStatusTransitionError' ||
       err.name === 'PromotionFieldImmutableError'
     ) {
       return c.json({ error: err.message }, 409);
+    }
+    if (err instanceof PromotionCurrentConflictError) {
+      return c.json({ code: 'PROMOTION_CURRENT_CONFLICT', error: err.message }, 409);
     }
     if (err.name === 'PromotionActivationError') {
       return c.json({ error: err.message }, 422);
@@ -920,10 +925,10 @@ export function createAdminRoutes(
         return c.json({ error: 'Promotion store not available (studio not enabled)' }, 503);
       }
       const id = c.req.param('id');
-      const body = (await readJsonBodyWithLimit(c.req.raw, MAX_SMALL_REQUEST_BODY_BYTES)) as {
-        status?: string;
-        reason?: string;
-      };
+      const body = (await readJsonBodyWithLimit(c.req.raw, MAX_SMALL_REQUEST_BODY_BYTES)) as Record<
+        string,
+        unknown
+      >;
       if (!body.status || typeof body.status !== 'string') {
         return c.json({ error: 'Missing required field: status' }, 400);
       }
@@ -932,10 +937,11 @@ export function createAdminRoutes(
         return c.json({ error: `Invalid status: ${body.status}` }, 400);
       }
 
+      const reason = parseOptionalString(body, 'reason');
       const record = await ctx.promotionStore.transitionStatus(
         id,
         body.status as import('@stelis/core-api/studio').PromotionStatus,
-        body.reason,
+        reason,
       );
       if (!record) {
         return c.json({ error: 'Promotion not found' }, 404);
@@ -966,7 +972,9 @@ export function createAdminRoutes(
         );
       }
       return c.json({ ok: true });
-    } catch {
+    } catch (err) {
+      const mapped = tryPromotionErrorResponse(c, err);
+      if (mapped) return mapped;
       return c.json({ error: 'Internal server error' }, 500);
     }
   });

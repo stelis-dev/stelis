@@ -1049,6 +1049,24 @@ describe('SecurityPage integration', () => {
 });
 
 describe('PromotionsPage integration', () => {
+  const promotionRecord = {
+    promotionId: 'promo-current',
+    type: 'gas_sponsorship',
+    displayName: 'Current Promotion',
+    description: 'Current description',
+    status: 'draft',
+    maxParticipants: 10,
+    perUserGasAllowanceMist: '1000000',
+    totalRequiredBudgetMist: '10000000',
+    claimDeadlineAt: null,
+    postClaimUseWindowMs: 0,
+    startAt: null,
+    pauseReason: null,
+    archiveReason: null,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  };
+
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
@@ -1076,6 +1094,199 @@ describe('PromotionsPage integration', () => {
       /Max Participants \(required, must be > 0\)/i,
     ) as HTMLInputElement;
     expect(maxParticipantsInput.min).toBe('1');
+  });
+
+  it('reloads the current promotion and closes stale edits after current conflicts', async () => {
+    const original = {
+      ...promotionRecord,
+      promotionId: 'promo-conflict',
+      displayName: 'Original Promotion',
+      description: 'Before concurrent update',
+    };
+    let listReads = 0;
+    let updateWrites = 0;
+    let statusWrites = 0;
+    let releaseUpdateConflict!: () => void;
+    const updateConflictGate = new Promise<void>((resolve) => {
+      releaseUpdateConflict = resolve;
+    });
+    let releaseStatusConflict!: () => void;
+    const statusConflictGate = new Promise<void>((resolve) => {
+      releaseStatusConflict = resolve;
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+        const method = init?.method ?? 'GET';
+        if (url === '/api/promotions' && method === 'GET') {
+          listReads += 1;
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            json: () =>
+              Promise.resolve({
+                promotions: [
+                  listReads === 1
+                    ? original
+                    : {
+                        ...original,
+                        displayName: 'Concurrent Promotion',
+                        description: 'Committed by another request',
+                        updatedAt: '2026-01-01T00:00:01.000Z',
+                      },
+                ],
+              }),
+          });
+        }
+        if (url === '/api/promotions/promo-conflict' && method === 'PUT') {
+          updateWrites += 1;
+          return updateConflictGate.then(() => ({
+            ok: false,
+            status: 409,
+            json: () =>
+              Promise.resolve({
+                code: 'PROMOTION_CURRENT_CONFLICT',
+                error: 'Promotion promo-conflict changed while attempting update',
+              }),
+          }));
+        }
+        if (url === '/api/promotions/promo-conflict/status' && method === 'POST') {
+          statusWrites += 1;
+          return statusConflictGate.then(() => ({
+            ok: false,
+            status: 409,
+            json: () =>
+              Promise.resolve({
+                code: 'PROMOTION_CURRENT_CONFLICT',
+                error: 'Promotion promo-conflict changed while attempting status',
+              }),
+          }));
+        }
+        return Promise.resolve({
+          ok: false,
+          status: 404,
+          json: () => Promise.resolve({ error: 'NOT_FOUND' }),
+        });
+      }),
+    );
+
+    const { PromotionsPage } = await import('../src/pages/PromotionsPage');
+    render(<DirectOutletProvider element={<PromotionsPage />} />);
+    await waitFor(() => expect(screen.getByText('Original Promotion')).toBeDefined());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    fireEvent.change(screen.getByLabelText('Display Name'), {
+      target: { value: 'Stale Operator Edit' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Update' }));
+
+    await waitFor(() => expect(updateWrites).toBe(1));
+    for (const name of ['+ New Promotion', 'Cancel', 'Edit']) {
+      expect((screen.getByRole('button', { name }) as HTMLButtonElement).disabled).toBe(true);
+    }
+    releaseUpdateConflict();
+    await waitFor(() => expect(screen.getByText('Concurrent Promotion')).toBeDefined());
+    expect(screen.queryByRole('heading', { name: 'Edit Promotion' })).toBeNull();
+    expect(
+      screen.getByText('Promotion promo-conflict changed while attempting update'),
+    ).toBeDefined();
+    expect(listReads).toBe(2);
+    expect(updateWrites).toBe(1);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Activate' }));
+    await waitFor(() => expect(statusWrites).toBe(1));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    fireEvent.change(screen.getByLabelText('Display Name'), {
+      target: { value: 'Stale After Status Conflict' },
+    });
+    releaseStatusConflict();
+
+    await waitFor(() =>
+      expect(
+        screen.getByText('Promotion promo-conflict changed while attempting status'),
+      ).toBeDefined(),
+    );
+    expect(screen.queryByRole('heading', { name: 'Edit Promotion' })).toBeNull();
+    expect(listReads).toBe(3);
+  });
+
+  it.each([
+    {
+      label: 'activation',
+      action: 'Activate',
+      method: 'POST',
+      path: '/api/promotions/promo-current/status',
+    },
+    {
+      label: 'deletion',
+      action: 'Delete',
+      method: 'DELETE',
+      path: '/api/promotions/promo-current',
+    },
+  ])('closes the same-record editor after successful $label', async (testCase) => {
+    let listReads = 0;
+    let mutationWrites = 0;
+    let releaseMutation!: () => void;
+    const mutationGate = new Promise<void>((resolve) => {
+      releaseMutation = resolve;
+    });
+    vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+        const method = init?.method ?? 'GET';
+        if (url === '/api/promotions' && method === 'GET') {
+          listReads += 1;
+          const promotions =
+            listReads === 1
+              ? [promotionRecord]
+              : testCase.label === 'deletion'
+                ? []
+                : [{ ...promotionRecord, status: 'active' }];
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            json: () => Promise.resolve({ promotions }),
+          });
+        }
+        if (url === testCase.path && method === testCase.method) {
+          mutationWrites += 1;
+          return mutationGate.then(() => ({
+            ok: true,
+            status: 200,
+            json: () =>
+              Promise.resolve(
+                testCase.label === 'deletion'
+                  ? { ok: true }
+                  : { promotion: { ...promotionRecord, status: 'active' } },
+              ),
+          }));
+        }
+        return Promise.resolve({
+          ok: false,
+          status: 404,
+          json: () => Promise.resolve({ error: 'NOT_FOUND' }),
+        });
+      }),
+    );
+
+    const { PromotionsPage } = await import('../src/pages/PromotionsPage');
+    render(<DirectOutletProvider element={<PromotionsPage />} />);
+    await waitFor(() => expect(screen.getByText('Current Promotion')).toBeDefined());
+
+    fireEvent.click(screen.getByRole('button', { name: testCase.action }));
+    await waitFor(() => expect(mutationWrites).toBe(1));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    fireEvent.change(screen.getByLabelText('Display Name'), {
+      target: { value: 'Stale After Mutation' },
+    });
+    expect(screen.getByRole('heading', { name: 'Edit Promotion' })).toBeDefined();
+
+    releaseMutation();
+    await waitFor(() => expect(listReads).toBe(2));
+    await waitFor(() =>
+      expect(screen.queryByRole('heading', { name: 'Edit Promotion' })).toBeNull(),
+    );
   });
 });
 

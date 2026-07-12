@@ -7,6 +7,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Hono } from 'hono';
 import { buildSponsorRefillAccountWithdrawMessage } from '@stelis/contracts';
+import { PromotionCurrentConflictError } from '@stelis/core-api/studio';
 
 // ── Hoisted mocks ───────────────────────────────────────────────────────
 const {
@@ -1597,6 +1598,77 @@ describe('admin routes', () => {
           body: JSON.stringify({}),
         });
         expect(res.status).toBe(400);
+      });
+
+      it('POST /api/promotions/:id/status rejects a non-string reason before the store', async () => {
+        const transition = vi.spyOn(mockCtx.promotionStore!, 'transitionStatus');
+        mockReadJsonBodyWithLimit.mockResolvedValueOnce({
+          status: 'active',
+          reason: { nested: 'not-a-string' },
+        });
+
+        const res = await app.request('/api/promotions/any/status', {
+          method: 'POST',
+          body: JSON.stringify({}),
+        });
+
+        expect(res.status).toBe(400);
+        expect(transition).not.toHaveBeenCalled();
+      });
+
+      it.each([
+        {
+          label: 'create',
+          storeMethod: 'create',
+          method: 'POST',
+          path: '/api/promotions',
+          body: {
+            type: 'gas_sponsorship',
+            displayName: 'Conflict',
+            maxParticipants: 1,
+            perUserGasAllowanceMist: '1',
+          },
+        },
+        {
+          label: 'update',
+          storeMethod: 'update',
+          method: 'PUT',
+          path: '/api/promotions/conflict',
+          body: { displayName: 'Conflict' },
+        },
+        {
+          label: 'status',
+          storeMethod: 'transitionStatus',
+          method: 'POST',
+          path: '/api/promotions/conflict/status',
+          body: { status: 'active' },
+        },
+        {
+          label: 'delete',
+          storeMethod: 'delete',
+          method: 'DELETE',
+          path: '/api/promotions/conflict',
+          body: null,
+        },
+      ])('maps a $label current-record race to stable 409 conflict', async (testCase) => {
+        const conflict = new PromotionCurrentConflictError('conflict', testCase.label);
+        (mockCtx.promotionStore as unknown as Record<string, unknown>)[testCase.storeMethod] = vi
+          .fn()
+          .mockRejectedValue(conflict);
+        if (testCase.body !== null) {
+          mockReadJsonBodyWithLimit.mockResolvedValueOnce(testCase.body);
+        }
+
+        const res = await app.request(testCase.path, {
+          method: testCase.method,
+          body: testCase.body === null ? undefined : JSON.stringify({}),
+        });
+
+        expect(res.status).toBe(409);
+        await expect(res.json()).resolves.toEqual({
+          code: 'PROMOTION_CURRENT_CONFLICT',
+          error: conflict.message,
+        });
       });
 
       it('DELETE /api/promotions/:id deletes draft promotion', async () => {
