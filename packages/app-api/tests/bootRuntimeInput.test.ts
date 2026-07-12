@@ -111,6 +111,7 @@ beforeEach(async () => {
   state.probeEndpointCapabilities.mockResolvedValue({ ok: true });
   state.createSuiClient.mockReturnValue({
     client: { runtime: 'sui-client' },
+    primaryClient: { runtime: 'primary-sui-client' },
     failoverTransport: { runtime: 'failover-transport' },
   });
 });
@@ -134,6 +135,7 @@ describe('runBootValidation runtime input', () => {
     expect(result.runtimeInput.corsAllowedOrigins).toEqual(['https://admin.before.example']);
     expect(result.runtimeInput.context.quotedHostFeeMist).toBe(7n);
     expect(result.runtimeInput.context.prepareInflightCapacity).toBe(5);
+    expect(result.runtimeInput.context.sponsorOperations.withdrawalReceiptTtlMs).toBe(3_600_000);
     expect(result.runtimeInput.context.studio).toBeNull();
     expect(result.runtimeInput.context.settlementSwapPathRegistryEntries).toEqual([
       { poolId: `0x${'12'.repeat(32)}` },

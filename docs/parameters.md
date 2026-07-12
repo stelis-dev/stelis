@@ -46,7 +46,7 @@ These values are written by `packages/contracts/move/sources/config.move` at pac
 | `PREPARE_AUTHORIZATION_CLOCK_SKEW_MS` | `30000` | `packages/core-api/src/prepare/prepareAuthorization.ts` |
 | `MAX_PREPARE_REQUEST_NONCE_BYTES` | `128` | `packages/core-api/src/prepare/prepareAuthorization.ts` |
 | Sponsor balance warning default | `5000000000` | `packages/app-api/src/sponsor-operations/defaults.ts` |
-| Sponsor refill target default | `10000000000` | `packages/app-api/src/sponsor-operations/defaults.ts` |
+| Sponsor refill target and disabled-worker withdrawal-runway default | `10000000000` | `packages/app-api/src/sponsor-operations/defaults.ts` |
 
 <a id="ttl-constants"></a>
 

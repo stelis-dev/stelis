@@ -64,8 +64,6 @@ export interface AppRuntimeInput {
   readonly adminAddress: string | null;
   readonly adminAuth: AdminAuthRuntimeConfig;
   readonly adminSponsorOperations: {
-    readonly sponsorRefillAccountKey: ContextRuntimeInput['sponsorOperations']['sponsorRefillAccountKey'];
-    readonly sponsorRefillAccountAddress: string;
     readonly refillEnabled: boolean;
     /** Existing admin runway/withdraw fallback, distinct from the optional worker target. */
     readonly refillTargetMist: bigint;
@@ -296,6 +294,8 @@ export async function runBootValidation(): Promise<BootValidationResult> {
         `SPONSOR_BALANCE_WARN_MIST (${warnMist.toString()} MIST)`,
     );
   }
+  const sponsorRefillAccountRunwayTargetMist =
+    refillTargetMist ?? SPONSOR_BALANCE_REFILL_TARGET_MIST;
 
   const parseRequiredSponsorOperationsTimeout = (name: string, raw: string | undefined): number => {
     if (raw === undefined || raw === '') {
@@ -363,6 +363,10 @@ export async function runBootValidation(): Promise<BootValidationResult> {
   }
   const adminSessionExpiry = environment.ADMIN_SESSION_EXPIRY?.trim() || '1h';
   const adminSessionMaxAgeSeconds = parseDuration(adminSessionExpiry);
+  const withdrawalReceiptTtlMs = adminSessionMaxAgeSeconds * 1_000;
+  if (!Number.isSafeInteger(withdrawalReceiptTtlMs)) {
+    throw new Error('[app-api] ADMIN_SESSION_EXPIRY is too large for withdrawal receipt TTL');
+  }
   const cookieDomain = parseCookieDomain(environment.COOKIE_DOMAIN);
   const adminAuth: AdminAuthRuntimeConfig = {
     jwt: adminJwtSecret
@@ -450,7 +454,11 @@ export async function runBootValidation(): Promise<BootValidationResult> {
       verified.map((ep) => redactUrl(ep.url)).join(', '),
   );
 
-  const { client: suiClient, failoverTransport } = createSuiClient({
+  const {
+    client: suiClient,
+    primaryClient: primarySuiClient,
+    failoverTransport,
+  } = createSuiClient({
     network,
     endpoints: verified,
   });
@@ -543,6 +551,7 @@ export async function runBootValidation(): Promise<BootValidationResult> {
         },
         deepbookPackageId: deepbookIds!.packageId,
         suiClient,
+        primarySuiClient,
         failoverTransport,
         settlementSwapPathRegistryEntries,
         sponsorKeys,
@@ -555,11 +564,13 @@ export async function runBootValidation(): Promise<BootValidationResult> {
           sponsorRefillAccountAddress,
           refillEnabled,
           refillTargetMist: refillTargetMist ?? null,
+          runwayTargetMist: sponsorRefillAccountRunwayTargetMist,
           warnMist,
           slotBalanceTimeoutMs,
           sponsorRefillAccountBalanceTimeoutMs,
           refillTimeoutMs,
           confirmationTimeoutMs,
+          withdrawalReceiptTtlMs,
         },
         studio: studioRuntimeInput,
       },
@@ -568,10 +579,8 @@ export async function runBootValidation(): Promise<BootValidationResult> {
       adminAddress,
       adminAuth,
       adminSponsorOperations: {
-        sponsorRefillAccountKey,
-        sponsorRefillAccountAddress,
         refillEnabled,
-        refillTargetMist: refillTargetMist ?? SPONSOR_BALANCE_REFILL_TARGET_MIST,
+        refillTargetMist: sponsorRefillAccountRunwayTargetMist,
         warnMist,
       },
     },

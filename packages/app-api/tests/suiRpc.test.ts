@@ -396,6 +396,7 @@ describe('createSuiClient', () => {
       endpoints: [{ url: 'https://fullnode.testnet.sui.io:443' }],
     });
     expect(result.client).toBeDefined();
+    expect(result.primaryClient).toBeDefined();
     expect(typeof result.client.getObject).toBe('function');
     // Even single endpoint always uses failover transport (no fast path)
     expect(result.failoverTransport).toBeInstanceOf(SuiRpcFailoverTransport);
@@ -409,6 +410,7 @@ describe('createSuiClient', () => {
       endpoints: [{ url: 'https://a.com' }, { url: 'https://b.com' }],
     });
     expect(result.client).toBeDefined();
+    expect(result.primaryClient).toBeDefined();
     expect(result.failoverTransport).toBeInstanceOf(SuiRpcFailoverTransport);
     expect(result.failoverTransport!.size).toBe(2);
   });

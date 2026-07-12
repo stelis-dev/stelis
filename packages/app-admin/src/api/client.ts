@@ -16,6 +16,7 @@
 
 import type {
   SingleHopSettlementSwapPathResponse,
+  SuiNetwork,
   SponsorOperationsStatus as SponsorOperationsState,
 } from '@stelis/contracts';
 
@@ -59,7 +60,9 @@ async function apiFetch<T>(url: string, init?: RequestInit): Promise<T> {
     const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     throw new ApiError(
       res.status,
-      (body.error as string) ?? `HTTP_${res.status}`,
+      (typeof body.code === 'string' ? body.code : undefined) ??
+        (body.error as string) ??
+        `HTTP_${res.status}`,
       (body.message as string) ?? (body.error as string) ?? `Request failed: ${res.status}`,
     );
   }
@@ -126,7 +129,7 @@ export interface SponsorOperationsStatus {
   sponsorOperations: SponsorOperationsState;
   primaryAddress: string | null;
   settlementPayoutRecipientAddress: string;
-  network: string;
+  network: SuiNetwork;
   sponsorBalanceWarnMist?: string;
   sponsorBalanceRefillTargetMist?: string;
   feeConfig: FeeConfig | null;

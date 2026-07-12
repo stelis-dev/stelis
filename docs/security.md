@@ -42,7 +42,7 @@ Final settlement validation rejects a `settlement_payout_recipient` that does no
 
 Failed sponsored execution can spend sponsor gas without producing settlement payout. The Host uses preflight simulation, sponsor failure abuse recording, and blocked request checks to limit failed-execution gas griefing.
 
-Sponsor Refill Account withdrawal is privileged. The withdrawal route requires admin session validation, a signed single-use withdrawal nonce, admin-operation rate limiting, operation logging, dry-run, and runway guard checks.
+Sponsor Refill Account withdrawal is privileged. The withdrawal route requires admin session validation, a network-bound signed single-use withdrawal nonce, admin-operation rate limiting, operation logging, simulation, and the shared durable account-spend runway checks. Pending outcomes retain and retry the exact signed request on that network; a new nonce is not a recovery mechanism.
 
 ## Web2 Security Policy (API and Infrastructure)
 

@@ -39,10 +39,8 @@ import { createApp } from '../src/app.js';
 const JWT_SECRET = 'secret-that-must-not-leave-create-app';
 const HMAC_SECRET = 'internal-hmac-that-must-not-be-public';
 const ADMIN_ADDRESS = `0x${'aa'.repeat(32)}`;
-const SPONSOR_REFILL_ACCOUNT_ADDRESS = `0x${'bb'.repeat(32)}`;
-const contextInput = { sponsorLeaseHmacSecret: HMAC_SECRET };
+const contextInput = { sponsorLeaseHmacSecret: HMAC_SECRET, network: 'testnet' as const };
 const context = { runtime: 'context' };
-const sponsorRefillAccountKey = { runtime: 'sponsor-refill-account-key' };
 
 function bootValidationResult() {
   return {
@@ -64,8 +62,6 @@ function bootValidationResult() {
         },
       },
       adminSponsorOperations: {
-        sponsorRefillAccountKey,
-        sponsorRefillAccountAddress: SPONSOR_REFILL_ACCOUNT_ADDRESS,
         refillEnabled: true,
         refillTargetMist: 10_000_000_000n,
         warnMist: 5_000_000_000n,
@@ -129,14 +125,13 @@ describe('createApp runtime input boundary', () => {
     const [, adminRuntime] = mocks.createAdminRoutes.mock.calls[0];
     expect(adminRuntime).toEqual({
       resolveClientIp: authRuntime.resolveClientIp,
+      network: 'testnet',
       adminAddress: ADMIN_ADDRESS,
       adminJwt: {
         jwtSecret: JWT_SECRET,
         sessionExpiry: '1h',
         issuer: 'app-api',
       },
-      sponsorRefillAccountKey,
-      sponsorRefillAccountAddress: SPONSOR_REFILL_ACCOUNT_ADDRESS,
       refillEnabled: true,
       refillTargetMist: 10_000_000_000n,
       warnMist: 5_000_000_000n,

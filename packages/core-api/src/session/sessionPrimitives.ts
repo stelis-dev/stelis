@@ -4,11 +4,12 @@
  * These functions extract the structural duplication between
  * handleSponsor (generic) and handlePromotionSponsor (promotion).
  *
- * Internal to core-api. Not exported from the package barrel.
  * Mode-specific policy (generic re-validation, promotion entitlement)
- * remains in each handler.
+ * remains internal. The narrow current-Sui result parser is also consumed by
+ * app-api so Host execution boundaries share one fail-closed SDK-union authority.
  */
 import { createHash } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import { Transaction } from '@mysten/sui/transactions';
 import { fromBase64 } from '@mysten/sui/utils';
 import { verifyTransactionSignature } from '@mysten/sui/verify';
@@ -218,7 +219,7 @@ type NormalizedExecutionStatus =
   | { readonly success: true; readonly error: null }
   | { readonly success: false; readonly error: NormalizedExecutionError };
 
-type NormalizedTerminalResult =
+export type ParsedSuiTransactionResult =
   | {
       readonly kind: 'success';
       readonly digest: string;
@@ -300,13 +301,6 @@ function readCurrentExecutionStatus(value: unknown): NormalizedExecutionStatus |
   return error ? { success: false, error } : null;
 }
 
-function statusesMatch(left: NormalizedExecutionStatus, right: NormalizedExecutionStatus): boolean {
-  if (left.success !== right.success) return false;
-  if (left.success) return true;
-  if (right.success) return false;
-  return left.error.kind === right.error.kind && left.error.message === right.error.message;
-}
-
 function isCanonicalGasAmount(value: unknown): value is string {
   return typeof value === 'string' && /^(?:0|[1-9]\d*)$/.test(value);
 }
@@ -344,7 +338,7 @@ function readTerminalPayload(
   if (!isRuntimeRecord(value.effects)) return null;
 
   const effectsStatus = readCurrentExecutionStatus(value.effects.status);
-  if (!effectsStatus || !statusesMatch(status, effectsStatus)) return null;
+  if (!effectsStatus || !isDeepStrictEqual(value.status, value.effects.status)) return null;
   if (value.effects.transactionDigest !== value.digest) return null;
 
   return {
@@ -355,7 +349,7 @@ function readTerminalPayload(
   };
 }
 
-function normalizeTerminalResult(value: unknown): NormalizedTerminalResult | null {
+export function parseSuiTransactionResult(value: unknown): ParsedSuiTransactionResult | null {
   if (!isRuntimeRecord(value)) return null;
 
   if (value.$kind === 'Transaction') {
@@ -418,7 +412,7 @@ export async function runPreflight(
     transaction: txBytes,
     include: { effects: true },
   });
-  const terminal = normalizeTerminalResult(simResult);
+  const terminal = parseSuiTransactionResult(simResult);
   if (!terminal) {
     return { success: false, reason: 'Simulation returned malformed terminal result' };
   }
@@ -501,7 +495,7 @@ export async function signAndSubmit(
       include: { effects: true, events: true },
     });
 
-    const terminal = normalizeTerminalResult(execResult);
+    const terminal = parseSuiTransactionResult(execResult);
     if (!terminal) {
       throw new Error('Transaction execution returned malformed terminal result');
     }

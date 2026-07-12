@@ -125,6 +125,7 @@ describe('AuthGuard integration', () => {
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
+    sessionStorage.clear();
   });
 
   it('redirects to /login when session returns 401', async () => {
@@ -238,6 +239,7 @@ describe('DashboardPage integration', () => {
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
+    sessionStorage.clear();
   });
 
   async function renderDashboardPage() {
@@ -511,7 +513,11 @@ describe('DashboardPage integration', () => {
       message: Uint8Array;
       account: { address: string };
     };
-    const expectedMessage = buildSponsorRefillAccountWithdrawMessage(amountMist, nonce);
+    const expectedMessage = buildSponsorRefillAccountWithdrawMessage(
+      'testnet',
+      amountMist,
+      nonce,
+    );
     expect(Array.from(params.message)).toEqual(
       Array.from(new TextEncoder().encode(expectedMessage)),
     );
@@ -525,6 +531,257 @@ describe('DashboardPage integration', () => {
       signature,
       amountMist,
     });
+  });
+
+  it('retries a pending withdrawal with the exact same nonce, signature, and amount', async () => {
+    const nonce = 'stelis-withdraw:pending:123';
+    const signature = '0xPENDING_SIG';
+    const signPersonalMessage = vi.fn().mockResolvedValue({ signature, bytes: '0xBYTES' });
+    mockGetWallets.mockReturnValue({
+      get: () => [
+        {
+          features: { 'sui:signPersonalMessage': { signPersonalMessage } },
+          accounts: [{ address: VALID_SESSION.address }],
+        },
+      ],
+    });
+
+    let nonceRequests = 0;
+    const postedBodies: Array<Record<string, unknown>> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+        const method = init?.method ?? 'GET';
+        if (url === '/api/sponsor-operations' && method === 'GET') {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            json: () => Promise.resolve(SPONSOR_OPERATIONS_DATA),
+          });
+        }
+        if (url === '/api/sponsor-refill-account/withdraw' && method === 'GET') {
+          nonceRequests += 1;
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            json: () => Promise.resolve({ nonce, expiresAt: '2026-07-12T12:00:00.000Z' }),
+          });
+        }
+        if (url === '/api/sponsor-refill-account/withdraw' && method === 'POST') {
+          postedBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+          if (postedBodies.length === 1) {
+            return Promise.resolve({
+              ok: false,
+              status: 503,
+              json: () =>
+                Promise.resolve({
+                  code: 'WITHDRAWAL_PENDING',
+                  error: 'Withdrawal outcome is pending recovery.',
+                }),
+            });
+          }
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            json: () => Promise.resolve({ digest: '0xRECOVERED' }),
+          });
+        }
+        return Promise.resolve({
+          ok: false,
+          status: 404,
+          json: () => Promise.resolve({ error: 'NOT_FOUND' }),
+        });
+      }),
+    );
+
+    const { DashboardPage } = await import('../src/pages/DashboardPage');
+    render(<DirectOutletProvider element={<DashboardPage />} />);
+    await waitFor(() => expect(screen.getByRole('heading', { level: 1 })).toBeDefined());
+
+    fireEvent.change(screen.getByPlaceholderText('0.5'), { target: { value: '1.5' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Withdraw' }));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Retry pending withdrawal' })).toBeDefined(),
+    );
+
+    cleanup();
+    render(<DirectOutletProvider element={<DashboardPage />} />);
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Retry pending withdrawal' })).toBeDefined(),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Retry pending withdrawal' }));
+    await waitFor(() => expect(screen.getByText('Success: 0xRECOVERED')).toBeDefined());
+
+    expect(nonceRequests).toBe(1);
+    expect(signPersonalMessage).toHaveBeenCalledTimes(1);
+    expect(postedBodies).toHaveLength(2);
+    expect(postedBodies[1]).toEqual(postedBodies[0]);
+    expect(sessionStorage.getItem('stelis:admin:pending-withdrawal')).toBeNull();
+  });
+
+  it.each([
+    {
+      name: 'wrong-network',
+      request: {
+        adminAddress: VALID_SESSION.address,
+        network: 'mainnet',
+        nonce: 'stelis-withdraw:mainnet:123',
+        signature: '0xMAINNET_SIG',
+        amountMist: '1500000000',
+      },
+    },
+    {
+      name: 'legacy-without-network',
+      request: {
+        adminAddress: VALID_SESSION.address,
+        nonce: 'stelis-withdraw:legacy:123',
+        signature: '0xLEGACY_SIG',
+        amountMist: '1500000000',
+      },
+    },
+  ])('discards a $name stored withdrawal without retrying it', async ({ request }) => {
+    sessionStorage.setItem('stelis:admin:pending-withdrawal', JSON.stringify(request));
+    const calls = stubDashboardFetch();
+
+    await renderDashboardPage();
+
+    expect(screen.getByRole('button', { name: 'Withdraw' })).toBeDefined();
+    expect(sessionStorage.getItem('stelis:admin:pending-withdrawal')).toBeNull();
+    expect(calls.withdrawNonce).toBe(0);
+    expect(calls.withdrawPost).toBe(0);
+  });
+
+  it('discards an in-memory pending withdrawal when the Host network changes', async () => {
+    const nonce = 'stelis-withdraw:testnet-pending:123';
+    const signature = '0xTESTNET_PENDING_SIG';
+    const signPersonalMessage = vi.fn().mockResolvedValue({ signature, bytes: '0xBYTES' });
+    mockGetWallets.mockReturnValue({
+      get: () => [
+        {
+          features: { 'sui:signPersonalMessage': { signPersonalMessage } },
+          accounts: [{ address: VALID_SESSION.address }],
+        },
+      ],
+    });
+
+    let sponsorOperationsReads = 0;
+    let withdrawPosts = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+        const method = init?.method ?? 'GET';
+        if (url === '/api/sponsor-operations' && method === 'GET') {
+          sponsorOperationsReads += 1;
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            json: () =>
+              Promise.resolve({
+                ...SPONSOR_OPERATIONS_DATA,
+                network: sponsorOperationsReads === 1 ? 'testnet' : 'mainnet',
+              }),
+          });
+        }
+        if (url === '/api/sponsor-refill-account/withdraw' && method === 'GET') {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            json: () => Promise.resolve({ nonce, expiresAt: '2026-07-12T12:00:00.000Z' }),
+          });
+        }
+        if (url === '/api/sponsor-refill-account/withdraw' && method === 'POST') {
+          withdrawPosts += 1;
+          return Promise.resolve({
+            ok: false,
+            status: 503,
+            json: () =>
+              Promise.resolve({
+                code: 'WITHDRAWAL_PENDING',
+                error: 'Withdrawal outcome is pending recovery.',
+              }),
+          });
+        }
+        return Promise.resolve({
+          ok: false,
+          status: 404,
+          json: () => Promise.resolve({ error: 'NOT_FOUND' }),
+        });
+      }),
+    );
+
+    await renderDashboardPage();
+    fireEvent.change(screen.getByPlaceholderText('0.5'), { target: { value: '1.5' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Withdraw' }));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Retry pending withdrawal' })).toBeDefined(),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    await waitFor(() => expect(screen.getByText('mainnet')).toBeDefined());
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Withdraw' })).toBeDefined());
+
+    expect(sessionStorage.getItem('stelis:admin:pending-withdrawal')).toBeNull();
+    expect(withdrawPosts).toBe(1);
+  });
+
+  it.each([
+    {
+      status: 409,
+      code: 'WITHDRAWAL_NOT_ACCEPTED',
+      error: 'This withdrawal was not accepted.',
+    },
+    {
+      status: 401,
+      code: 'WITHDRAWAL_SIGNATURE_INVALID',
+      error: 'Invalid signature',
+    },
+  ])('clears a stored request after terminal response $code', async (response) => {
+    sessionStorage.setItem(
+      'stelis:admin:pending-withdrawal',
+      JSON.stringify({
+        adminAddress: VALID_SESSION.address,
+        network: 'testnet',
+        nonce: 'stelis-withdraw:unaccepted:123',
+        signature: '0xUNACCEPTED',
+        amountMist: '1500000000',
+      }),
+    );
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+        const method = init?.method ?? 'GET';
+        if (url === '/api/sponsor-operations' && method === 'GET') {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            json: () => Promise.resolve(SPONSOR_OPERATIONS_DATA),
+          });
+        }
+        if (url === '/api/sponsor-refill-account/withdraw' && method === 'POST') {
+          return Promise.resolve({
+            ok: false,
+            status: response.status,
+            json: () => Promise.resolve({ code: response.code, error: response.error }),
+          });
+        }
+        return Promise.resolve({
+          ok: false,
+          status: 404,
+          json: () => Promise.resolve({ error: 'NOT_FOUND' }),
+        });
+      }),
+    );
+
+    const { DashboardPage } = await import('../src/pages/DashboardPage');
+    render(<DirectOutletProvider element={<DashboardPage />} />);
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Retry pending withdrawal' })).toBeDefined(),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry pending withdrawal' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Withdraw' })).toBeDefined());
+
+    expect(sessionStorage.getItem('stelis:admin:pending-withdrawal')).toBeNull();
   });
 
   it('blocks zero withdraw input before nonce fetch and signing', async () => {
@@ -664,6 +921,30 @@ describe('DashboardPage integration', () => {
 
     fireEvent.click(withdrawButton);
 
+    expect(calls.withdrawNonce).toBe(0);
+    expect(signPersonalMessage).not.toHaveBeenCalled();
+    expect(calls.withdrawPost).toBe(0);
+  });
+
+  it('blocks an amount above u64 MIST before nonce fetch and signing', async () => {
+    const signPersonalMessage = vi.fn();
+    const calls = stubDashboardFetch();
+    mockGetWallets.mockReturnValue({
+      get: () => [
+        {
+          features: { 'sui:signPersonalMessage': { signPersonalMessage } },
+          accounts: [{ address: VALID_SESSION.address }],
+        },
+      ],
+    });
+    await renderDashboardPage();
+
+    fireEvent.change(screen.getByPlaceholderText('0.5'), {
+      target: { value: '18446744073.709551616' },
+    });
+    const withdrawButton = screen.getByRole('button', { name: 'Withdraw' });
+    expect((withdrawButton as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText('Withdrawal amount must fit a positive u64 MIST value')).toBeDefined();
     expect(calls.withdrawNonce).toBe(0);
     expect(signPersonalMessage).not.toHaveBeenCalled();
     expect(calls.withdrawPost).toBe(0);

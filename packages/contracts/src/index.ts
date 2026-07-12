@@ -72,4 +72,8 @@ export type {
   SponsorOperationsStatus,
 } from './admin.js';
 
-export { buildSponsorRefillAccountWithdrawMessage } from './admin.js';
+export {
+  buildSponsorRefillAccountWithdrawMessage,
+  isPositiveU64DecimalString,
+  SPONSOR_SLOT_STATES,
+} from './admin.js';

@@ -109,6 +109,7 @@ export async function createApp(
   });
   const adminRoutes = createAdminRoutes(contextPromise, {
     resolveClientIp,
+    network: runtimeInput.context.network,
     adminAddress: runtimeInput.adminAddress,
     adminJwt: runtimeInput.adminAuth.jwt,
     ...runtimeInput.adminSponsorOperations,

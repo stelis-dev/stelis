@@ -48,12 +48,15 @@ import { probeAndWriteSponsorRefillAccountState } from './sponsorRefillAccountPr
 import { withTimeout } from './timeout.js';
 import { SPONSOR_BALANCE_WARN_MIST } from './defaults.js';
 import { parseChainBalanceMist } from './balanceParsing.js';
+import type { SponsorRefillAccountSpendStateStore } from './accountSpendState.js';
 
 export interface SponsorResultCallbackDeps {
   /** Sui gRPC client for bounded balance probes. */
   readonly sui: SuiGrpcClient;
   /** Shared Redis state store (write + read). */
   readonly state: RedisSponsorOperationsState;
+  /** Account spend sequence used to reject stale Sponsor Refill Account probes. */
+  readonly spendState: SponsorRefillAccountSpendStateStore;
   /** Sponsor refill account address for bounded sponsor refill account balance probes. */
   readonly sponsorRefillAccountAddress: string;
   /** Settlement payout recipient address. Used to detect sponsor refill account-as-recipient mode. */
@@ -118,6 +121,8 @@ export function createSponsorResultStateUpdater(
   }
 
   async function probeAndWriteSlot(slotAddress: string): Promise<void> {
+    const previous = await deps.state.readSlot(slotAddress);
+    const expectedWriteSeq = previous?.writeSeq ?? 0;
     function logSlotWriteFailure(
       writeErr: unknown,
       fields: {
@@ -151,12 +156,12 @@ export function createSponsorResultStateUpdater(
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       try {
-        await deps.state.updateSlot(slotAddress, {
+        const updated = await deps.state.updateSlotIfWriteSeq(slotAddress, expectedWriteSeq, {
           state: 'rpc_unreachable',
           balanceMist: '',
           lastError: normalizeSponsorOperationsLastError(err),
         });
-        notifySlotStateChanged(slotAddress, 'rpc_unreachable');
+        if (updated) notifySlotStateChanged(slotAddress, 'rpc_unreachable');
       } catch (writeErr) {
         logSlotWriteFailure(writeErr, { state: 'rpc_unreachable', probeError: message });
       }
@@ -165,12 +170,12 @@ export function createSponsorResultStateUpdater(
 
     const nextState = classifySlot(balance);
     try {
-      await deps.state.updateSlot(slotAddress, {
+      const updated = await deps.state.updateSlotIfWriteSeq(slotAddress, expectedWriteSeq, {
         state: nextState,
         balanceMist: balance.toString(),
         lastError: '',
       });
-      notifySlotStateChanged(slotAddress, nextState);
+      if (updated) notifySlotStateChanged(slotAddress, nextState);
     } catch (writeErr) {
       logSlotWriteFailure(writeErr, { state: nextState });
     }
@@ -180,7 +185,7 @@ export function createSponsorResultStateUpdater(
     await probeAndWriteSponsorRefillAccountState(
       {
         sui: deps.sui,
-        state: deps.state,
+        spendState: deps.spendState,
         sponsorRefillAccountAddress: deps.sponsorRefillAccountAddress,
         refillTargetMist: deps.refillTargetMist,
         sponsorRefillAccountBalanceTimeoutMs: deps.sponsorRefillAccountBalanceTimeoutMs,

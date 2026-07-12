@@ -8,11 +8,12 @@
  * and the shared admin contracts in @stelis/contracts.
  */
 import { Hono } from 'hono';
-import type { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import {
   buildSponsorRefillAccountWithdrawMessage,
+  isPositiveU64DecimalString,
   type DeepBookPoolHop,
   type SponsorOperationsStatus,
+  type SuiNetwork,
 } from '@stelis/contracts';
 import {
   checkAndIncrementAdminOperationAttempt,
@@ -30,10 +31,10 @@ import {
   writeAdminAuditLog,
 } from '../adminAuditLog.js';
 import { deriveSponsorAvailabilitySummary } from '../sponsor-operations/gate.js';
+import { encodeSponsorRefillAccountWithdrawalIssuedReceipt } from '../sponsor-operations/accountSpendState.js';
 import type { AppApiContext } from '../context.js';
 import { requireAdminSessionFromContext } from '../requireAdminSession.js';
 import type { ResolveClientIp } from '../clientIp.js';
-import { parseChainBalanceMist } from '../sponsor-operations/balanceParsing.js';
 import { safeBigintToNumber } from '../wireNumbers.js';
 import { mapError, respondMapped } from '../errorMap.js';
 
@@ -230,11 +231,9 @@ const IP_PREFIX = 'stelis:abuse:block:ip:';
 const ADDR_PREFIX = 'stelis:abuse:block:address:';
 const WITHDRAW_NONCE_PREFIX = 'stelis:admin:withdraw_nonce:';
 const WITHDRAW_NONCE_TTL_MS = 60_000;
-const WITHDRAW_GAS_BUFFER_MIST = 50_000_000n;
-const AMOUNT_MIST_REGEX = /^(?:0|[1-9]\d*)$/;
 
-function isValidAmountMist(s: string): boolean {
-  return AMOUNT_MIST_REGEX.test(s) && s !== '0';
+function withdrawalNonceKey(network: SuiNetwork, nonce: string): string {
+  return `${WITHDRAW_NONCE_PREFIX}${network}:${nonce}`;
 }
 
 const SPONSORED_LOGS_DEFAULT_LIMIT = 50;
@@ -262,10 +261,9 @@ async function getAdminRedis(contextPromise: Promise<AppApiContext>): Promise<Ad
 
 export interface AdminRoutesRuntimeInput {
   readonly resolveClientIp: ResolveClientIp;
+  readonly network: SuiNetwork;
   readonly adminAddress: string | null;
   readonly adminJwt: AdminJwtConfig | null;
-  readonly sponsorRefillAccountKey: Ed25519Keypair;
-  readonly sponsorRefillAccountAddress: string;
   readonly refillEnabled: boolean;
   readonly warnMist: bigint;
   readonly refillTargetMist: bigint;
@@ -405,7 +403,7 @@ export function createAdminRoutes(
 
       // Await the bounded sponsor refill account probe here. Admin is not a hot path,
       // and awaiting keeps the returned sponsor refill account fields honest.
-      await ctx.sponsorOperations.probeSponsorRefillAccount('admin_sponsor_operations');
+      await ctx.sponsorOperations.probeSponsorRefillAccount();
 
       const [stateView, slotLeases] = await Promise.all([
         ctx.sponsorOperations.readState(),
@@ -491,9 +489,11 @@ export function createAdminRoutes(
       ip = runtime.resolveClientIp(c);
       const redis = await getAdminRedis(contextPromise);
       const nonce = `stelis-withdraw:${crypto.randomUUID()}:${Date.now()}`;
-      await redis.set(`${WITHDRAW_NONCE_PREFIX}${nonce}`, '1', {
-        px: WITHDRAW_NONCE_TTL_MS,
-      });
+      await redis.set(
+        withdrawalNonceKey(runtime.network, nonce),
+        encodeSponsorRefillAccountWithdrawalIssuedReceipt(runtime.network),
+        { px: WITHDRAW_NONCE_TTL_MS },
+      );
       const expiresAt = new Date(Date.now() + WITHDRAW_NONCE_TTL_MS).toISOString();
       return c.json({ nonce, expiresAt });
     } catch (err) {
@@ -548,31 +548,14 @@ export function createAdminRoutes(
       }
 
       // amountMist validation
-      const isMax = amountMist === 'max';
-      if (!isMax && !isValidAmountMist(amountMist)) {
+      if (!isPositiveU64DecimalString(amountMist)) {
         await writeAdminAuditLog(redis, {
           event: 'WITHDRAWAL_FAILED',
           ts: ts(),
           ip,
           detail: `400: invalid amountMist: "${amountMist}"`,
         });
-        return c.json(
-          { error: 'amountMist must be a positive decimal integer string or "max"' },
-          400,
-        );
-      }
-
-      // Nonce validation — atomic DEL-as-consume (single-use guarantee under concurrency)
-      const nonceKey = `${WITHDRAW_NONCE_PREFIX}${nonce}`;
-      const nonceDeleted = await redis.del(nonceKey);
-      if (nonceDeleted === 0) {
-        await writeAdminAuditLog(redis, {
-          event: 'WITHDRAWAL_FAILED',
-          ts: ts(),
-          ip,
-          detail: '401: invalid nonce',
-        });
-        return c.json({ error: 'Invalid or expired nonce' }, 401);
+        return c.json({ error: 'amountMist must be a positive u64 decimal integer string' }, 400);
       }
 
       // Signature verification uses the shared browser/server helper.
@@ -580,7 +563,7 @@ export function createAdminRoutes(
         throw new Error('ADMIN_ADDRESS is not configured');
       }
       const adminAddress = runtime.adminAddress;
-      const message = buildSponsorRefillAccountWithdrawMessage(amountMist, nonce);
+      const message = buildSponsorRefillAccountWithdrawMessage(runtime.network, amountMist, nonce);
       const sigValid = await verifySignedMessage({ message, signature, adminAddress });
       if (!sigValid) {
         await writeAdminAuditLog(redis, {
@@ -589,106 +572,94 @@ export function createAdminRoutes(
           ip,
           detail: '401: bad signature',
         });
-        return c.json({ error: 'Invalid signature' }, 401);
+        return c.json({ code: 'WITHDRAWAL_SIGNATURE_INVALID', error: 'Invalid signature' }, 401);
       }
 
-      // Execute withdrawal
+      // Signature validation precedes the atomic nonce-consume + durable
+      // operation reservation owned by the shared account spend coordinator.
       const ctx = await contextPromise;
-      const sponsorRefillAccountKeypair = runtime.sponsorRefillAccountKey;
       const recipientAddress = adminAddress;
-      const sponsorRefillAccountAddress = runtime.sponsorRefillAccountAddress;
-
-      // Runway guard
-      if (runtime.refillEnabled && !isMax) {
-        if (runtime.refillTargetMist > 0n) {
-          const poolSize = BigInt(ctx.host.sponsorPool.size);
-          const minRunwayMist = runtime.refillTargetMist * poolSize;
-          const sponsorRefillAccountBalance = await ctx.host.sui.getBalance({
-            owner: sponsorRefillAccountAddress,
-          });
-          const sponsorRefillAccountBalanceMist = parseChainBalanceMist(
-            sponsorRefillAccountBalance.balance.balance,
-            'Sponsor refill account balance',
-          );
-          const postWithdrawBalance =
-            sponsorRefillAccountBalanceMist - BigInt(amountMist) - WITHDRAW_GAS_BUFFER_MIST;
-          if (postWithdrawBalance < minRunwayMist) {
-            await writeAdminAuditLog(redis, {
-              event: 'WITHDRAWAL_BLOCKED',
-              ts: ts(),
-              ip,
-              detail: `runway guard: post-withdraw ${postWithdrawBalance} < minRunway ${minRunwayMist}`,
-            });
-            return c.json(
-              {
-                error: 'Withdrawal would leave sponsor refill account below minimum refill runway.',
-              },
-              400,
-            );
-          }
-        }
-      } else if (runtime.refillEnabled && isMax) {
-        await writeAdminAuditLog(redis, {
-          event: 'WITHDRAWAL_RUNWAY_BYPASS',
-          ts: ts(),
-          ip,
-          detail: 'isMax withdrawal bypasses runway guard',
-        });
-      }
-
-      // Build and execute TX
-      const { Transaction } = await import('@mysten/sui/transactions');
-      const ptb = new Transaction();
-      if (isMax) {
-        ptb.transferObjects([ptb.gas], recipientAddress);
-      } else {
-        const amountBigInt = BigInt(amountMist);
-        const [coin] = ptb.splitCoins(ptb.gas, [ptb.pure.u64(amountBigInt)]);
-        ptb.transferObjects([coin], recipientAddress);
-      }
-
-      ptb.setSender(sponsorRefillAccountAddress);
-      const dryRunBytes = await ptb.build({ client: ctx.host.sui });
-      const simResult = await ctx.host.sui.simulateTransaction({
-        transaction: dryRunBytes,
-        include: { effects: true },
+      const result = await ctx.sponsorOperations.withdraw({
+        destinationAddress: recipientAddress,
+        amountMist,
+        nonceKey: withdrawalNonceKey(runtime.network, nonce),
       });
-
-      const simTx = simResult.Transaction;
-      if (!simTx || !simTx.status?.success) {
-        const errMsg = simTx?.status?.error ?? 'dry-run failed';
+      if (result.status === 'nonce_missing') {
         await writeAdminAuditLog(redis, {
           event: 'WITHDRAWAL_FAILED',
           ts: ts(),
           ip,
-          detail: `dry-run: ${errMsg}`,
+          detail: '401: invalid nonce',
         });
-        return c.json({ error: `Dry-run failed: ${errMsg}` }, 422);
+        return c.json({ code: 'WITHDRAWAL_NONCE_MISSING', error: 'Invalid or expired nonce' }, 401);
+      }
+      if (result.status === 'runway_blocked') {
+        await writeAdminAuditLog(redis, {
+          event: 'WITHDRAWAL_BLOCKED',
+          ts: ts(),
+          ip,
+          detail: result.error,
+        });
+        return c.json(
+          {
+            code: 'WITHDRAWAL_RUNWAY_BLOCKED',
+            error: 'Withdrawal would leave sponsor refill account below minimum refill runway.',
+          },
+          400,
+        );
+      }
+      if (result.status === 'busy') {
+        await writeAdminAuditLog(redis, {
+          event: 'WITHDRAWAL_NOT_ACCEPTED',
+          ts: ts(),
+          ip,
+          detail: `${result.operationId}: ${result.error}`,
+        });
+        return c.json(
+          {
+            code: 'WITHDRAWAL_NOT_ACCEPTED',
+            error:
+              'Another Sponsor Refill Account spend was recovered. This withdrawal was not accepted.',
+            operationId: result.operationId,
+            digest: result.digest,
+          },
+          409,
+        );
+      }
+      if (result.status === 'pending') {
+        await writeAdminAuditLog(redis, {
+          event: 'WITHDRAWAL_PENDING',
+          ts: ts(),
+          ip,
+          detail: `${result.operationId}: ${result.error}`,
+        });
+        return c.json(
+          {
+            code: 'WITHDRAWAL_PENDING',
+            error: 'Withdrawal outcome is pending recovery.',
+            operationId: result.operationId,
+            digest: result.digest,
+          },
+          503,
+        );
+      }
+      if (result.status === 'failed') {
+        await writeAdminAuditLog(redis, {
+          event: 'WITHDRAWAL_FAILED',
+          ts: ts(),
+          ip,
+          detail: result.error,
+        });
+        return c.json(
+          { code: 'WITHDRAWAL_FAILED', error: `Withdrawal failed: ${result.error}` },
+          422,
+        );
+      }
+      if (result.status === 'not_needed') {
+        throw new Error('Withdrawal returned a refill-only result');
       }
 
-      const result = await sponsorRefillAccountKeypair.signAndExecuteTransaction({
-        transaction: ptb,
-        client: ctx.host.sui,
-      });
-
-      const txResult = result.Transaction;
-      if (!txResult) {
-        throw new Error('Withdrawal execution returned no result');
-      }
-
-      const digest = txResult.digest ?? 'unknown';
-
-      // Fetch remaining sponsor refill account balance
-      let remainingBalanceMist: string | null = null;
-      try {
-        const bal = await ctx.host.sui.getBalance({ owner: sponsorRefillAccountAddress });
-        remainingBalanceMist = parseChainBalanceMist(
-          bal.balance.balance,
-          'Sponsor refill account balance',
-        ).toString();
-      } catch {
-        /* non-critical */
-      }
+      const { digest, remainingBalanceMist } = result;
 
       await writeAdminAuditLog(redis, {
         event: 'WITHDRAWAL_SUCCESS',
@@ -696,13 +667,6 @@ export function createAdminRoutes(
         ip,
         detail: `${amountMist} MIST → ${recipientAddress} (${digest})`,
       });
-
-      // Refresh sponsor refill account shared state after a successful withdraw. Awaited
-      // before the response returns so the next admin read sees the
-      // post-withdraw sponsor refill account state without inventing a route-local write
-      // contract. The helper logs and resolves if the shared-state
-      // write cannot be committed.
-      await ctx.sponsorOperations.probeSponsorRefillAccount('admin_withdraw');
 
       return c.json({
         digest,

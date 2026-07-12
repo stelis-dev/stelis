@@ -29,20 +29,21 @@ import {
   type HostContext,
   type PreparedTxEntry,
 } from '@stelis/core-api';
-import { executeSponsorSlotRefill } from './sponsor-operations/executeRefill.js';
 import { createSponsorOperationsRefillWorker } from './sponsor-operations/refillWorker.js';
 import { createRedisSponsorOperationsState } from './sponsor-operations/redisState.js';
+import { createSponsorRefillAccountSpendState } from './sponsor-operations/accountSpendState.js';
+import {
+  createSponsorRefillAccountSpendCoordinator,
+  createSuiSponsorRefillAccountSpendBoundary,
+  type SponsorRefillAccountSpendResult,
+} from './sponsor-operations/accountSpend.js';
 import { createSponsorResultStateUpdater } from './sponsor-operations/sponsorResultStateUpdater.js';
 import { RedisSponsoredLogsStore } from './sponsoredLogs/redisStore.js';
 import { createSponsoredLogsRecorder, fanOutSponsorResult } from './sponsoredLogs/recorder.js';
-import {
-  createRefillLock,
-  createSponsorRefillAccountDispatchLock,
-} from './sponsor-operations/refillLock.js';
+import { createSponsorRefillAccountDispatchLock } from './sponsor-operations/refillLock.js';
 import { bootstrapSponsorOperations } from './sponsor-operations/bootstrap.js';
 import type { SponsorAvailabilityView } from './sponsor-operations/gate.js';
 import { probeAndWriteSponsorRefillAccountState } from './sponsor-operations/sponsorRefillAccountProbe.js';
-import { parseChainBalanceMist } from './sponsor-operations/balanceParsing.js';
 import {
   createPrepareSettlementSwapPathDescriptorMap,
   resolvePrepareConfig,
@@ -119,24 +120,25 @@ export interface AppApiContext {
  * Minimal context-level sponsor operations API for routes and admin. Composes the
  * Redis-shared state store, refill worker, and sponsor refill account probe helper. Routes read
  * the shared state via `readState()` and derive gate decisions on demand;
- * admin `/api/sponsor-operations` calls `probeSponsorRefillAccount('admin_sponsor_operations')` before
+ * admin `/api/sponsor-operations` calls `probeSponsorRefillAccount()` before
  * reading so its response reflects a freshly observed sponsor refill account balance.
- * Admin withdraw uses the same helper under the `admin_withdraw`
- * trigger after a successful on-chain transfer.
  */
 export interface AppSponsorOperations {
   /** Read the current shared state for every slot and the sponsor refill account. */
   readState(): Promise<SponsorAvailabilityView>;
   /**
-   * Awaited sponsor refill account trigger. `admin_sponsor_operations` rejects when the probe result
-   * cannot be committed, so `/api/sponsor-operations` never serialises stale sponsor refill account data
-   * as if it were fresh. `admin_withdraw` logs the same failure family
-   * but resolves so a successful on-chain withdraw is not misreported
-   * as a failed transaction.
+   * Awaited dashboard probe. It rejects when the observation cannot be
+   * committed, so `/api/sponsor-operations` never labels stale data as fresh.
    */
-  probeSponsorRefillAccount(trigger: 'admin_sponsor_operations' | 'admin_withdraw'): Promise<void>;
+  probeSponsorRefillAccount(): Promise<void>;
   /** Enqueue a refill request on this instance's refill worker. */
   requestRefill(slotAddress: string): void;
+  /** Execute an admin-authorized withdrawal through the shared account spend flow. */
+  withdraw(input: {
+    readonly destinationAddress: string;
+    readonly amountMist: string;
+    readonly nonceKey: string;
+  }): Promise<SponsorRefillAccountSpendResult>;
   /** Slot addresses, exposed so admin route can render per-slot entries. */
   readonly slotAddresses: readonly string[];
   /** Sponsor refill account address, exposed for admin display. */
@@ -154,6 +156,8 @@ export interface ContextRuntimeInput {
   };
   readonly deepbookPackageId: string;
   readonly suiClient: SuiGrpcClient;
+  /** Primary-pinned client used only by the serialized Sponsor Refill Account spend flow. */
+  readonly primarySuiClient: SuiGrpcClient;
   readonly failoverTransport: import('./sui/failoverTransport.js').SuiRpcFailoverTransport;
   readonly settlementSwapPathRegistryEntries: readonly ParsedSettlementSwapPathRegistryEntry[];
   readonly sponsorKeys: readonly Ed25519Keypair[];
@@ -166,11 +170,14 @@ export interface ContextRuntimeInput {
     readonly sponsorRefillAccountAddress: string;
     readonly refillEnabled: boolean;
     readonly refillTargetMist: bigint | null;
+    readonly runwayTargetMist: bigint;
     readonly warnMist: bigint;
     readonly slotBalanceTimeoutMs: number;
     readonly sponsorRefillAccountBalanceTimeoutMs: number;
     readonly refillTimeoutMs: number;
     readonly confirmationTimeoutMs: number;
+    /** Accepted withdrawal outcomes remain replayable for the authenticated admin session. */
+    readonly withdrawalReceiptTtlMs: number;
   };
   readonly studio: {
     readonly globalTargetHashes: Set<string>;
@@ -329,11 +336,13 @@ export async function createContext(input: ContextRuntimeInput): Promise<AppApiC
     const {
       refillEnabled,
       refillTargetMist,
+      runwayTargetMist,
       warnMist,
       slotBalanceTimeoutMs,
       sponsorRefillAccountBalanceTimeoutMs,
       refillTimeoutMs,
       confirmationTimeoutMs,
+      withdrawalReceiptTtlMs,
     } = input.sponsorOperations;
 
     // ── 8b. Redis-shared sponsor operations state store ───────────────
@@ -344,6 +353,47 @@ export async function createContext(input: ContextRuntimeInput): Promise<AppApiC
       slotAddresses: sponsorAddresses,
     });
 
+    const sponsorRefillAccountSpendState = createSponsorRefillAccountSpendState(redis, {
+      network,
+      acceptedReceiptTtlMs: withdrawalReceiptTtlMs,
+    });
+
+    // The lock is only a dispatch-efficiency mutex. Durable active-spend identity
+    // and CAS transitions remain authoritative after its TTL expires.
+    const sponsorRefillAccountDispatchLock = createSponsorRefillAccountDispatchLock({
+      client: redis,
+      ttlMs: refillTimeoutMs + SPONSOR_OPERATIONS_REFILL_LOCK_SAFETY_MARGIN_MS,
+    });
+    const spendCoordinator = createSponsorRefillAccountSpendCoordinator({
+      state: sponsorRefillAccountSpendState,
+      operationsState: sponsorOperationsState,
+      dispatchLock: sponsorRefillAccountDispatchLock,
+      boundary: createSuiSponsorRefillAccountSpendBoundary({
+        sui: input.primarySuiClient,
+        signer: sponsorRefillAccountKey,
+        sourceAddress: sponsorRefillAccountAddress,
+      }),
+      network,
+      sourceAddress: sponsorRefillAccountAddress,
+      sponsorSlotCount: sponsorAddresses.length,
+      refillEnabled,
+      refillTargetMist,
+      runwayTargetMist,
+      warnThresholdMist: warnMist,
+      dispatchTimeoutMs: refillTimeoutMs,
+      balanceTimeoutMs: sponsorRefillAccountBalanceTimeoutMs,
+      confirmationTimeoutMs,
+    });
+
+    // Recover durable transaction identity before any general balance observation
+    // can overwrite its account or slot projection.
+    const recoveredSpend = await spendCoordinator.recoverActiveSpend();
+    if (recoveredSpend?.status === 'pending') {
+      throw new Error(
+        `Sponsor Refill Account active spend recovery pending: ${recoveredSpend.error}`,
+      );
+    }
+
     // ── 8c. Bootstrap sync — seed slot + sponsor refill account state before listen
     // Populates every slot + sponsor refill account HASH before HTTP listen. Redis write
     // failure here throws, matching the existing `admin:not_before`
@@ -353,6 +403,7 @@ export async function createContext(input: ContextRuntimeInput): Promise<AppApiC
     await bootstrapSponsorOperations({
       sui: host.sui,
       state: sponsorOperationsState,
+      spendState: sponsorRefillAccountSpendState,
       slotAddresses: sponsorAddresses,
       sponsorRefillAccountAddress: sponsorRefillAccountAddress,
       warnThresholdMist: warnMist,
@@ -361,55 +412,11 @@ export async function createContext(input: ContextRuntimeInput): Promise<AppApiC
       sponsorRefillAccountBalanceTimeoutMs,
     });
 
-    // ── 8d. Refill distributed locks ─────────────────────────────────
-    // Slot lock TTL covers refill dispatch, post-refill sponsor refill account probe, awaiting
-    // confirmation, and the documented safety margin. Orphaned locks
-    // after process death recover at TTL expiry.
-    const refillLockTtlMs =
-      refillTimeoutMs +
-      sponsorRefillAccountBalanceTimeoutMs +
-      confirmationTimeoutMs +
-      SPONSOR_OPERATIONS_REFILL_LOCK_SAFETY_MARGIN_MS;
-    const refillLock = createRefillLock({
-      client: redis,
-      ttlMs: refillLockTtlMs,
-    });
-    // Dispatch lock TTL covers only the account-scoped refill TX dispatch
-    // budget plus the safety margin. It prevents two app-api instances from
-    // using the same sponsor refill account signer/gas source concurrently.
-    const sponsorRefillAccountDispatchLock = createSponsorRefillAccountDispatchLock({
-      client: redis,
-      ttlMs: refillTimeoutMs + SPONSOR_OPERATIONS_REFILL_LOCK_SAFETY_MARGIN_MS,
-    });
-
     // ── 8e. Refill worker — Redis-shared state + distributed locks ───
-    const hostRefForSponsorOperations = host;
     const refillWorker = createSponsorOperationsRefillWorker({
       state: sponsorOperationsState,
-      refillLock,
-      sponsorRefillAccountDispatchLock,
-      sui: host.sui,
-      sponsorRefillAccountAddress: sponsorRefillAccountAddress,
-      warnThresholdMist: warnMist,
-      refillTargetMist: refillTargetMist ?? null,
-      refillTimeoutMs,
-      confirmationTimeoutMs,
-      sponsorRefillAccountBalanceTimeoutMs,
-      executeRefill: async (slotAddress: string, amountMist: bigint) => {
-        if (!refillEnabled || refillTargetMist == null) {
-          throw new Error('refill disabled or target not configured');
-        }
-        return await executeSponsorSlotRefill({
-          sui: hostRefForSponsorOperations.sui,
-          signer: sponsorRefillAccountKey,
-          sponsorAddress: slotAddress,
-          amountMist,
-        });
-      },
-      getSlotBalance: async (slotAddress: string) => {
-        const res = await hostRefForSponsorOperations.sui.getBalance({ owner: slotAddress });
-        return parseChainBalanceMist(res.balance.balance, `Slot ${slotAddress} balance`);
-      },
+      spendCoordinator,
+      retryDelayMs: confirmationTimeoutMs,
     });
 
     // ── 8f. Sponsor result callback — action-driven slot and sponsor refill account writes
@@ -419,6 +426,7 @@ export async function createContext(input: ContextRuntimeInput): Promise<AppApiC
     const sponsorResultStateUpdater = createSponsorResultStateUpdater({
       sui: host.sui,
       state: sponsorOperationsState,
+      spendState: sponsorRefillAccountSpendState,
       sponsorRefillAccountAddress: sponsorRefillAccountAddress,
       settlementPayoutRecipientAddress: host.settlementPayoutRecipientAddress,
       slotBalanceTimeoutMs,
@@ -426,7 +434,7 @@ export async function createContext(input: ContextRuntimeInput): Promise<AppApiC
       warnThresholdMist: warnMist,
       refillTargetMist: refillTargetMist ?? null,
       onSlotStateChanged: (slotAddress, state) => {
-        if (state === 'low_balance') {
+        if (refillEnabled && state === 'low_balance') {
           refillWorker.requestRefill(slotAddress);
         }
       },
@@ -460,27 +468,19 @@ export async function createContext(input: ContextRuntimeInput): Promise<AppApiC
 
     // ── 8g. Sponsor refill account bounded probe helper for admin reads and withdraws
     const probeHostRef = host;
-    async function probeSponsorRefillAccount(
-      trigger: 'admin_sponsor_operations' | 'admin_withdraw',
-    ): Promise<void> {
+    async function probeSponsorRefillAccount(): Promise<void> {
       await probeAndWriteSponsorRefillAccountState(
         {
           sui: probeHostRef.sui,
-          state: sponsorOperationsState,
+          spendState: sponsorRefillAccountSpendState,
           sponsorRefillAccountAddress: sponsorRefillAccountAddress,
           refillTargetMist: refillTargetMist ?? null,
           sponsorRefillAccountBalanceTimeoutMs,
         },
         {
-          operation:
-            trigger === 'admin_sponsor_operations'
-              ? 'sponsorOperations.probeSponsorRefillAccount'
-              : 'sponsorOperations.probeSponsorRefillAccountAfterWithdraw',
-          source:
-            trigger === 'admin_sponsor_operations'
-              ? 'admin_sponsor_operations_sponsor_refill_account_update'
-              : 'admin_withdraw_sponsor_refill_account_update',
-          writeFailureMode: trigger === 'admin_sponsor_operations' ? 'throw' : 'swallow',
+          operation: 'sponsorOperations.probeSponsorRefillAccount',
+          source: 'admin_sponsor_operations_sponsor_refill_account_update',
+          writeFailureMode: 'throw',
         },
       );
     }
@@ -489,6 +489,7 @@ export async function createContext(input: ContextRuntimeInput): Promise<AppApiC
       readState: () => sponsorOperationsState.readAll(),
       probeSponsorRefillAccount,
       requestRefill: (slotAddress) => refillWorker.requestRefill(slotAddress),
+      withdraw: (withdrawInput) => spendCoordinator.withdraw(withdrawInput),
       slotAddresses: sponsorAddresses,
       sponsorRefillAccountAddress: sponsorRefillAccountAddress,
       dispose: () => {

@@ -135,6 +135,10 @@ export { parseSponsorKey, parseSponsorKeys } from './context.js';
 export type { SponsorLease, SponsorPoolAdapter } from './context.js';
 export { RedisSponsorPool } from './store/redisSponsorPool.js';
 
+// Current Sui execution-result parser shared by Host execution boundaries.
+export { parseSuiTransactionResult } from './session/sessionPrimitives.js';
+export type { ParsedSuiTransactionResult } from './session/sessionPrimitives.js';
+
 // Shared constants and types live in `@stelis/contracts`.
 // `@stelis/core-api` re-exports only its own domain/runtime APIs.
 
