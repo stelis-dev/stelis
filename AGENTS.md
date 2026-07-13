@@ -42,6 +42,11 @@ If a rule below mentions an unfamiliar package, first decide whether the package
 - Keep raw amounts as integer strings or `BigInt` values when precision matters. Do not use floating point arithmetic for settlement, fee, gas, quote, or signable quantities.
 - Keep display values presentation-only. Do not feed formatted UI strings back into transaction building, settlement, signing, validation, or persistence without an explicit raw conversion step.
 - Do not infer token decimals, token identity, network identity, settlement eligibility, path support, or liquidity readiness from symbols, labels, memory, or convenience defaults.
+- Apply Move deployment policy by network: testnet contract changes use a fresh
+  package deployment under the anti-legacy policy; after a mainnet package is
+  deployed, mainnet contract evolution uses Sui package upgrades. In both cases,
+  code and docs expose only the current interface and IDs—do not retain legacy
+  aliases, compatibility readers, or parallel old-package paths.
 - Preserve current boundary terms: `Host`, `Relay API`, `settlement token`, `settlement swap path`, `SponsorOperations`, `SponsorAvailability`, and `User Vault`.
 - Keep `@stelis/sdk`, `@stelis/mcp-server`, and `@stelis/app-api` responsibilities separate. The MCP server does not hold keys, sign for users, build arbitrary transaction content, or run Host server logic.
 - Public docs, examples, schemas, package exports, tests, and user-facing strings describe current behavior only. Put future work, unsupported behavior, and discovered gaps in planning or debt notes, not public current-state docs.

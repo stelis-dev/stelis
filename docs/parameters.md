@@ -99,6 +99,11 @@ Prepare authorization request nonces are temporary replay guards for signed prep
 - `packages/app-api/settlement-swap-paths.json`, with a non-empty section for the selected `NETWORK`
 - `packages/app-api/rpc.json`, with a non-empty endpoint section for the selected `NETWORK`
 
+The shipped Stelis contract ID table currently supports testnet only. Although
+the network-shaped configuration and wire type also represent `mainnet`, a Host
+with `NETWORK=mainnet` fails closed until a fresh mainnet Move package is
+deployed and its current package, config, and vault IDs are added.
+
 `SPONSOR_SECRET_KEY` configures sponsor slots. Each sponsor slot key signs sponsored transactions as `gasOwner`. The value accepts 1..256 comma-separated sponsor keys.
 
 `SPONSOR_REFILL_ACCOUNT_SECRET_KEY` configures the Sponsor Refill Account. That key signs sponsor slot refill transactions and Sponsor Refill Account admin withdrawal transactions. It is separate from sponsor slot keys.

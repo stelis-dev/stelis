@@ -153,7 +153,11 @@ Do not add exports just for symmetry. Add an export only when a verified consume
 
 ### Move Package
 
-`packages/contracts/move` is the on-chain package. TypeScript contract IDs and shared data live in `@stelis/contracts`. Contract changes are published as a fresh package; existing packages are never upgraded or kept through compatibility paths.
+`packages/contracts/move` is the on-chain package. TypeScript contract IDs and
+shared data live in `@stelis/contracts`. The current Stelis deployment is
+testnet-only, and testnet contract changes use fresh package deployments.
+Consumers use only the current package interface and IDs; compatibility paths
+for superseded testnet packages are not retained.
 
 ## Documentation Boundaries
 

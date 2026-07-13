@@ -121,10 +121,10 @@ generic SponsoredExecutionPolicy additionally re-queries on-chain User Vault sta
 after preflight), so an on-chain `EVaultAlreadyRegistered` abort never reaches preflight
 as `SPONSOR_PREFLIGHT_FAILED` + IP-counter pressure. A vault-now-exists drift returns
 `REPREPARE_REQUIRED`; a transient or inconsistent vault-state response returns
-`SPONSOR_FAILED 500` (fail-closed before preflight + signing). All four shapes
-(structure, settlement-argument, extraction, payment-integrity, and gas-owner drift,
-plus the three new-user User Vault
-stages) emit a structured `SPONSOR_DRIFT_OBSERVED` log for operator triage. The payload
+`SPONSOR_FAILED 500` (fail-closed before preflight + signing). Structure,
+settlement-argument, extraction, payment-integrity, gas-owner, and the three
+new-user User Vault drift stages emit a structured `SPONSOR_DRIFT_OBSERVED` log
+for operator triage. The payload
 contract (`stage`, `subcode`, `route`, `receipt_id`, `sender`, `client_ip`, and — on
 `route: 'promotion'` — `promotion_id`) is owned by
 [`pricing-and-validation.md → Sponsor Failure Classification`](./pricing-and-validation.md#sponsor-failure-classification);

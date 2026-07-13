@@ -20,6 +20,11 @@ RPC endpoints are configured in `packages/app-api/rpc.json`, not in environment 
 
 The file is a network-keyed object with `testnet` and `mainnet` endpoint arrays. At boot, the Host reads only the section selected by `NETWORK`, validates those endpoints against the selected network, checks required object and coin metadata reads, and probes transaction simulation support. Endpoints that fail verification are excluded. If the selected section is empty or no usable endpoint remains, boot fails.
 
+The shipped Stelis contract ID table currently supports testnet only. The
+mainnet RPC and settlement swap path sections do not by themselves make a
+mainnet Host deployable: `NETWORK=mainnet` fails closed until a fresh Stelis
+Move package and its current mainnet object IDs are shipped.
+
 ## Reverse Proxy and CORS
 
 `TRUSTED_PROXY_HOPS` controls how the Host reads `X-Forwarded-For` for rate limiting and abuse checks.
