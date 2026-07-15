@@ -47,16 +47,15 @@ Consume the shipped SDK as-is. Modifying the SDK, contracts, or Host/core source
 
 > The SDK does not retry Host errors. It returns Host failures as
 > `StelisApiException` or `StelisSponsoredError`, preserving a current Host
-> domain code only when that code belongs to the route that returned it. It uses
-> `UNKNOWN` for uncoded transport responses, non-current codes, and codes emitted
-> by the wrong route.
+> domain code only when that code belongs to the route that returned it.
+> Uncoded responses, non-current codes, and codes emitted by the wrong route are
+> Host contract errors and are not represented as `StelisApiException`.
 > Retry/backoff policy belongs on your side. Capacity codes include
 > `SPONSOR_CAPACITY_UNAVAILABLE`, `SPONSOR_REFILL_ACCOUNT_UNHEALTHY`,
 > `PREPARE_OVERLOADED`, `NO_SPONSOR_SLOT`, and `LEASE_EXPIRED`.
 > Only the current closed metadata fields (`retryAfterMs`, `subcode`, `digest`,
-> `minSettleMist`, `requiredTotalIn`, `isEstimate`) are preserved. A malformed
-> or extended remote error body is reported as `UNKNOWN`; arbitrary remote
-> fields and non-JSON body text are never copied into the exception.
+> `operationId`, `minSettleMist`, `requiredTotalIn`, `isEstimate`) are preserved.
+> Arbitrary remote fields and non-JSON body text are never copied into an error.
 > Missing token support is resolved by the Host operator updating `packages/app-api/settlement-swap-paths.json` on a product-owned `Studio` or `Host` deployment, not by SDK customization.
 
 ## Purpose

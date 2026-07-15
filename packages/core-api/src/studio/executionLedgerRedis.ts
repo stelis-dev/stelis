@@ -37,7 +37,6 @@ import type { PromotionExecutionLedger } from './executionLedger.js';
 import {
   PROMOTION_EXECUTION_LEDGER_DEFAULT_RESERVATION_TTL_MS,
   PROMOTION_EXECUTION_LEDGER_DEFAULT_REAPER_INTERVAL_MS,
-  MAX_PROMOTION_LEDGER_VALUE_MIST,
 } from './executionLedger.js';
 import type {
   Entitlement,
@@ -57,6 +56,7 @@ import { logStructuredEvent } from '../structuredEventLog.js';
 import { PROMOTION_EXECUTION_LEDGER_REAPER_ERROR } from '../observability/events.js';
 import {
   parseNonNegativeDecimalBigInt,
+  parsePromotionLedgerBudget,
   assertPositiveMist,
   assertNonNegativeMist,
   assertWithinLedgerBound,
@@ -490,32 +490,10 @@ export class RedisPromotionExecutionLedger implements PromotionExecutionLedger {
   // ── Claim ──────────────────────────────────
 
   async claim(promotionId: string, userId: string, opts: ClaimOpts): Promise<ClaimResult> {
-    if (!Number.isSafeInteger(opts.maxParticipants) || opts.maxParticipants <= 0) {
-      throw new Error('maxParticipants must be a positive safe integer');
-    }
-    const perUserBigInt = parseNonNegativeDecimalBigInt(
+    const { perUserGasAllowanceMist: perUserBigInt, totalBudgetMist } = parsePromotionLedgerBudget(
+      opts.maxParticipants,
       opts.perUserGasAllowanceMist,
-      'perUserGasAllowanceMist',
     );
-    // Defensive ledger-side bound check. The activation gate
-    // (`validateActivationPrerequisites`) is the main validation point,
-    // but the ledger interface accepts `ClaimOpts` from any caller, so
-    // re-enforce the same bound here. Without this guard, an
-    // out-of-band claim with a value above
-    // `MAX_PROMOTION_LEDGER_VALUE_MIST` would silently land in the
-    // Redis budget keys and break `LUA_CONSUME` arithmetic when the
-    // values exceed Lua-double precision.
-    if (perUserBigInt > MAX_PROMOTION_LEDGER_VALUE_MIST) {
-      throw new Error(
-        `perUserGasAllowanceMist (${perUserBigInt.toString()}) exceeds MAX_PROMOTION_LEDGER_VALUE_MIST (${MAX_PROMOTION_LEDGER_VALUE_MIST.toString()}); promotion would create Redis values that fail Lua int64 arithmetic`,
-      );
-    }
-    const totalBudgetBigInt = BigInt(opts.maxParticipants) * perUserBigInt;
-    if (totalBudgetBigInt > MAX_PROMOTION_LEDGER_VALUE_MIST) {
-      throw new Error(
-        `total budget (maxParticipants × perUserGasAllowanceMist = ${totalBudgetBigInt.toString()}) exceeds MAX_PROMOTION_LEDGER_VALUE_MIST (${MAX_PROMOTION_LEDGER_VALUE_MIST.toString()}); promotion would create Redis values that fail Lua int64 arithmetic`,
-      );
-    }
     const perUserGasAllowanceMist = perUserBigInt.toString();
     const now = new Date().toISOString();
     const meta: EntitlementMeta = {
@@ -525,7 +503,7 @@ export class RedisPromotionExecutionLedger implements PromotionExecutionLedger {
     };
 
     // Budget lazy-init (NX-safe): set available to the finite configured total.
-    const totalBudget = (BigInt(opts.maxParticipants) * BigInt(perUserGasAllowanceMist)).toString();
+    const totalBudget = totalBudgetMist.toString();
     await this.redis.set(budgetAvailKey(promotionId), totalBudget, { nx: true });
     // Ensure aggregate keys exist (NX-safe)
     await this.redis.set(budgetResTotalKey(promotionId), '0', { nx: true });

@@ -6,9 +6,10 @@
  * structural `{ get(id) }`) + MemoryPromotionExecutionLedger.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
+import type { AdminPromotionCreateRequest } from '@stelis/contracts';
 import { handlePromotionClaim } from '../src/studio/promotionClaimHandler.js';
 import type { ClaimHandlerDeps } from '../src/studio/promotionClaimHandler.js';
-import { MemoryPromotionStore, type CreatePromotionInput } from '../src/studio/promotionStore.js';
+import { MemoryPromotionStore } from '../src/studio/promotionStore.js';
 import { MemoryPromotionExecutionLedger } from '../src/studio/executionLedgerMemory.js';
 
 // ─────────────────────────────────────────────
@@ -17,7 +18,7 @@ import { MemoryPromotionExecutionLedger } from '../src/studio/executionLedgerMem
 
 const NOW = new Date('2026-06-01T12:00:00Z');
 
-const BASE_PROMO: CreatePromotionInput = {
+const BASE_PROMO: AdminPromotionCreateRequest = {
   type: 'gas_sponsorship',
   displayName: 'Test Gas Promo',
   description: 'Test',
@@ -30,7 +31,7 @@ const BASE_PROMO: CreatePromotionInput = {
 
 async function createActivatedPromo(
   store: MemoryPromotionStore,
-  overrides: Partial<CreatePromotionInput> = {},
+  overrides: Partial<AdminPromotionCreateRequest> = {},
 ): Promise<string> {
   const record = await store.create({ ...BASE_PROMO, ...overrides });
   await store.transitionStatus(record.promotionId, 'active');

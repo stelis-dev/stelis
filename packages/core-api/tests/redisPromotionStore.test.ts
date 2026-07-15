@@ -2,21 +2,23 @@
  * RedisPromotionStore — unit tests using FakeRedisClient.
  *
  * Proves the Redis adapter contract: Lua-based atomic index maintenance,
- * status transitions with activation guard, and delete policy.
+ * status transitions with the shared ledger-budget guard, and delete policy.
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import type { AdminPromotionCreateRequest } from '@stelis/contracts';
 import {
   RedisPromotionStore,
   InvalidStatusTransitionError,
   PromotionFieldImmutableError,
   PromotionCurrentConflictError,
-  type CreatePromotionInput,
 } from '../src/studio/promotionStore.js';
 import { FakeRedisClient } from './helpers/fakeRedisClient.js';
 
 // ── Fixtures ────────────────────────────────────────────────────────────
 
-function makeInput(overrides: Partial<CreatePromotionInput> = {}): CreatePromotionInput {
+function makeInput(
+  overrides: Partial<AdminPromotionCreateRequest> = {},
+): AdminPromotionCreateRequest {
   return {
     type: 'gas_sponsorship',
     displayName: 'Redis Promo',
@@ -266,7 +268,7 @@ describe('RedisPromotionStore', () => {
   it('deletes a draft promotion', async () => {
     const created = await store.create(makeInput());
     const result = await store.delete(created.promotionId);
-    expect(result).toBe(true);
+    expect(result).toEqual({ status: 'deleted' });
 
     const found = await store.get(created.promotionId);
     expect(found).toBeNull();
@@ -281,15 +283,15 @@ describe('RedisPromotionStore', () => {
     await store.transitionStatus(created.promotionId, 'active');
 
     const result = await store.delete(created.promotionId);
-    expect(result).toBe(false);
+    expect(result).toEqual({ status: 'not_deletable' });
 
     const found = await store.get(created.promotionId);
     expect(found).not.toBeNull();
   });
 
-  it('returns false for non-existent delete', async () => {
+  it('distinguishes a non-existent delete', async () => {
     const result = await store.delete('nope');
-    expect(result).toBe(false);
+    expect(result).toEqual({ status: 'not_found' });
   });
 
   it('rejects delete when activation wins after the draft read', async () => {

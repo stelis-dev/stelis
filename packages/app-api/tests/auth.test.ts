@@ -7,6 +7,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Hono } from 'hono';
 import { ClientIpResolutionError } from '@stelis/core-api';
+import { hostErrorPublicMessage, type HostErrorCode } from '@stelis/contracts';
 
 // ── Mock core-api/admin ─────────────────────────────────────────────────
 const { mockRedis, mockResolveClientIp } = vi.hoisted(() => ({
@@ -66,6 +67,10 @@ function clientIpResolutionError(): Error {
   return new ClientIpResolutionError('Client IP could not be resolved');
 }
 
+function codedError(code: HostErrorCode, meta: Record<string, unknown> = {}) {
+  return { error: hostErrorPublicMessage(code), code, ...meta };
+}
+
 describe('auth routes', () => {
   let app: Hono;
   let mountedContextPromise: Promise<AppApiContext>;
@@ -74,11 +79,12 @@ describe('auth routes', () => {
     contextPromise: Promise<AppApiContext> = Promise.resolve({
       redis: mockRedis,
     } as unknown as AppApiContext),
+    runtime: Omit<AuthRoutesRuntime, 'resolveClientIp'> = AUTH_RUNTIME,
   ): void {
     mountedContextPromise = contextPromise;
     const routes = createAuthRoutes(contextPromise, {
       resolveClientIp: mockResolveClientIp,
-      ...AUTH_RUNTIME,
+      ...runtime,
     });
     app = new Hono();
     app.route('/auth', routes);
@@ -116,9 +122,10 @@ describe('auth routes', () => {
       });
       const res = await app.request('/auth/nonce', { method: 'POST' });
       expect(res.status).toBe(429);
-      await expect(res.json()).resolves.toEqual({
-        error: 'Too many requests. Try again in 15 minutes.',
-      });
+      expect(res.headers.get('Retry-After')).toBe('900');
+      await expect(res.json()).resolves.toEqual(
+        codedError('RATE_LIMITED', { retryAfterMs: 900000 }),
+      );
     });
 
     it('returns 400 without issuing a nonce when client IP cannot be resolved', async () => {
@@ -130,7 +137,7 @@ describe('auth routes', () => {
       const res = await app.request('/auth/nonce', { method: 'POST' });
 
       expect(res.status).toBe(400);
-      await expect(res.json()).resolves.toEqual({ error: 'Client IP could not be resolved' });
+      await expect(res.json()).resolves.toEqual(codedError('CLIENT_IP_UNRESOLVED'));
       expect(checkAndIncrement).not.toHaveBeenCalled();
       expect(mockRedis.set).not.toHaveBeenCalled();
       expect(mockRedis.lpush).not.toHaveBeenCalled();
@@ -145,7 +152,7 @@ describe('auth routes', () => {
       try {
         const res = await app.request('/auth/nonce', { method: 'POST' });
         expect(res.status).toBe(500);
-        await expect(res.json()).resolves.toEqual({ error: 'Internal server error' });
+        await expect(res.json()).resolves.toEqual(codedError('INTERNAL_ERROR'));
         expect(errorSpy).toHaveBeenCalledWith(
           '[app-api] /auth/nonce failed',
           'Error: redis unavailable at redis://redis.example:6379',
@@ -153,6 +160,20 @@ describe('auth routes', () => {
       } finally {
         errorSpy.mockRestore();
       }
+    });
+
+    it('returns coded ADMIN_UNAVAILABLE without touching Redis when auth is not configured', async () => {
+      mountAuthRoutes(undefined, {
+        adminAddress: null,
+        adminAuth: { ...AUTH_RUNTIME.adminAuth, jwt: null },
+      });
+
+      const res = await app.request('/auth/nonce', { method: 'POST' });
+
+      expect(res.status).toBe(503);
+      await expect(res.json()).resolves.toEqual(codedError('ADMIN_UNAVAILABLE'));
+      expect(mockRedis.get).not.toHaveBeenCalled();
+      expect(mockRedis.set).not.toHaveBeenCalled();
     });
   });
 
@@ -164,7 +185,30 @@ describe('auth routes', () => {
         body: JSON.stringify({ nonce: 'test' }),
       });
       expect(res.status).toBe(400);
+      await expect(res.json()).resolves.toEqual(codedError('BAD_REQUEST'));
     });
+
+    it.each(['nonce', 'signature', 'address'] as const)(
+      'returns coded BAD_REQUEST when %s is empty',
+      async (field) => {
+        const body = {
+          nonce: 'valid-nonce',
+          signature: 'valid-signature',
+          address: '0x' + 'a'.repeat(64),
+          [field]: '',
+        };
+
+        const res = await app.request('/auth/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+
+        expect(res.status).toBe(400);
+        await expect(res.json()).resolves.toEqual(codedError('BAD_REQUEST'));
+        expect(mockRedis.del).not.toHaveBeenCalled();
+      },
+    );
 
     it('returns 401 on invalid nonce (consumed)', async () => {
       mockRedis.del.mockResolvedValueOnce(0); // nonce not found
@@ -178,6 +222,7 @@ describe('auth routes', () => {
         }),
       });
       expect(res.status).toBe(401);
+      await expect(res.json()).resolves.toEqual(codedError('ADMIN_UNAUTHORIZED'));
     });
 
     it('does not consume the nonce when signature verification fails', async () => {
@@ -193,6 +238,7 @@ describe('auth routes', () => {
         }),
       });
       expect(res.status).toBe(401);
+      await expect(res.json()).resolves.toEqual(codedError('ADMIN_UNAUTHORIZED'));
       expect(mockRedis.del).not.toHaveBeenCalled();
     });
 
@@ -210,6 +256,8 @@ describe('auth routes', () => {
         });
       const responses = await Promise.all([request(), request()]);
       expect(responses.map((response) => response.status).sort()).toEqual([200, 401]);
+      const rejected = responses.find((response) => response.status === 401);
+      await expect(rejected?.json()).resolves.toEqual(codedError('ADMIN_UNAUTHORIZED'));
     });
 
     it('returns 200 with Set-Cookie on valid verify', async () => {
@@ -254,9 +302,10 @@ describe('auth routes', () => {
         }),
       });
       expect(res.status).toBe(429);
-      await expect(res.json()).resolves.toEqual({
-        error: 'Too many requests. Try again in 15 minutes.',
-      });
+      expect(res.headers.get('Retry-After')).toBe('900');
+      await expect(res.json()).resolves.toEqual(
+        codedError('RATE_LIMITED', { retryAfterMs: 900000 }),
+      );
     });
 
     it('returns 400 without rate-limit or audit writes when client IP cannot be resolved', async () => {
@@ -276,7 +325,7 @@ describe('auth routes', () => {
       });
 
       expect(res.status).toBe(400);
-      await expect(res.json()).resolves.toEqual({ error: 'Client IP could not be resolved' });
+      await expect(res.json()).resolves.toEqual(codedError('CLIENT_IP_UNRESOLVED'));
       expect(checkAndIncrement).not.toHaveBeenCalled();
       expect(mockRedis.lpush).not.toHaveBeenCalled();
     });
@@ -312,8 +361,27 @@ describe('auth routes', () => {
         }),
       });
       expect(res.status).toBe(500);
+      await expect(res.json()).resolves.toEqual(codedError('INTERNAL_ERROR'));
       // Set-Cookie must NOT be present — cookie is staged only after all fallible work
       expect(res.headers.get('Set-Cookie')).toBeNull();
+    });
+
+    it('returns coded ADMIN_UNAVAILABLE before reading the body when auth is not configured', async () => {
+      mountAuthRoutes(undefined, {
+        adminAddress: AUTH_RUNTIME.adminAddress,
+        adminAuth: { ...AUTH_RUNTIME.adminAuth, jwt: null },
+      });
+
+      const res = await app.request('/auth/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nonce: '', signature: '', address: '' }),
+      });
+
+      expect(res.status).toBe(503);
+      await expect(res.json()).resolves.toEqual(codedError('ADMIN_UNAVAILABLE'));
+      expect(mockRedis.get).not.toHaveBeenCalled();
+      expect(mockRedis.del).not.toHaveBeenCalled();
     });
   });
 
@@ -347,10 +415,19 @@ describe('auth routes', () => {
       try {
         const res = await app.request('/auth/logout', { method: 'POST' });
         expect(res.status).toBe(500);
+        await expect(res.json()).resolves.toEqual(codedError('INTERNAL_ERROR'));
         expect(res.headers.get('Set-Cookie')).toBeNull();
       } finally {
         errorSpy.mockRestore();
       }
+    });
+
+    it('returns coded ADMIN_UNAUTHORIZED without expiring the cookie when session is absent', async () => {
+      const res = await app.request('/auth/logout', { method: 'POST' });
+
+      expect(res.status).toBe(401);
+      await expect(res.json()).resolves.toEqual(codedError('ADMIN_UNAUTHORIZED'));
+      expect(res.headers.get('Set-Cookie')).toBeNull();
     });
   });
 
@@ -358,6 +435,7 @@ describe('auth routes', () => {
     it('returns 401 when no session is available', async () => {
       const res = await app.request('/auth/session');
       expect(res.status).toBe(401);
+      await expect(res.json()).resolves.toEqual(codedError('ADMIN_UNAUTHORIZED'));
     });
 
     it('returns 200 with session data when authenticated', async () => {
@@ -398,9 +476,10 @@ describe('auth routes', () => {
         }),
       });
       expect(res.status).toBe(429);
-      await expect(res.json()).resolves.toEqual({
-        error: 'Too many requests. Try again in 15 minutes.',
-      });
+      expect(res.headers.get('Retry-After')).toBe('900');
+      await expect(res.json()).resolves.toEqual(
+        codedError('RATE_LIMITED', { retryAfterMs: 900000 }),
+      );
     });
 
     it('returns 400 without rate-limit or audit writes when client IP cannot be resolved', async () => {
@@ -420,7 +499,7 @@ describe('auth routes', () => {
       });
 
       expect(res.status).toBe(400);
-      await expect(res.json()).resolves.toEqual({ error: 'Client IP could not be resolved' });
+      await expect(res.json()).resolves.toEqual(codedError('CLIENT_IP_UNRESOLVED'));
       expect(checkAndIncrement).not.toHaveBeenCalled();
       expect(mockRedis.lpush).not.toHaveBeenCalled();
     });
@@ -440,6 +519,24 @@ describe('auth routes', () => {
       expect(res.status).toBe(200);
       expect(resetAttempts).toHaveBeenCalled();
     });
+
+    it('returns coded ADMIN_UNAVAILABLE before Redis access when auth is not configured', async () => {
+      mountAuthRoutes(undefined, {
+        adminAddress: null,
+        adminAuth: AUTH_RUNTIME.adminAuth,
+      });
+
+      const res = await app.request('/auth/renew', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nonce: 'n', signature: 's', address: '0x' + 'a'.repeat(64) }),
+      });
+
+      expect(res.status).toBe(503);
+      await expect(res.json()).resolves.toEqual(codedError('ADMIN_UNAVAILABLE'));
+      expect(mockRedis.get).not.toHaveBeenCalled();
+      expect(mockRedis.del).not.toHaveBeenCalled();
+    });
   });
 
   describe('context Redis acquire failure', () => {
@@ -451,6 +548,7 @@ describe('auth routes', () => {
         body: JSON.stringify({ nonce: 'n', signature: 's', address: '0x' + 'a'.repeat(64) }),
       });
       expect(res.status).toBe(500);
+      await expect(res.json()).resolves.toEqual(codedError('INTERNAL_ERROR'));
     });
 
     it('POST /auth/renew returns 500 when Host context rejects', async () => {
@@ -461,6 +559,7 @@ describe('auth routes', () => {
         body: JSON.stringify({ nonce: 'n', signature: 's', address: '0x' + 'a'.repeat(64) }),
       });
       expect(res.status).toBe(500);
+      await expect(res.json()).resolves.toEqual(codedError('INTERNAL_ERROR'));
     });
   });
 });

@@ -11,7 +11,6 @@ import {
   handlePrepare,
   handleSponsor,
   checkBlockedRequest,
-  toBlockedError,
   readJsonBodyWithLimit,
   MAX_PREPARE_REQUEST_BODY_BYTES,
   MAX_SPONSOR_REQUEST_BODY_BYTES,
@@ -24,6 +23,7 @@ import {
   RELAY_CONFIG_ERROR_CODES,
   RELAY_PREPARE_ERROR_CODES,
   RELAY_SPONSOR_ERROR_CODES,
+  RELAY_STATUS_ERROR_CODES,
   SLIPPAGE_CAP_BPS,
   parseRelayPrepareRequest,
   parseRelaySponsorRequest,
@@ -36,7 +36,7 @@ import type { AppApiContext } from '../context.js';
 import type { ResolveClientIp } from '../clientIp.js';
 import { buildSponsorUnavailableResponse } from '../sponsor-operations/gateResponse.js';
 import { canonicalizeAddress } from '@stelis/core-api';
-import { codedHostError, mapError, respondMapped, uncodedHostError } from '../errorMap.js';
+import { codedHostError, mapError, respondMapped } from '../errorMap.js';
 import { safeBigintToNumber } from '../wireNumbers.js';
 import { formatRetryAfterSeconds } from '../retryAfter.js';
 import { safeErrorSummary } from '@stelis/core-api/observability';
@@ -53,15 +53,15 @@ export function createRelayRoutes(
       const result = await handleStatus();
       return c.json(result);
     } catch {
-      return respondMapped(c, uncodedHostError({ error: 'Internal server error' }, [], 500));
+      return respondMapped(c, codedHostError('INTERNAL_ERROR', RELAY_STATUS_ERROR_CODES));
     }
   });
 
   // ── GET /relay/config ─────────────────────────────────────────────
   app.get('/config', async (c) => {
-    const ctx = await contextPromise;
-    const host = ctx.host;
     try {
+      const ctx = await contextPromise;
+      const host = ctx.host;
       const config = await host.getConfig();
 
       // Convert bigint pool metadata to JSON-safe numbers for HTTP JSON transport.
@@ -86,16 +86,7 @@ export function createRelayRoutes(
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('[/relay/config] getConfig() failed:', safeErrorSummary(err));
-      return respondMapped(
-        c,
-        codedHostError(
-          {
-            error: 'Relay config unavailable',
-            code: 'CONFIG_UNAVAILABLE',
-          },
-          RELAY_CONFIG_ERROR_CODES,
-        ),
-      );
+      return respondMapped(c, codedHostError('CONFIG_UNAVAILABLE', RELAY_CONFIG_ERROR_CODES));
     }
   });
 
@@ -124,7 +115,7 @@ export function createRelayRoutes(
         for (const [k, v] of Object.entries(blocked.headers)) c.header(k, v);
         return respondMapped(
           c,
-          codedHostError(blocked.body, RELAY_PREPARE_ERROR_CODES, blocked.headers),
+          codedHostError(blocked.errorCode, RELAY_PREPARE_ERROR_CODES, {}, blocked.headers),
         );
       }
 
@@ -133,9 +124,14 @@ export function createRelayRoutes(
       if (blockedByIp.blocked) {
         return respondMapped(
           c,
-          codedHostError(toBlockedError(blockedByIp), RELAY_PREPARE_ERROR_CODES, {
-            'Retry-After': formatRetryAfterSeconds(blockedByIp.retryAfterMs),
-          }),
+          codedHostError(
+            'ABUSE_BLOCKED',
+            RELAY_PREPARE_ERROR_CODES,
+            blockedByIp.retryAfterMs === undefined
+              ? {}
+              : { retryAfterMs: blockedByIp.retryAfterMs },
+            { 'Retry-After': formatRetryAfterSeconds(blockedByIp.retryAfterMs) },
+          ),
         );
       }
 
@@ -144,10 +140,10 @@ export function createRelayRoutes(
       if (!rl.allowed) {
         return respondMapped(
           c,
-          uncodedHostError(
-            { error: 'Rate limit exceeded', retryAfterMs: rl.retryAfterMs },
+          codedHostError(
+            'RATE_LIMITED',
             RELAY_PREPARE_ERROR_CODES,
-            429,
+            { retryAfterMs: rl.retryAfterMs },
             { 'Retry-After': formatRetryAfterSeconds(rl.retryAfterMs) },
           ),
         );
@@ -162,16 +158,7 @@ export function createRelayRoutes(
       try {
         canonicalSender = canonicalizeAddress(body.senderAddress, 'senderAddress');
       } catch {
-        return respondMapped(
-          c,
-          codedHostError(
-            {
-              error: 'senderAddress must be a valid Sui address',
-              code: 'BAD_REQUEST',
-            },
-            RELAY_PREPARE_ERROR_CODES,
-          ),
-        );
+        return respondMapped(c, codedHostError('BAD_REQUEST', RELAY_PREPARE_ERROR_CODES));
       }
 
       // ── HTTP body BPS validation ──────────────────────────
@@ -187,10 +174,7 @@ export function createRelayRoutes(
           'INVALID_SLIPPAGE_BPS',
         );
         if (!v.ok) {
-          return respondMapped(
-            c,
-            codedHostError({ error: v.message, code: v.code }, RELAY_PREPARE_ERROR_CODES),
-          );
+          return respondMapped(c, codedHostError(v.code, RELAY_PREPARE_ERROR_CODES));
         }
         slippageBps = v.value;
       }
@@ -203,10 +187,7 @@ export function createRelayRoutes(
           'INVALID_GAS_MARGIN_BPS',
         );
         if (!v.ok) {
-          return respondMapped(
-            c,
-            codedHostError({ error: v.message, code: v.code }, RELAY_PREPARE_ERROR_CODES),
-          );
+          return respondMapped(c, codedHostError(v.code, RELAY_PREPARE_ERROR_CODES));
         }
         gasMarginBps = v.value;
       }
@@ -232,28 +213,13 @@ export function createRelayRoutes(
       return c.json(result);
     } catch (err) {
       if (err instanceof HostWireParseError) {
-        return respondMapped(
-          c,
-          codedHostError(
-            {
-              error: 'Request body does not match the current API contract',
-              code: 'BAD_REQUEST',
-            },
-            RELAY_PREPARE_ERROR_CODES,
-          ),
-        );
+        return respondMapped(c, codedHostError('BAD_REQUEST', RELAY_PREPARE_ERROR_CODES));
       }
       const mapped = mapError(err, RELAY_PREPARE_ERROR_CODES);
       if (mapped) return respondMapped(c, mapped);
       // eslint-disable-next-line no-console
       console.error('[prepare] 500 error:', safeErrorSummary(err));
-      return respondMapped(
-        c,
-        codedHostError(
-          { error: 'Internal server error', code: 'INTERNAL_ERROR' },
-          RELAY_PREPARE_ERROR_CODES,
-        ),
-      );
+      return respondMapped(c, codedHostError('INTERNAL_ERROR', RELAY_PREPARE_ERROR_CODES));
     }
   });
 
@@ -273,7 +239,7 @@ export function createRelayRoutes(
         for (const [k, v] of Object.entries(blocked.headers)) c.header(k, v);
         return respondMapped(
           c,
-          codedHostError(blocked.body, RELAY_SPONSOR_ERROR_CODES, blocked.headers),
+          codedHostError(blocked.errorCode, RELAY_SPONSOR_ERROR_CODES, {}, blocked.headers),
         );
       }
 
@@ -282,9 +248,14 @@ export function createRelayRoutes(
       if (blockedByIp.blocked) {
         return respondMapped(
           c,
-          codedHostError(toBlockedError(blockedByIp), RELAY_SPONSOR_ERROR_CODES, {
-            'Retry-After': formatRetryAfterSeconds(blockedByIp.retryAfterMs),
-          }),
+          codedHostError(
+            'ABUSE_BLOCKED',
+            RELAY_SPONSOR_ERROR_CODES,
+            blockedByIp.retryAfterMs === undefined
+              ? {}
+              : { retryAfterMs: blockedByIp.retryAfterMs },
+            { 'Retry-After': formatRetryAfterSeconds(blockedByIp.retryAfterMs) },
+          ),
         );
       }
 
@@ -293,10 +264,10 @@ export function createRelayRoutes(
       if (!rl.allowed) {
         return respondMapped(
           c,
-          uncodedHostError(
-            { error: 'Rate limit exceeded', retryAfterMs: rl.retryAfterMs },
+          codedHostError(
+            'RATE_LIMITED',
             RELAY_SPONSOR_ERROR_CODES,
-            429,
+            { retryAfterMs: rl.retryAfterMs },
             { 'Retry-After': formatRetryAfterSeconds(rl.retryAfterMs) },
           ),
         );
@@ -320,26 +291,18 @@ export function createRelayRoutes(
       return c.json(sponsorResult);
     } catch (err) {
       if (err instanceof HostWireParseError) {
-        return respondMapped(
-          c,
-          codedHostError(
-            {
-              error: 'Request body does not match the current API contract',
-              code: 'BAD_REQUEST',
-            },
-            RELAY_SPONSOR_ERROR_CODES,
-          ),
-        );
+        return respondMapped(c, codedHostError('BAD_REQUEST', RELAY_SPONSOR_ERROR_CODES));
       }
       // SponsorBlockedError carries a dynamic retryAfterMs that must be
-      // projected into both the body (via toBlockedError) and the
-      // Retry-After header; stays route-local.
+      // projected into both the typed body metadata and the Retry-After
+      // header; the contracts authority supplies the public message.
       if (err instanceof SponsorBlockedError) {
         return respondMapped(
           c,
           codedHostError(
-            toBlockedError({ blocked: true, retryAfterMs: err.retryAfterMs }),
+            'ABUSE_BLOCKED',
             RELAY_SPONSOR_ERROR_CODES,
+            { retryAfterMs: err.retryAfterMs },
             { 'Retry-After': formatRetryAfterSeconds(err.retryAfterMs) },
           ),
         );
@@ -348,13 +311,7 @@ export function createRelayRoutes(
       if (mapped) return respondMapped(c, mapped);
       // eslint-disable-next-line no-console
       console.error('[app-api /relay/sponsor] 500 error:', safeErrorSummary(err));
-      return respondMapped(
-        c,
-        codedHostError(
-          { error: 'Internal server error', code: 'SPONSOR_FAILED' },
-          RELAY_SPONSOR_ERROR_CODES,
-        ),
-      );
+      return respondMapped(c, codedHostError('SPONSOR_FAILED', RELAY_SPONSOR_ERROR_CODES));
     }
   });
 

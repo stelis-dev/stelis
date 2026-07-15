@@ -7,12 +7,12 @@
  * branch coverage for Lua result handling.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import type { AdminPromotionCreateRequest } from '@stelis/contracts';
 import type { RedisClientLike } from '../src/store/redisClient.js';
 import type { Promotion, PromotionStatus } from '../src/studio/domain.js';
 import {
   PromotionCurrentConflictError,
   RedisPromotionStore,
-  type CreatePromotionInput,
 } from '../src/studio/promotionStore.js';
 import { startRealRedis, type RealRedisHandle } from '../src/testing/redis.js';
 
@@ -23,7 +23,9 @@ const STATUSES = [
   'archived',
 ] as const satisfies readonly PromotionStatus[];
 
-function makeInput(overrides: Partial<CreatePromotionInput> = {}): CreatePromotionInput {
+function makeInput(
+  overrides: Partial<AdminPromotionCreateRequest> = {},
+): AdminPromotionCreateRequest {
   return {
     type: 'gas_sponsorship',
     displayName: 'Atomic promotion',
@@ -214,7 +216,7 @@ describe('RedisPromotionStore — real Redis atomic races', () => {
     const created = await store.create(makeInput());
 
     await expectRecordAndIndexes(redis!, store, created);
-    await expect(store.delete(created.promotionId)).resolves.toBe(true);
+    await expect(store.delete(created.promotionId)).resolves.toEqual({ status: 'deleted' });
     await expect(store.get(created.promotionId)).resolves.toBeNull();
     await expectRecordAndIndexes(redis!, store, null);
   });
@@ -230,7 +232,7 @@ describe('RedisPromotionStore — real Redis atomic races', () => {
       await Promise.allSettled([
         racedStore
           .delete(created.promotionId)
-          .then((deleted) => ({ kind: 'delete', deleted }) as const),
+          .then((result) => ({ kind: 'delete', result }) as const),
         racedStore
           .transitionStatus(created.promotionId, 'active')
           .then((record) => ({ kind: 'activate', record }) as const),
@@ -239,7 +241,7 @@ describe('RedisPromotionStore — real Redis atomic races', () => {
 
     const finalRecord = await initialStore.get(created.promotionId);
     if (winner.kind === 'delete') {
-      expect(winner.deleted).toBe(true);
+      expect(winner.result).toEqual({ status: 'deleted' });
       expect(finalRecord).toBeNull();
     } else {
       expect(winner.record).not.toBeNull();

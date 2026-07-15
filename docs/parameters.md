@@ -84,7 +84,7 @@ Prepare authorization request nonces are temporary replay guards for signed prep
 
 | Name | Value | Source | Meaning |
 | --- | ---: | --- | --- |
-| `MAX_PROMOTION_LEDGER_VALUE_MIST` | `9007199254740991` | `packages/core-api/src/studio/executionLedger.ts` | Maximum MIST value accepted by Studio promotion ledger accounting. |
+| `MAX_PROMOTION_LEDGER_VALUE_MIST` | `9007199254740991` | `packages/contracts/src/constants.ts` | Maximum MIST value accepted by Studio promotion ledger accounting. |
 
 ## Required Host Environment
 

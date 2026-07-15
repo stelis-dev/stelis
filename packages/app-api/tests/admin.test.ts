@@ -7,7 +7,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Hono } from 'hono';
 import { ClientIpResolutionError } from '@stelis/core-api';
-import { buildSponsorRefillAccountWithdrawMessage } from '@stelis/contracts';
+import {
+  HOST_ERROR_HTTP_STATUS,
+  buildSponsorRefillAccountWithdrawMessage,
+  hostErrorPublicMessage,
+  parseAdminPromotionDetailResponse,
+  parseAdminPromotionSummaryResponse,
+  parseAdminPromotionUsersResponse,
+  parseAdminSettlementSwapPathsResponse,
+  parseHostErrorResponse,
+  type HostErrorCode,
+} from '@stelis/contracts';
 import { PromotionCurrentConflictError } from '@stelis/core-api/studio';
 
 // ── Hoisted mocks ───────────────────────────────────────────────────────
@@ -84,20 +94,37 @@ function clientIpResolutionError(): Error {
   return new ClientIpResolutionError('Client IP could not be resolved');
 }
 
+async function expectHostError(
+  response: Response,
+  code: HostErrorCode,
+  meta: Readonly<Record<string, unknown>> = {},
+): Promise<void> {
+  expect(response.status).toBe(HOST_ERROR_HTTP_STATUS[code]);
+  const body: unknown = await response.json();
+  expect(() => parseHostErrorResponse(body, [code], response.status)).not.toThrow();
+  expect(body).toEqual({
+    error: hostErrorPublicMessage(code),
+    code,
+    ...meta,
+  });
+}
+
 function createMockCtx(): AppApiContext {
   return {
     host: {
       network: 'testnet',
       packageId: '0xPKG',
+      configId: null,
+      vaultRegistryId: null,
       settlementPayoutRecipientAddress: '0xRECIPIENT',
       sponsorPool: {
-        addresses: () => ['0xSPONSOR1'],
+        addresses: () => ['0xslot'],
         size: 1,
-        primaryAddress: '0xSPONSOR1',
+        primaryAddress: '0xslot',
         leaseStatus: vi.fn().mockResolvedValue({
           leasedSlots: 0,
           freeSlots: 1,
-          slots: [{ address: '0xSPONSOR1', leased: false }],
+          slots: [{ address: '0xslot', leased: false }],
         }),
       },
       sui: {
@@ -115,6 +142,7 @@ function createMockCtx(): AppApiContext {
     } as never,
     prepareConfig: {
       quotedHostFeeMist: 500n,
+      deepbookPackageId: null,
       supportedSettlementSwapPaths: [
         {
           settlementTokenType: '0xdeeb::deep::DEEP',
@@ -259,7 +287,7 @@ describe('admin routes', () => {
     it('returns 401 when requireAdminSession returns null', async () => {
       mockRequireAdminSessionFromContext.mockResolvedValueOnce(null);
       const res = await app.request('/api/blocklist');
-      expect(res.status).toBe(401);
+      await expectHostError(res, 'ADMIN_UNAUTHORIZED');
       expect(mockRequireAdminSessionFromContext).toHaveBeenCalledWith(
         expect.anything(),
         mountedContextPromise,
@@ -287,7 +315,7 @@ describe('admin routes', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({}),
       });
-      expect(res.status).toBe(400);
+      await expectHostError(res, 'BAD_REQUEST');
     });
 
     it('returns 403 on unauthorized key prefix', async () => {
@@ -296,7 +324,7 @@ describe('admin routes', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ key: 'random:key' }),
       });
-      expect(res.status).toBe(403);
+      await expectHostError(res, 'ADMIN_FORBIDDEN');
     });
 
     it('returns 200 on valid key', async () => {
@@ -313,11 +341,25 @@ describe('admin routes', () => {
 
   describe('GET /api/logs', () => {
     it('returns 200 with logs array', async () => {
-      mockRedis.lrange.mockResolvedValueOnce(['log1', 'log2']);
+      const logs = [
+        {
+          ts: '2026-07-15T00:00:00.000Z',
+          event: 'LOGIN_SUCCESS',
+          ip: '127.0.0.1',
+          address: ADMIN_ADDRESS,
+        },
+        {
+          ts: '2026-07-15T00:00:01.000Z',
+          event: 'PROMOTION_CREATE',
+          ip: '127.0.0.1',
+          detail: 'promotionId=promotion-1',
+        },
+      ];
+      mockRedis.lrange.mockResolvedValueOnce(logs.map((entry) => JSON.stringify(entry)));
       const res = await app.request('/api/logs');
       expect(res.status).toBe(200);
       const body = await res.json();
-      expect(body.logs).toEqual(['log1', 'log2']);
+      expect(body.logs).toEqual(logs);
       expect(mockRedis.lrange).toHaveBeenCalledWith(ADMIN_AUDIT_LOG_KEY, 0, 199);
     });
   });
@@ -349,7 +391,20 @@ describe('admin routes', () => {
 
     it('rejects invalid mode with 400', async () => {
       const res = await app.request('/api/sponsored-logs/summary?mode=BAD');
-      expect(res.status).toBe(400);
+      await expectHostError(res, 'BAD_REQUEST');
+    });
+
+    it('reports a malformed internal projection as INTERNAL_ERROR, not a client request error', async () => {
+      (mockCtx.sponsoredLogsStore.getSummary as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        mode: 'all',
+        sponsoredExecutions: '1',
+        lossCount: '2',
+        cumulativeHostNetMist: '0',
+        cumulativeLossMist: '0',
+      });
+
+      const res = await app.request('/api/sponsored-logs/summary');
+      await expectHostError(res, 'INTERNAL_ERROR');
     });
   });
 
@@ -368,10 +423,22 @@ describe('admin routes', () => {
           mode: 'generic',
           outcome: 'success',
           receiptId: 'r1',
+          digest: 'digest-1',
+          senderAddress: '0xsender',
+          sponsorAddress: '0xsponsor',
+          executionPathKey: 'generic:path',
+          orderIdHash: 'order-hash-1',
+          promotionId: null,
+          userId: null,
           economicsStatus: 'known',
+          recoveredGasMist: '5000',
+          hostPaidGasMist: '1000',
           hostFeeMist: '1000',
           protocolFeeMist: '50',
           hostNetMist: '4000',
+          grossGasMist: '1050',
+          storageRebateMist: '0',
+          failureReason: null,
         },
       ];
       (mockCtx.sponsoredLogsStore.getSummary as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
@@ -398,17 +465,17 @@ describe('admin routes', () => {
 
     it('rejects limit > 200 with 400', async () => {
       const res = await app.request('/api/sponsored-logs?limit=999');
-      expect(res.status).toBe(400);
+      await expectHostError(res, 'BAD_REQUEST');
     });
 
     it('rejects non-integer limit with 400', async () => {
       const res = await app.request('/api/sponsored-logs?limit=abc');
-      expect(res.status).toBe(400);
+      await expectHostError(res, 'BAD_REQUEST');
     });
 
     it('rejects invalid mode with 400', async () => {
       const res = await app.request('/api/sponsored-logs?mode=other');
-      expect(res.status).toBe(400);
+      await expectHostError(res, 'BAD_REQUEST');
     });
 
     it('preserves failureReason verbatim for success+post-submit-failure rows', async () => {
@@ -430,6 +497,13 @@ describe('admin routes', () => {
           mode: 'generic',
           outcome: 'success',
           receiptId: 'r-gas-missing',
+          digest: 'digest-gas-missing',
+          senderAddress: '0xsender',
+          sponsorAddress: '0xsponsor',
+          executionPathKey: 'generic:path',
+          orderIdHash: 'order-hash-gas-missing',
+          promotionId: null,
+          userId: null,
           economicsStatus: 'unknown',
           // unknown row: every numeric field is null (no zero coercion).
           recoveredGasMist: null,
@@ -446,10 +520,21 @@ describe('admin routes', () => {
           mode: 'promotion',
           outcome: 'success',
           receiptId: 'r-ledger',
+          digest: 'digest-ledger',
+          senderAddress: '0xsender',
+          sponsorAddress: '0xsponsor',
+          executionPathKey: 'promotion:path',
+          orderIdHash: null,
+          promotionId: 'promotion-1',
+          userId: 'user-1',
           economicsStatus: 'known',
+          recoveredGasMist: '0',
+          hostPaidGasMist: '12345',
           hostFeeMist: '0',
           protocolFeeMist: '0',
           hostNetMist: '-12345',
+          grossGasMist: '12345',
+          storageRebateMist: '0',
           failureReason: 'PROMOTION_LEDGER_CONSUME_FAILED: budget_unavailable',
         },
       ]);
@@ -516,8 +601,7 @@ describe('admin routes', () => {
         method: 'POST',
       });
 
-      expect(res.status).toBe(400);
-      await expect(res.json()).resolves.toEqual({ error: 'Client IP could not be resolved' });
+      await expectHostError(res, 'CLIENT_IP_UNRESOLVED');
       expect(mockRedis.set).not.toHaveBeenCalled();
       expect(mockRedis.lpush).not.toHaveBeenCalled();
     });
@@ -536,9 +620,7 @@ describe('admin routes', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ amountMist: '100' }),
       });
-      expect(res.status).toBe(400);
-      const body = await res.json();
-      expect(body.error).toContain('nonce must be a string');
+      await expectHostError(res, 'BAD_REQUEST');
     });
 
     it('returns 400 on invalid amountMist format', async () => {
@@ -547,9 +629,7 @@ describe('admin routes', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...validWithdrawBody, amountMist: '-100' }),
       });
-      expect(res.status).toBe(400);
-      const body = await res.json();
-      expect(body.error).toContain('amountMist');
+      await expectHostError(res, 'BAD_REQUEST');
     });
 
     it('returns 400 on amountMist = "0"', async () => {
@@ -558,7 +638,7 @@ describe('admin routes', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...validWithdrawBody, amountMist: '0' }),
       });
-      expect(res.status).toBe(400);
+      await expectHostError(res, 'BAD_REQUEST');
     });
 
     it('returns 401 on expired/invalid nonce', async () => {
@@ -570,9 +650,7 @@ describe('admin routes', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(validWithdrawBody),
       });
-      expect(res.status).toBe(401);
-      const body = await res.json();
-      expect(body.error).toContain('nonce');
+      await expectHostError(res, 'WITHDRAWAL_NONCE_MISSING');
     });
 
     it('returns 401 on bad signature', async () => {
@@ -583,10 +661,7 @@ describe('admin routes', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(validWithdrawBody),
       });
-      expect(res.status).toBe(401);
-      const body = await res.json();
-      expect(body.error).toContain('signature');
-      expect(body.code).toBe('WITHDRAWAL_SIGNATURE_INVALID');
+      await expectHostError(res, 'WITHDRAWAL_SIGNATURE_INVALID');
       expect(mockVerifySignedMessage).toHaveBeenCalledWith({
         message: buildSponsorRefillAccountWithdrawMessage(
           'testnet',
@@ -611,10 +686,8 @@ describe('admin routes', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(validWithdrawBody),
       });
-      expect(res.status).toBe(429);
-      await expect(res.json()).resolves.toEqual({
-        error: 'Too many withdrawal attempts. Try again in 15 minutes.',
-      });
+      await expectHostError(res, 'RATE_LIMITED', { retryAfterMs: 900000 });
+      expect(res.headers.get('Retry-After')).toBe('900');
     });
 
     it('returns 400 before rate-limit or audit writes when client IP cannot be resolved', async () => {
@@ -628,8 +701,7 @@ describe('admin routes', () => {
         body: JSON.stringify(validWithdrawBody),
       });
 
-      expect(res.status).toBe(400);
-      await expect(res.json()).resolves.toEqual({ error: 'Client IP could not be resolved' });
+      await expectHostError(res, 'CLIENT_IP_UNRESOLVED');
       expect(mockCheckAndIncrementAdminOperationAttempt).not.toHaveBeenCalled();
       expect(mockReadJsonBodyWithLimit).not.toHaveBeenCalled();
       expect(mockRedis.lpush).not.toHaveBeenCalled();
@@ -649,9 +721,7 @@ describe('admin routes', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(validWithdrawBody),
       });
-      expect(res.status).toBe(422);
-      const body = await res.json();
-      expect(body.error).toBe('Withdrawal failed');
+      await expectHostError(res, 'WITHDRAWAL_FAILED');
     });
 
     it('returns a stable pending code without hiding the durable operation identity', async () => {
@@ -669,10 +739,7 @@ describe('admin routes', () => {
         body: JSON.stringify(validWithdrawBody),
       });
 
-      expect(res.status).toBe(503);
-      await expect(res.json()).resolves.toEqual({
-        code: 'WITHDRAWAL_PENDING',
-        error: 'Withdrawal outcome is pending recovery.',
+      await expectHostError(res, 'WITHDRAWAL_PENDING', {
         operationId: 'operation-pending',
         digest: 'digest-pending',
       });
@@ -692,9 +759,7 @@ describe('admin routes', () => {
         body: JSON.stringify(validWithdrawBody),
       });
 
-      expect(res.status).toBe(409);
-      await expect(res.json()).resolves.toMatchObject({
-        code: 'WITHDRAWAL_NOT_ACCEPTED',
+      await expectHostError(res, 'WITHDRAWAL_NOT_ACCEPTED', {
         operationId: 'blocking-operation',
         digest: 'blocking-digest',
       });
@@ -790,9 +855,7 @@ describe('admin routes', () => {
           amountMist: '990000000',
         }),
       });
-      expect(res.status).toBe(400);
-      const body = await res.json();
-      expect(body.error).toContain('runway');
+      await expectHostError(res, 'WITHDRAWAL_RUNWAY_BLOCKED');
     });
 
     it('accepts the inclusive u64 maximum at the transport boundary', async () => {
@@ -818,7 +881,7 @@ describe('admin routes', () => {
           amountMist: '18446744073709551616',
         }),
       });
-      expect(res.status).toBe(400);
+      await expectHostError(res, 'BAD_REQUEST');
       expect(mockVerifySignedMessage).not.toHaveBeenCalled();
       expect(mockCtx.sponsorOperations.withdraw).not.toHaveBeenCalled();
     });
@@ -831,6 +894,7 @@ describe('admin routes', () => {
       const body = await res.json();
       expect(body.count).toBeDefined();
       expect(Array.isArray(body.settlementSwapPaths)).toBe(true);
+      expect(parseAdminSettlementSwapPathsResponse(body)).toEqual(body);
     });
 
     it('returns settlement swap path fields from prepareConfig', async () => {
@@ -892,7 +956,7 @@ describe('admin routes', () => {
     it('GET /api/promotions returns 503 when studio disabled', async () => {
       // promotionStore is null by default (studio disabled)
       const res = await app.request('/api/promotions');
-      expect(res.status).toBe(503);
+      await expectHostError(res, 'ADMIN_UNAVAILABLE');
     });
 
     it('POST /api/promotions returns 503 when studio disabled', async () => {
@@ -905,7 +969,7 @@ describe('admin routes', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({}),
       });
-      expect(res.status).toBe(503);
+      await expectHostError(res, 'ADMIN_UNAVAILABLE');
     });
 
     it('POST /api/promotions returns 400 before body parsing when client IP cannot be resolved', async () => {
@@ -918,8 +982,7 @@ describe('admin routes', () => {
         body: JSON.stringify({}),
       });
 
-      expect(res.status).toBe(400);
-      await expect(res.json()).resolves.toEqual({ error: 'Client IP could not be resolved' });
+      await expectHostError(res, 'CLIENT_IP_UNRESOLVED');
       expect(mockReadJsonBodyWithLimit).not.toHaveBeenCalled();
       expect(mockRedis.lpush).not.toHaveBeenCalled();
     });
@@ -946,6 +1009,30 @@ describe('admin routes', () => {
         expect(res.status).toBe(200);
         const body = (await res.json()) as { promotions: unknown[] };
         expect(body.promotions).toEqual([]);
+      });
+
+      it('GET /api/promotions maps a corrupt stored budget to INTERNAL_ERROR', async () => {
+        vi.spyOn(mockCtx.promotionStore!, 'list').mockResolvedValueOnce([
+          {
+            promotionId: 'corrupt-promotion',
+            type: 'gas_sponsorship',
+            displayName: 'Corrupt promotion',
+            description: '',
+            status: 'draft',
+            maxParticipants: 2,
+            perUserGasAllowanceMist: Number.MAX_SAFE_INTEGER.toString(),
+            claimDeadlineAt: null,
+            postClaimUseWindowMs: 0,
+            startAt: null,
+            pauseReason: null,
+            archiveReason: null,
+            createdAt: '2026-07-15T00:00:00.000Z',
+            updatedAt: '2026-07-15T00:00:00.000Z',
+          },
+        ]);
+
+        const res = await app.request('/api/promotions');
+        await expectHostError(res, 'INTERNAL_ERROR');
       });
 
       it('POST /api/promotions creates a gas_sponsorship promotion', async () => {
@@ -984,9 +1071,27 @@ describe('admin routes', () => {
           body: JSON.stringify({}),
         });
 
-        expect(res.status).toBe(400);
-        await expect(res.json()).resolves.toEqual({ error: 'Unknown field: allowedTargets' });
+        await expectHostError(res, 'BAD_REQUEST');
         expect(create).not.toHaveBeenCalled();
+      });
+
+      it('does not classify an arbitrary error by its name string', async () => {
+        const spoofed = new Error('not a Promotion ledger error');
+        spoofed.name = 'PromotionLedgerValueError';
+        vi.spyOn(mockCtx.promotionStore!, 'create').mockRejectedValueOnce(spoofed);
+        mockReadJsonBodyWithLimit.mockResolvedValueOnce({
+          type: 'gas_sponsorship',
+          displayName: 'Spoofed error',
+          maxParticipants: 10,
+          perUserGasAllowanceMist: '1000000',
+        });
+
+        const res = await app.request('/api/promotions', {
+          method: 'POST',
+          body: JSON.stringify({}),
+        });
+
+        await expectHostError(res, 'INTERNAL_ERROR');
       });
 
       it.each([
@@ -1003,10 +1108,7 @@ describe('admin routes', () => {
             body: JSON.stringify({}),
           });
 
-          expect(res.status).toBe(400);
-          await expect(res.json()).resolves.toEqual({
-            error: 'Invalid request body: must be a JSON object',
-          });
+          await expectHostError(res, 'BAD_REQUEST');
           expect(create).not.toHaveBeenCalled();
         },
       );
@@ -1023,8 +1125,7 @@ describe('admin routes', () => {
           body: JSON.stringify({}),
         });
 
-        expect(res.status).toBe(400);
-        await expect(res.json()).resolves.toEqual({ error: 'Unknown field: type' });
+        await expectHostError(res, 'BAD_REQUEST');
         expect(update).not.toHaveBeenCalled();
       });
 
@@ -1040,8 +1141,7 @@ describe('admin routes', () => {
           body: JSON.stringify({}),
         });
 
-        expect(res.status).toBe(400);
-        await expect(res.json()).resolves.toEqual({ error: 'Unknown field: displayName' });
+        await expectHostError(res, 'BAD_REQUEST');
         expect(transition).not.toHaveBeenCalled();
       });
 
@@ -1095,9 +1195,7 @@ describe('admin routes', () => {
           method: 'POST',
           body: JSON.stringify({}),
         });
-        expect(res.status).toBe(400);
-        const body = (await res.json()) as { error: string };
-        expect(body.error).toContain('maxParticipants');
+        await expectHostError(res, 'BAD_REQUEST');
       });
 
       it('POST /api/promotions rejects non-integer maxParticipants (400)', async () => {
@@ -1111,7 +1209,7 @@ describe('admin routes', () => {
           method: 'POST',
           body: JSON.stringify({}),
         });
-        expect(res.status).toBe(400);
+        await expectHostError(res, 'BAD_REQUEST');
       });
 
       it('POST /api/promotions rejects negative maxParticipants (400)', async () => {
@@ -1125,7 +1223,7 @@ describe('admin routes', () => {
           method: 'POST',
           body: JSON.stringify({}),
         });
-        expect(res.status).toBe(400);
+        await expectHostError(res, 'BAD_REQUEST');
       });
 
       it('POST /api/promotions rejects unsafe integer maxParticipants (400)', async () => {
@@ -1142,9 +1240,7 @@ describe('admin routes', () => {
           method: 'POST',
           body: JSON.stringify({}),
         });
-        expect(res.status).toBe(400);
-        const body = (await res.json()) as { error: string };
-        expect(body.error).toContain('maxParticipants');
+        await expectHostError(res, 'BAD_REQUEST');
       });
 
       it('POST /api/promotions rejects unsafe integer postClaimUseWindowMs (400)', async () => {
@@ -1159,9 +1255,7 @@ describe('admin routes', () => {
           method: 'POST',
           body: JSON.stringify({}),
         });
-        expect(res.status).toBe(400);
-        const body = (await res.json()) as { error: string };
-        expect(body.error).toContain('postClaimUseWindowMs');
+        await expectHostError(res, 'BAD_REQUEST');
       });
 
       it('PUT /api/promotions/:id rejects unsafe integer maxParticipants (400)', async () => {
@@ -1187,9 +1281,7 @@ describe('admin routes', () => {
           method: 'PUT',
           body: JSON.stringify({}),
         });
-        expect(res.status).toBe(400);
-        const body = (await res.json()) as { error: string };
-        expect(body.error).toContain('maxParticipants');
+        await expectHostError(res, 'BAD_REQUEST');
       });
 
       it('POST /api/promotions rejects malformed perUserGasAllowanceMist (400)', async () => {
@@ -1203,9 +1295,7 @@ describe('admin routes', () => {
           method: 'POST',
           body: JSON.stringify({}),
         });
-        expect(res.status).toBe(400);
-        const body = (await res.json()) as { error: string };
-        expect(body.error).toContain('perUserGasAllowanceMist');
+        await expectHostError(res, 'BAD_REQUEST');
       });
 
       it('POST /api/promotions rejects zero perUserGasAllowanceMist (400)', async () => {
@@ -1219,15 +1309,10 @@ describe('admin routes', () => {
           method: 'POST',
           body: JSON.stringify({}),
         });
-        expect(res.status).toBe(400);
+        await expectHostError(res, 'BAD_REQUEST');
       });
 
-      it('POST /api/promotions rejects perUserGasAllowanceMist > MAX_PROMOTION_LEDGER_VALUE_MIST (Number.MAX_SAFE_INTEGER) with 400', async () => {
-        // Boundary: a `perUserGasAllowanceMist` above
-        // `Number.MAX_SAFE_INTEGER` would land in Redis budget keys
-        // and break Lua int64 arithmetic on consume/release. Reject
-        // at the API boundary with 400 + the operator-readable bound
-        // in the error message.
+      it('POST /api/promotions rejects perUserGasAllowanceMist above the ledger bound', async () => {
         mockReadJsonBodyWithLimit.mockResolvedValueOnce({
           type: 'gas_sponsorship',
           displayName: 'Over-bound per-user',
@@ -1238,21 +1323,10 @@ describe('admin routes', () => {
           method: 'POST',
           body: JSON.stringify({}),
         });
-        expect(res.status).toBe(400);
-        const body = (await res.json()) as { error: string };
-        expect(body.error).toContain('perUserGasAllowanceMist');
-        expect(body.error).toContain(BigInt(Number.MAX_SAFE_INTEGER).toString());
+        await expectHostError(res, 'ADMIN_UNPROCESSABLE');
       });
 
-      it('POST /api/promotions accepts a draft whose per-user fits but maxParticipants × perUser overflows the bound (201) — product check is deferred to activation, not the API boundary', async () => {
-        // Per-user fits the bound, but `maxParticipants ×
-        // perUserGasAllowanceMist` overflows it. The API-boundary
-        // fail-fast can only see the per-user value — the product
-        // check belongs to `validateActivationPrerequisites` and is
-        // exercised by the dedicated activation-gate test
-        // (`POST /api/promotions/:id/status rejects activation when
-        // maxParticipants × perUserGasAllowanceMist exceeds
-        // MAX_PROMOTION_LEDGER_VALUE_MIST`).
+      it('POST /api/promotions rejects a complete budget above the ledger bound', async () => {
         mockReadJsonBodyWithLimit.mockResolvedValueOnce({
           type: 'gas_sponsorship',
           displayName: 'Over-bound product (draft)',
@@ -1264,16 +1338,10 @@ describe('admin routes', () => {
           method: 'POST',
           body: JSON.stringify({}),
         });
-        expect(res.status).toBe(201);
+        await expectHostError(res, 'ADMIN_UNPROCESSABLE');
       });
 
-      it('PUT /api/promotions/:id rejects perUserGasAllowanceMist > MAX_PROMOTION_LEDGER_VALUE_MIST on a draft update (400)', async () => {
-        // Edit-time fail-fast parity with POST. `parseOptionalPositiveBigintString`
-        // calls the same `assertPerUserAllowanceWithinBound` helper at
-        // `admin.ts:880-885`, so a draft update that tries to push
-        // `perUserGasAllowanceMist` above the bound must reject at 400
-        // with the bound value in the response body before the value
-        // ever reaches the promotion store.
+      it('PUT /api/promotions/:id rejects perUserGasAllowanceMist above the ledger bound', async () => {
         mockReadJsonBodyWithLimit.mockResolvedValueOnce({
           type: 'gas_sponsorship',
           displayName: 'PUT bound seed',
@@ -1294,10 +1362,7 @@ describe('admin routes', () => {
           method: 'PUT',
           body: JSON.stringify({}),
         });
-        expect(updateRes.status).toBe(400);
-        const body = (await updateRes.json()) as { error: string };
-        expect(body.error).toContain('perUserGasAllowanceMist');
-        expect(body.error).toContain(BigInt(Number.MAX_SAFE_INTEGER).toString());
+        await expectHostError(updateRes, 'ADMIN_UNPROCESSABLE');
       });
 
       it('POST /api/promotions rejects malformed claimDeadlineAt (400)', async () => {
@@ -1312,7 +1377,7 @@ describe('admin routes', () => {
           method: 'POST',
           body: JSON.stringify({}),
         });
-        expect(res.status).toBe(400);
+        await expectHostError(res, 'BAD_REQUEST');
       });
 
       it('POST /api/promotions rejects unsupported promotion type', async () => {
@@ -1326,9 +1391,7 @@ describe('admin routes', () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({}),
         });
-        expect(res.status).toBe(400);
-        const body = (await res.json()) as { error: string };
-        expect(body.error).toContain('gas_sponsorship');
+        await expectHostError(res, 'BAD_REQUEST');
       });
 
       it('POST /api/promotions rejects missing required fields', async () => {
@@ -1341,7 +1404,7 @@ describe('admin routes', () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({}),
         });
-        expect(res.status).toBe(400);
+        await expectHostError(res, 'BAD_REQUEST');
       });
 
       it('GET /api/promotions/:id returns 404 for non-existent', async () => {
@@ -1367,6 +1430,7 @@ describe('admin routes', () => {
         expect(res.status).toBe(200);
         const body = (await res.json()) as { promotion: { displayName: string } };
         expect(body.promotion.displayName).toBe('Fetch Me');
+        expect(parseAdminPromotionDetailResponse(body)).toEqual(body);
       });
 
       it('PUT /api/promotions/:id updates fields', async () => {
@@ -1406,10 +1470,10 @@ describe('admin routes', () => {
           method: 'PUT',
           body: JSON.stringify({}),
         });
-        expect(res.status).toBe(404);
+        await expectHostError(res, 'ADMIN_NOT_FOUND');
       });
 
-      // ── P1-6 route contract: derived budget + temporal fields ──────
+      // ── Derived budget + temporal response contract ────────────────
 
       it('POST /api/promotions response includes derived totalRequiredBudgetMist', async () => {
         mockReadJsonBodyWithLimit.mockResolvedValueOnce({
@@ -1462,20 +1526,25 @@ describe('admin routes', () => {
         expect(created.promotion.claimDeadlineAt).toBe(deadline);
         expect(created.promotion.postClaimUseWindowMs).toBe(windowMs);
 
-        // Verify GET returns same values
-        const getRes = await app.request(`/api/promotions/${created.promotion.promotionId}`);
-        expect(getRes.status).toBe(200);
-        const fetched = (await getRes.json()) as {
-          promotion: {
+        // Verify the current collection route returns the same stored values.
+        const listRes = await app.request('/api/promotions');
+        expect(listRes.status).toBe(200);
+        const listed = (await listRes.json()) as {
+          promotions: Array<{
+            promotionId: string;
             claimDeadlineAt: string | null;
             postClaimUseWindowMs: number;
             totalRequiredBudgetMist: string;
-          };
+          }>;
         };
-        expect(fetched.promotion.claimDeadlineAt).toBe(deadline);
-        expect(fetched.promotion.postClaimUseWindowMs).toBe(windowMs);
+        const fetched = listed.promotions.find(
+          (promotion) => promotion.promotionId === created.promotion.promotionId,
+        );
+        expect(fetched).toBeDefined();
+        expect(fetched?.claimDeadlineAt).toBe(deadline);
+        expect(fetched?.postClaimUseWindowMs).toBe(windowMs);
         // 50 * 1_000_000 = 50_000_000
-        expect(fetched.promotion.totalRequiredBudgetMist).toBe('50000000');
+        expect(fetched?.totalRequiredBudgetMist).toBe('50000000');
       });
 
       it('PUT /api/promotions/:id recalculates totalRequiredBudgetMist on budget field change', async () => {
@@ -1556,45 +1625,7 @@ describe('admin routes', () => {
           method: 'POST',
           body: JSON.stringify({}),
         });
-        expect(res.status).toBe(409);
-      });
-
-      // Route-body validation rejects invalid activation inputs at 400.
-      // Store-level activation prerequisites are covered by
-      // `packages/core-api/tests/promotionStore.test.ts`.
-
-      it('POST /api/promotions/:id/status rejects activation when maxParticipants × perUserGasAllowanceMist exceeds MAX_PROMOTION_LEDGER_VALUE_MIST (422)', async () => {
-        // End-to-end activation gate. Per-user fits the bound (so
-        // create succeeds with 201), but the product overflows
-        // `Number.MAX_SAFE_INTEGER`, so `transitionStatus → active`
-        // calls `validateActivationPrerequisites` which throws
-        // `PromotionActivationError`; the route maps it to 422 with
-        // the canonical error message that includes the bound value.
-        mockReadJsonBodyWithLimit.mockResolvedValueOnce({
-          type: 'gas_sponsorship',
-          displayName: 'Activation product overflow',
-          maxParticipants: 1_000_000,
-          perUserGasAllowanceMist: '9007199254740',
-        });
-        const createRes = await app.request('/api/promotions', {
-          method: 'POST',
-          body: JSON.stringify({}),
-        });
-        expect(createRes.status).toBe(201);
-        const created = (await createRes.json()) as { promotion: { promotionId: string } };
-
-        mockReadJsonBodyWithLimit.mockResolvedValueOnce({ status: 'active' });
-        const actRes = await app.request(
-          `/api/promotions/${created.promotion.promotionId}/status`,
-          {
-            method: 'POST',
-            body: JSON.stringify({}),
-          },
-        );
-        expect(actRes.status).toBe(422);
-        const body = (await actRes.json()) as { error: string };
-        expect(body.error).toContain('total budget');
-        expect(body.error).toContain(BigInt(Number.MAX_SAFE_INTEGER).toString());
+        await expectHostError(res, 'ADMIN_CONFLICT');
       });
 
       it('PUT /api/promotions/:id rejects economic-field edit on active promotion (409)', async () => {
@@ -1630,9 +1661,7 @@ describe('admin routes', () => {
           method: 'PUT',
           body: JSON.stringify({}),
         });
-        expect(res.status).toBe(409);
-        const body = (await res.json()) as { error: string };
-        expect(body.error).toContain('maxParticipants');
+        await expectHostError(res, 'ADMIN_CONFLICT');
       });
 
       it('PUT /api/promotions/:id allows presentational-field edit on active promotion', async () => {
@@ -1670,7 +1699,7 @@ describe('admin routes', () => {
           method: 'POST',
           body: JSON.stringify({}),
         });
-        expect(res.status).toBe(404);
+        await expectHostError(res, 'ADMIN_NOT_FOUND');
       });
 
       it('POST /api/promotions/:id/status returns 400 for invalid status value', async () => {
@@ -1679,7 +1708,7 @@ describe('admin routes', () => {
           method: 'POST',
           body: JSON.stringify({}),
         });
-        expect(res.status).toBe(400);
+        await expectHostError(res, 'BAD_REQUEST');
       });
 
       it('POST /api/promotions/:id/status rejects a non-string reason before the store', async () => {
@@ -1694,7 +1723,7 @@ describe('admin routes', () => {
           body: JSON.stringify({}),
         });
 
-        expect(res.status).toBe(400);
+        await expectHostError(res, 'BAD_REQUEST');
         expect(transition).not.toHaveBeenCalled();
       });
 
@@ -1746,11 +1775,7 @@ describe('admin routes', () => {
           body: testCase.body === null ? undefined : JSON.stringify({}),
         });
 
-        expect(res.status).toBe(409);
-        await expect(res.json()).resolves.toEqual({
-          code: 'PROMOTION_CURRENT_CONFLICT',
-          error: conflict.message,
-        });
+        await expectHostError(res, 'PROMOTION_CURRENT_CONFLICT');
       });
 
       it('DELETE /api/promotions/:id deletes draft promotion', async () => {
@@ -1775,7 +1800,7 @@ describe('admin routes', () => {
         expect(body.ok).toBe(true);
       });
 
-      it('DELETE /api/promotions/:id returns 404 for non-draft', async () => {
+      it('DELETE /api/promotions/:id returns 409 for non-draft', async () => {
         // Create and activate
         mockReadJsonBodyWithLimit.mockResolvedValueOnce({
           type: 'gas_sponsorship',
@@ -1798,14 +1823,14 @@ describe('admin routes', () => {
         const res = await app.request(`/api/promotions/${created.promotion.promotionId}`, {
           method: 'DELETE',
         });
-        expect(res.status).toBe(404);
+        await expectHostError(res, 'ADMIN_CONFLICT');
       });
 
       it('DELETE /api/promotions/:id returns 404 for non-existent', async () => {
         const res = await app.request('/api/promotions/nope', {
           method: 'DELETE',
         });
-        expect(res.status).toBe(404);
+        await expectHostError(res, 'ADMIN_NOT_FOUND');
       });
 
       it('GET /api/promotions?status=active filters by status', async () => {
@@ -1843,7 +1868,6 @@ describe('admin routes', () => {
         expect(body.promotions).toHaveLength(1);
         expect(body.promotions[0].displayName).toBe('Active One');
       });
-
       // ── admin claimed-user list ──────────────────────────────────
       it('GET /api/promotions/:id/users returns 503 when executionLedger not available', async () => {
         // Temporarily remove executionLedger to simulate generic-only mode
@@ -1876,6 +1900,7 @@ describe('admin routes', () => {
         const body = (await res.json()) as { users: unknown[]; total: number };
         expect(body.users).toEqual([]);
         expect(body.total).toBe(0);
+        expect(parseAdminPromotionUsersResponse(body)).toEqual(body);
       });
 
       // Cross-route: claim → admin users
@@ -2020,6 +2045,7 @@ describe('admin routes', () => {
         expect(body.promotionId).toBe(created.promotion.promotionId);
         expect(body.summary.claimedUsers).toBe(0);
         expect(body.summary.totalRequiredBudgetMist).toBe('50000000');
+        expect(parseAdminPromotionSummaryResponse(body)).toEqual(body);
       });
     });
   });
@@ -2102,7 +2128,7 @@ describe('admin routes', () => {
 
       const res = await app.request('/api/sponsor-operations');
 
-      expect(res.status).toBe(500);
+      await expectHostError(res, 'INTERNAL_ERROR');
     });
 
     it('serialises the shared-state sponsor operations payload (no null/stale/generation)', async () => {
@@ -2210,7 +2236,7 @@ describe('admin routes', () => {
       const body = await res.json();
 
       expect(body.network).toBe('testnet');
-      expect(body.primaryAddress).toBe('0xSPONSOR1');
+      expect(body.primaryAddress).toBe('0xslot');
       expect(body.settlementPayoutRecipientAddress).toBe('0xRECIPIENT');
       expect(body.sponsorBalanceWarnMist).toBe('5000000000');
       expect(body.sponsorBalanceRefillTargetMist).toBe('10000000000');

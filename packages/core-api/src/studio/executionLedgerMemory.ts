@@ -7,21 +7,18 @@
  * Budget is lazily installed in mutation paths (`reserve` / `consume` /
  * `release` / `sweepExpiredReservations`) via `ensureBudget()`. Read paths
  * (`getBudgetSummary`) are non-mutating: they return existing snapshots
- * directly, derive an ephemeral snapshot from `promoConfig` if a claim has
+ * directly, derive an ephemeral snapshot from `promotionBudgetTotals` if a claim has
  * already recorded one, or return `{0n,0n,0n}` for unclaimed promotions.
  * Total budget = `maxParticipants * perUserGasAllowanceMist` (computed
- * from claim opts at claim time and stored per-promotion).
+ * by the shared semantic guard at claim time and stored per-promotion).
  *
  * @module studio/executionLedgerMemory
  */
 
 import type { PromotionExecutionLedger } from './executionLedger.js';
+import { PROMOTION_EXECUTION_LEDGER_DEFAULT_RESERVATION_TTL_MS } from './executionLedger.js';
 import {
-  PROMOTION_EXECUTION_LEDGER_DEFAULT_RESERVATION_TTL_MS,
-  MAX_PROMOTION_LEDGER_VALUE_MIST,
-} from './executionLedger.js';
-import {
-  parseNonNegativeDecimalBigInt,
+  parsePromotionLedgerBudget,
   assertPositiveMist,
   assertNonNegativeMist,
   assertWithinLedgerBound,
@@ -39,14 +36,6 @@ import type {
   ReleaseResult,
 } from './domain.js';
 import { type Clock, systemClock } from '../clock.js';
-
-// Money-input parse + assertion helpers live in
-// `executionLedgerValueGuards.ts` so the Memory and Redis adapters
-// stay in lock-step on bound semantics and error messages. The
-// `MAX_PROMOTION_LEDGER_VALUE_MIST` constant import above is reused
-// by the inline `claim()` bound checks below (which carry
-// branch-specific error messages distinct from the helper's generic
-// `${label}` shape).
 
 // ─────────────────────────────────────────────
 // Internal state types
@@ -130,11 +119,8 @@ export class MemoryPromotionExecutionLedger implements PromotionExecutionLedger 
   /** budget state: promotionId → BudgetState */
   private readonly budgets = new Map<string, BudgetState>();
 
-  /** promotion config cache (from claim opts): promotionId → { maxParticipants, perUserGasAllowanceMist } */
-  private readonly promoConfig = new Map<
-    string,
-    { maxParticipants: number; perUserGasAllowanceMist: string }
-  >();
+  /** Guard-validated total budget captured from the first claim per Promotion. */
+  private readonly promotionBudgetTotals = new Map<string, bigint>();
 
   /** final receipts (consumed or released): receiptId → true */
   private readonly terminalReceipts = new Set<string>();
@@ -142,29 +128,10 @@ export class MemoryPromotionExecutionLedger implements PromotionExecutionLedger 
   // ── Claim ──────────────────────────────────
 
   async claim(promotionId: string, userId: string, opts: ClaimOpts): Promise<ClaimResult> {
-    if (!Number.isSafeInteger(opts.maxParticipants) || opts.maxParticipants <= 0) {
-      throw new Error('maxParticipants must be a positive safe integer');
-    }
-    const perUserGasAllowanceMist = parseNonNegativeDecimalBigInt(
+    const { perUserGasAllowanceMist, totalBudgetMist } = parsePromotionLedgerBudget(
+      opts.maxParticipants,
       opts.perUserGasAllowanceMist,
-      'perUserGasAllowanceMist',
     );
-    // Defensive bound check (parity with the Redis ledger). The
-    // activation gate is the main validation point; this re-check
-    // ensures any out-of-band caller cannot poison the Memory
-    // entitlement counters with a value that the Redis adapter would
-    // refuse, keeping the two adapters' conformance behavior aligned.
-    if (perUserGasAllowanceMist > MAX_PROMOTION_LEDGER_VALUE_MIST) {
-      throw new Error(
-        `perUserGasAllowanceMist (${perUserGasAllowanceMist.toString()}) exceeds MAX_PROMOTION_LEDGER_VALUE_MIST (${MAX_PROMOTION_LEDGER_VALUE_MIST.toString()})`,
-      );
-    }
-    const totalBudgetBigInt = BigInt(opts.maxParticipants) * perUserGasAllowanceMist;
-    if (totalBudgetBigInt > MAX_PROMOTION_LEDGER_VALUE_MIST) {
-      throw new Error(
-        `total budget (maxParticipants × perUserGasAllowanceMist = ${totalBudgetBigInt.toString()}) exceeds MAX_PROMOTION_LEDGER_VALUE_MIST (${MAX_PROMOTION_LEDGER_VALUE_MIST.toString()})`,
-      );
-    }
 
     // Get or create claim index for this promotion
     let promoClaims = this.claimIndex.get(promotionId);
@@ -183,12 +150,9 @@ export class MemoryPromotionExecutionLedger implements PromotionExecutionLedger 
       return { ok: false, reason: 'capacity_exceeded' };
     }
 
-    // Store promo config for budget lazy-init
-    if (!this.promoConfig.has(promotionId)) {
-      this.promoConfig.set(promotionId, {
-        maxParticipants: opts.maxParticipants,
-        perUserGasAllowanceMist: perUserGasAllowanceMist.toString(),
-      });
+    // Preserve the guard's exact output for lazy budget materialization.
+    if (!this.promotionBudgetTotals.has(promotionId)) {
+      this.promotionBudgetTotals.set(promotionId, totalBudgetMist);
     }
 
     const now = new Date().toISOString();
@@ -375,15 +339,12 @@ export class MemoryPromotionExecutionLedger implements PromotionExecutionLedger 
       };
     }
     // No budget materialized yet. Derive an ephemeral snapshot from
-    // `promoConfig` if claim() recorded one; otherwise return the
+    // `promotionBudgetTotals` if claim() recorded one; otherwise return the
     // unclaimed-promotion shape `{ 0, 0, 0 }`.
-    const config = this.promoConfig.get(promotionId);
-    if (!config) {
+    const total = this.promotionBudgetTotals.get(promotionId);
+    if (total === undefined) {
       return { availableMist: 0n, reservedMist: 0n, consumedMist: 0n };
     }
-    const total =
-      BigInt(config.maxParticipants) *
-      parseNonNegativeDecimalBigInt(config.perUserGasAllowanceMist, 'perUserGasAllowanceMist');
     return { availableMist: total, reservedMist: 0n, consumedMist: 0n };
   }
 
@@ -454,11 +415,7 @@ export class MemoryPromotionExecutionLedger implements PromotionExecutionLedger 
   private ensureBudget(promotionId: string): BudgetState {
     let budget = this.budgets.get(promotionId);
     if (!budget) {
-      const config = this.promoConfig.get(promotionId);
-      const total = config
-        ? BigInt(config.maxParticipants) *
-          parseNonNegativeDecimalBigInt(config.perUserGasAllowanceMist, 'perUserGasAllowanceMist')
-        : 0n;
+      const total = this.promotionBudgetTotals.get(promotionId) ?? 0n;
       budget = {
         totalMist: total,
         availableMist: total,

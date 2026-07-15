@@ -7,10 +7,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Hono } from 'hono';
 import {
-  assertResponseKeys,
-  assertNestedObjectKeys,
-  assertArrayItemKeys,
-} from './helpers/schemaAssert.js';
+  parseRelayConfigResponse,
+  parseRelayPrepareResponse,
+  parseRelaySponsorResponse,
+} from '@stelis/contracts';
 
 // ── Mock core-api handlers ──────────────────────────────────────────────
 vi.mock('@stelis/core-api', async () => {
@@ -41,7 +41,6 @@ vi.mock('@stelis/core-api', async () => {
       executionCostClaim: '500',
     }),
     checkBlockedRequest: vi.fn().mockResolvedValue({ blocked: false }),
-    toBlockedError: vi.fn().mockReturnValue({ error: 'blocked' }),
     readJsonBodyWithLimit: vi.fn().mockImplementation(async (req: Request) => {
       return req.json();
     }),
@@ -178,7 +177,7 @@ function createMockCtx(): AppApiContext {
 const SPONSOR_OPERATIONS_BLOCKED_CASES = [
   {
     code: 'SPONSOR_CAPACITY_UNAVAILABLE',
-    error: 'No sponsor slots currently available',
+    error: 'Service temporarily unavailable',
     // State view: 1 degraded slot, sponsor refill account healthy → UNAVAILABLE.
     readStateResult: {
       slots: [
@@ -203,7 +202,7 @@ const SPONSOR_OPERATIONS_BLOCKED_CASES = [
   },
   {
     code: 'SPONSOR_REFILL_ACCOUNT_UNHEALTHY',
-    error: 'Sponsor refill account is unhealthy and no healthy sponsor slot remains',
+    error: 'Service temporarily unavailable',
     // State view: no healthy slot AND sponsor refill account unhealthy → SPONSOR_REFILL_ACCOUNT_UNHEALTHY.
     readStateResult: {
       slots: [
@@ -261,6 +260,17 @@ describe('relay routes', () => {
       const body = await res.json();
       expect(body).toHaveProperty('ok', true);
     });
+
+    it('returns the current coded fallback when status evaluation fails', async () => {
+      const coreApi = await import('@stelis/core-api');
+      vi.mocked(coreApi.handleStatus).mockRejectedValueOnce(new Error('unexpected'));
+      const res = await app.request('/relay/status');
+      expect(res.status).toBe(500);
+      expect(await res.json()).toEqual({
+        error: 'Internal server error',
+        code: 'INTERNAL_ERROR',
+      });
+    });
   });
 
   describe('GET /relay/config', () => {
@@ -282,9 +292,7 @@ describe('relay routes', () => {
       expect(body.quotedHostFeeMist).toBe('500');
       expect(body.protocolFlatFeeMist).toBe('100');
 
-      assertResponseKeys(body, 'relayConfigResponse');
-      assertArrayItemKeys(body, 'supportedSettlementSwapPaths', 'singleHopSettlementSwapPath');
-      assertArrayItemKeys(body.supportedSettlementSwapPaths[0], 'hops', 'deepBookPoolHop');
+      expect(parseRelayConfigResponse(body)).toEqual(body);
     });
 
     it('returns qfb pool with correct settlementSwapDirection and swapDirection', async () => {
@@ -376,7 +384,7 @@ describe('relay routes', () => {
       async ({ code, error }) => {
         const coreApi = await import('@stelis/core-api');
         vi.mocked(buildSponsorUnavailableResponse).mockReturnValueOnce({
-          body: { error, code },
+          errorCode: code,
           headers: {},
         });
 
@@ -454,7 +462,7 @@ describe('relay routes', () => {
       expect(res.status).toBe(400);
       const body = await res.json();
       expect(body.code).toBe('BAD_REQUEST');
-      expect(body.error).toBe('senderAddress must be a valid Sui address');
+      expect(body.error).toBe('Invalid request');
     });
 
     it('canonicalizes short senderAddress before passing to handlePrepare', async () => {
@@ -485,8 +493,7 @@ describe('relay routes', () => {
       const body = await res.json();
       expect(body.nonce).toBe('1');
 
-      assertResponseKeys(body, 'prepareResponse');
-      assertNestedObjectKeys(body, 'cost', 'prepareCost');
+      expect(parseRelayPrepareResponse(body)).toEqual(body);
     });
 
     it('returns 422 with DRY_RUN_FAILED code on PrepareValidationError', async () => {
@@ -874,7 +881,7 @@ describe('relay routes', () => {
       async ({ code, error }) => {
         const coreApi = await import('@stelis/core-api');
         vi.mocked(buildSponsorUnavailableResponse).mockReturnValueOnce({
-          body: { error, code },
+          errorCode: code,
           headers: {},
         });
 
@@ -971,7 +978,7 @@ describe('relay routes', () => {
       expect(body.digest).toBe('mock-digest');
       expect(mockCtx.host.sponsorPool.leaseStatus).not.toHaveBeenCalled();
 
-      assertResponseKeys(body, 'sponsorResponse');
+      expect(parseRelaySponsorResponse(body)).toEqual(body);
     });
   });
 

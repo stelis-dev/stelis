@@ -3,7 +3,11 @@
  * SponsoredExecution prepare runner.
  */
 import type { SuiGrpcClient } from '@mysten/sui/grpc';
-import type { PromotionPrepareErrorCode } from '@stelis/contracts';
+import type {
+  PromotionPrepareErrorCode,
+  PromotionPrepareRequest,
+  PromotionPrepareResponse,
+} from '@stelis/contracts';
 import type { OnchainConfig } from '@stelis/core-relay';
 import type { PromotionStoreAdapter } from './promotionStore.js';
 import type { PromotionExecutionLedger } from './executionLedger.js';
@@ -54,27 +58,13 @@ export interface PromotionPrepareContext {
 }
 
 /** Request parameters for promotion prepare. */
-export interface PromotionPrepareParams {
+interface PromotionPrepareParams extends PromotionPrepareRequest {
   /** Promotion ID (from path parameter). */
   promotionId: string;
-  /** User's Sui wallet address. */
-  senderAddress: string;
-  /** User's TransactionKind (base64). */
-  txKindBytes: string;
   /** Pre-verified developer identity (route owns crypto verification). */
   verifiedIdentity: VerifiedDeveloperIdentity;
   /** Client IP for tracking. */
   clientIp: string;
-}
-
-/** Successful promotion prepare result. */
-export interface PromotionPrepareResult {
-  /** Full transaction bytes — user-signable (base64). */
-  txBytes: string;
-  /** Unique receipt ID. */
-  receiptId: string;
-  /** Estimated gas cost (MIST) — the amount reserved from budget+allowance. */
-  estimatedGasMist: string;
 }
 
 // ─────────────────────────────────────────────
@@ -113,7 +103,7 @@ function reservationFailureCode(reason: ReserveFailureReason): PromotionPrepareE
 export async function handlePromotionPrepare(
   ctx: PromotionPrepareContext,
   params: PromotionPrepareParams,
-): Promise<PromotionPrepareResult> {
+): Promise<PromotionPrepareResponse> {
   const options = {
     context: {
       sui: ctx.sui,

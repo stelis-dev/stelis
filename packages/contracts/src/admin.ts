@@ -65,7 +65,7 @@ export type SponsorSlotState = (typeof SPONSOR_SLOT_STATES)[number];
 /**
  * Sponsor operations availability gate error code. Emitted by the request gate.
  * HTTP-response enum aligned with the sponsor operations sub-range of the sponsor error
- * codes tracked in docs/schemas/relay-api.schema.json.
+ * codes owned by the Host wire error vocabulary.
  *
  * `SPONSOR_REFILL_ACCOUNT_UNHEALTHY` is emitted only when no sponsor slot is
  * healthy and the sponsor refill account is unhealthy. Prepare admission can

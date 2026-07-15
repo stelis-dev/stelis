@@ -63,7 +63,7 @@ token-balance eligibility rule.
 200, maximum 500). Set `STELIS_ONCHAIN_REQUIRE_ZERO_SUI_FOR_SPONSORED=true` to
 make the script reject a sponsored run whenever the test wallet holds SUI.
 
-The script retries only the current uncoded rate-limit response with a numeric
+The script retries only the current coded `RATE_LIMITED` response with a numeric
 `retryAfterMs`. Quota and abuse responses are surfaced instead of being treated
 as rate limits.
 

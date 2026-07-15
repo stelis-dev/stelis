@@ -5,7 +5,6 @@ export { ClientIpResolutionError, resolveClientIp, parseTrustedProxyHops } from 
 export {
   BlockCheckUnavailableError,
   checkBlockedRequest,
-  toBlockedError,
 } from './abuseBlocking.js';
 
 // Context

@@ -12,9 +12,12 @@ import {
   updatePromotion,
   transitionPromotionStatus,
   deletePromotion,
-  type PromotionRecord,
-  type PromotionStatus,
 } from '../api/client';
+import {
+  isPromotionStatus,
+  type AdminPromotionRecord,
+  type PromotionStatus,
+} from '@stelis/contracts';
 
 const STATUS_COLORS: Record<PromotionStatus, string> = {
   draft: '#94a3b8',
@@ -93,7 +96,7 @@ export interface CreateFormState {
   description: string;
   maxParticipants: string;
   perUserGasAllowanceMist: string;
-  postClaimUseWindowDays: string;
+  postClaimUseWindowMs: string;
   claimDeadlineAt: string;
 }
 
@@ -102,7 +105,7 @@ const EMPTY_FORM: CreateFormState = {
   description: '',
   maxParticipants: '',
   perUserGasAllowanceMist: '',
-  postClaimUseWindowDays: '0',
+  postClaimUseWindowMs: '0',
   claimDeadlineAt: '',
 };
 
@@ -120,7 +123,6 @@ type FormValidationResult =
   | { ok: false; message: string };
 
 const INTEGER_REGEX = /^-?\d+$/;
-const DAY_MS = 86_400_000;
 
 /**
  * Parse a non-empty decimal integer string into a safe `number`. Rejects
@@ -134,12 +136,6 @@ export function parseSafeIntegerString(raw: string): number | null {
   const n = Number(raw);
   if (!Number.isSafeInteger(n)) return null;
   return n;
-}
-
-function postClaimWindowMsToDaysInput(ms: number): string {
-  if (ms <= 0) return '0';
-  if (!Number.isSafeInteger(ms) || ms % DAY_MS !== 0) return '';
-  return String(ms / DAY_MS);
 }
 
 /**
@@ -183,19 +179,12 @@ export function validatePromotionForm(form: CreateFormState): FormValidationResu
     return { ok: false, message: 'Per-user gas allowance must be positive (MIST)' };
   }
 
-  const daysRaw = form.postClaimUseWindowDays.trim();
-  const postClaimDays = parseSafeIntegerString(daysRaw);
-  if (postClaimDays === null || postClaimDays < 0) {
+  const windowRaw = form.postClaimUseWindowMs.trim();
+  const postClaimUseWindowMs = parseSafeIntegerString(windowRaw);
+  if (postClaimUseWindowMs === null || postClaimUseWindowMs < 0) {
     return {
       ok: false,
-      message: 'Post-claim use window (days) must be a non-negative safe integer (≤ 2^53 − 1)',
-    };
-  }
-  const postClaimUseWindowMs = postClaimDays * DAY_MS;
-  if (!Number.isSafeInteger(postClaimUseWindowMs)) {
-    return {
-      ok: false,
-      message: 'Post-claim use window overflows safe integer range — use fewer days',
+      message: 'Post-claim use window (ms) must be a non-negative safe integer (≤ 2^53 − 1)',
     };
   }
 
@@ -222,7 +211,7 @@ export function validatePromotionForm(form: CreateFormState): FormValidationResu
 }
 
 export function PromotionsPage() {
-  const [promotions, setPromotions] = useState<PromotionRecord[]>([]);
+  const [promotions, setPromotions] = useState<AdminPromotionRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<PromotionStatus | ''>('');
@@ -354,7 +343,7 @@ export function PromotionsPage() {
     }
   };
 
-  const startEdit = (p: PromotionRecord) => {
+  const startEdit = (p: AdminPromotionRecord) => {
     editingIdRef.current = p.promotionId;
     setEditingId(p.promotionId);
     setShowCreate(false);
@@ -363,7 +352,7 @@ export function PromotionsPage() {
       description: p.description,
       maxParticipants: String(p.maxParticipants),
       perUserGasAllowanceMist: p.perUserGasAllowanceMist,
-      postClaimUseWindowDays: postClaimWindowMsToDaysInput(p.postClaimUseWindowMs),
+      postClaimUseWindowMs: String(p.postClaimUseWindowMs),
       claimDeadlineAt: p.claimDeadlineAt ? p.claimDeadlineAt.slice(0, 16) : '',
     });
   };
@@ -425,7 +414,10 @@ export function PromotionsPage() {
         <select
           id="promo-status-filter"
           value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value as PromotionStatus | '')}
+          onChange={(event) => {
+            const value = event.target.value;
+            if (value === '' || isPromotionStatus(value)) setStatusFilter(value);
+          }}
           className="admin-select"
         >
           <option value="">All Statuses</option>
@@ -472,9 +464,6 @@ export function PromotionsPage() {
             {!editingId && (
               <div style={{ fontSize: 13, color: '#94a3b8', padding: '4px 0' }}>
                 Type: <strong>Gas Sponsorship</strong>
-                <span style={{ fontSize: 11, marginLeft: 8 }}>
-                  (only creatable type in this version)
-                </span>
               </div>
             )}
             <label htmlFor="promo-max">
@@ -520,13 +509,13 @@ export function PromotionsPage() {
               )}
             </div>
             <label htmlFor="promo-post-claim">
-              Post-Claim Use Window (days, 0 = unlimited)
+              Post-Claim Use Window (milliseconds, 0 = unlimited)
               <input
                 id="promo-post-claim"
                 type="number"
                 className="admin-input"
-                value={form.postClaimUseWindowDays}
-                onChange={(e) => setForm({ ...form, postClaimUseWindowDays: e.target.value })}
+                value={form.postClaimUseWindowMs}
+                onChange={(e) => setForm({ ...form, postClaimUseWindowMs: e.target.value })}
                 min="0"
               />
             </label>

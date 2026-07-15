@@ -119,13 +119,13 @@ export function normalizeApiError(err: StelisApiException): StelisSponsoredError
   if (
     err.code === 'SLIPPAGE_EXCEEDED' ||
     err.code === 'CLAIM_WOULD_EXCEED_MAX' ||
-    err.code === 'SLIPPAGE_QUERY_FAILED' ||
+    err.code === 'MARKET_QUOTE_UNAVAILABLE' ||
     err.code === 'SLIPPAGE_CONVERGENCE_FAILED' ||
     err.code === 'SPREAD_EXCEEDED'
   ) {
     return new StelisSponsoredError(
       'TRANSACTION_FAILED',
-      err.code === 'SLIPPAGE_QUERY_FAILED'
+      err.code === 'MARKET_QUOTE_UNAVAILABLE'
         ? 'Unable to verify swap conditions. Please try again.'
         : 'Transaction exceeds safety limits. Please try a smaller amount.',
       err,
@@ -148,6 +148,6 @@ export function normalizeApiError(err: StelisApiException): StelisSponsoredError
       err.meta,
     );
   }
-  // Preserve a current Host code, or UNKNOWN for an invalid/uncoded Host response.
+  // Preserve the validated current Host code.
   return new StelisSponsoredError(err.code, err.message, err, err.meta);
 }

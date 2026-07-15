@@ -2,11 +2,9 @@
  * Promotion Registry Store — CRUD store for promotion definitions.
  *
  * Stores operator-configured promotion records and lifecycle state.
- * Adapter-only module: value types (`Promotion`, `PromotionType`,
- * `PromotionStatus`, budget helper) live in `domain.ts`. This file owns the
- * adapter interface, its input DTOs, the status-transition constant + guard,
- * activation prerequisite check, and activation/transition errors — all
- * tightly coupled to the store API.
+ * Adapter-only module: value types live in `domain.ts`, Admin request shapes
+ * come from `@stelis/contracts`, and this file owns persistence plus current
+ * lifecycle transitions.
  *
  * Key layout (Redis):
  *   stelis:promo:{promotionId}         → JSON(Promotion)
@@ -19,36 +17,27 @@
  * @module promotionStore
  */
 
+import type {
+  AdminPromotionCreateRequest,
+  AdminPromotionUpdateRequest,
+} from '@stelis/contracts';
+import {
+  parseAdminPromotionCreateRequest,
+  parseAdminPromotionUpdateRequest,
+} from '@stelis/contracts';
 import type { RedisClientLike } from '../store/redisClient.js';
 import type { Promotion, PromotionStatus } from './domain.js';
-import { MAX_PROMOTION_LEDGER_VALUE_MIST } from './executionLedger.js';
+import { parsePromotionLedgerBudget } from './executionLedgerValueGuards.js';
 
 // ─────────────────────────────────────────────
-// Adapter-local input DTOs
+// Store contract
 // ─────────────────────────────────────────────
 
-/**
- * Input for creating a new promotion. Fields that are auto-generated
- * (promotionId, createdAt, updatedAt, status, pauseReason, archiveReason) are excluded.
- */
-export type CreatePromotionInput = Omit<
-  Promotion,
-  'promotionId' | 'status' | 'createdAt' | 'updatedAt' | 'pauseReason' | 'archiveReason'
->;
-
-/**
- * Input for updating an existing promotion. Only mutable fields.
- * Status transitions are handled separately via dedicated methods.
- */
-export interface UpdatePromotionInput {
-  displayName?: string;
-  description?: string;
-  maxParticipants?: number;
-  perUserGasAllowanceMist?: string;
-  claimDeadlineAt?: string | null;
-  postClaimUseWindowMs?: number;
-  startAt?: string | null;
-}
+/** Atomic outcome of deleting the current Promotion record. */
+export type PromotionDeleteResult =
+  | { status: 'deleted' }
+  | { status: 'not_found' }
+  | { status: 'not_deletable' };
 
 // ─────────────────────────────────────────────
 // Store Interface
@@ -56,7 +45,7 @@ export interface UpdatePromotionInput {
 
 export interface PromotionStoreAdapter {
   /** Create a new promotion. Returns the created record. */
-  create(input: CreatePromotionInput): Promise<Promotion>;
+  create(input: AdminPromotionCreateRequest): Promise<Promotion>;
 
   /** Get a promotion by ID. Returns null if not found. */
   get(promotionId: string): Promise<Promotion | null>;
@@ -65,7 +54,7 @@ export interface PromotionStoreAdapter {
   list(filter?: { status?: PromotionStatus }): Promise<Promotion[]>;
 
   /** Update mutable fields. Returns updated record or null if not found. */
-  update(promotionId: string, input: UpdatePromotionInput): Promise<Promotion | null>;
+  update(promotionId: string, input: AdminPromotionUpdateRequest): Promise<Promotion | null>;
 
   /**
    * Transition promotion status.
@@ -78,8 +67,8 @@ export interface PromotionStoreAdapter {
     reason?: string,
   ): Promise<Promotion | null>;
 
-  /** Delete a promotion. Only allowed for draft status. Returns true if deleted. */
-  delete(promotionId: string): Promise<boolean>;
+  /** Delete a draft promotion without collapsing absence and lifecycle rejection. */
+  delete(promotionId: string): Promise<PromotionDeleteResult>;
 }
 
 // ─────────────────────────────────────────────
@@ -94,8 +83,8 @@ export interface PromotionStoreAdapter {
  * - paused → active
  * - paused → archived
  *
- * Co-located with the store because transition validation, activation
- * prerequisite checks, and the adapter interface are all tightly bound.
+ * Co-located with the store because transition validation and persistence
+ * must apply as one record mutation.
  */
 export const VALID_STATUS_TRANSITIONS: Readonly<
   Record<PromotionStatus, readonly PromotionStatus[]>
@@ -117,13 +106,6 @@ export class InvalidStatusTransitionError extends Error {
   }
 }
 
-export class PromotionActivationError extends Error {
-  constructor(reason: string) {
-    super(`Cannot activate promotion: ${reason}`);
-    this.name = 'PromotionActivationError';
-  }
-}
-
 /**
  * Economic and temporal fields that are frozen once a promotion leaves `draft`.
  * Presentational fields (`displayName`, `description`) remain mutable.
@@ -134,7 +116,7 @@ export const IMMUTABLE_AFTER_DRAFT_FIELDS = [
   'claimDeadlineAt',
   'postClaimUseWindowMs',
   'startAt',
-] as const satisfies readonly (keyof UpdatePromotionInput)[];
+] as const satisfies readonly (keyof AdminPromotionUpdateRequest)[];
 
 export type ImmutableAfterDraftField = (typeof IMMUTABLE_AFTER_DRAFT_FIELDS)[number];
 
@@ -166,10 +148,13 @@ export class PromotionCurrentConflictError extends Error {
  * Throws `PromotionFieldImmutableError` if any immutable field is present in
  * `input` while the existing record is past the `draft` status.
  *
- * Shape validation (positive integer, valid bigint string) lives at the
- * transport boundary. This helper defines the freeze rule.
+ * The contracts wire parser owns request grammar. The store independently
+ * applies the shared ledger-budget invariant after this freeze check.
  */
-export function ensureUpdatableFields(existing: Promotion, input: UpdatePromotionInput): void {
+export function ensureUpdatableFields(
+  existing: Promotion,
+  input: AdminPromotionUpdateRequest,
+): void {
   if (existing.status === 'draft') return;
   const attempted: ImmutableAfterDraftField[] = [];
   for (const field of IMMUTABLE_AFTER_DRAFT_FIELDS) {
@@ -180,107 +165,51 @@ export function ensureUpdatableFields(existing: Promotion, input: UpdatePromotio
   }
 }
 
-/**
- * Validates prerequisites for activating a promotion.
- * Called during draft→active and paused→active transitions.
- * Throws PromotionActivationError if prerequisites are not met.
- *
- * Checks:
- * 1. gas_sponsorship: maxParticipants must be > 0 (prevent uncapped commitments)
- * 2. gas_sponsorship: perUserGasAllowanceMist must be > 0
- * 3. gas_sponsorship: perUserGasAllowanceMist must be ≤
- *    `MAX_PROMOTION_LEDGER_VALUE_MIST` so the value fits Redis-Lua int64
- *    arithmetic (see `executionLedger.ts` constant comment for why the
- *    bound is `Number.MAX_SAFE_INTEGER` rather than the int64 ceiling).
- * 4. gas_sponsorship: finite total budget
- *    `maxParticipants × perUserGasAllowanceMist` must be ≤
- *    `MAX_PROMOTION_LEDGER_VALUE_MIST` so the budget keys (`budget:avail`,
- *    `budget:res_total`, `budget:con_total`) stay within the safe range.
- *
- * Note: target enforcement is global via STUDIO_ALLOWED_TARGETS (not per-promotion).
- */
-export function validateActivationPrerequisites(record: Promotion): void {
-  if (record.type === 'gas_sponsorship') {
-    if (!Number.isSafeInteger(record.maxParticipants) || record.maxParticipants <= 0) {
-      throw new PromotionActivationError(
-        'gas_sponsorship promotions must have maxParticipants > 0 to prevent uncapped budget commitments',
-      );
-    }
-    if (!/^(?:0|[1-9]\d*)$/.test(record.perUserGasAllowanceMist)) {
-      throw new PromotionActivationError(
-        'gas_sponsorship promotions must have perUserGasAllowanceMist as a decimal integer string',
-      );
-    }
-    const perUser = BigInt(record.perUserGasAllowanceMist);
-    if (perUser <= 0n) {
-      throw new PromotionActivationError(
-        'gas_sponsorship promotions must have perUserGasAllowanceMist > 0',
-      );
-    }
-    if (perUser > MAX_PROMOTION_LEDGER_VALUE_MIST) {
-      throw new PromotionActivationError(
-        `gas_sponsorship perUserGasAllowanceMist (${perUser.toString()}) must be ≤ ${MAX_PROMOTION_LEDGER_VALUE_MIST.toString()} (Number.MAX_SAFE_INTEGER) so Redis-Lua int64 arithmetic stays exact`,
-      );
-    }
-    const totalBudget = BigInt(record.maxParticipants) * perUser;
-    if (totalBudget > MAX_PROMOTION_LEDGER_VALUE_MIST) {
-      throw new PromotionActivationError(
-        `gas_sponsorship total budget (maxParticipants × perUserGasAllowanceMist = ${totalBudget.toString()}) must be ≤ ${MAX_PROMOTION_LEDGER_VALUE_MIST.toString()} (Number.MAX_SAFE_INTEGER) so Redis-Lua int64 arithmetic stays exact`,
-      );
-    }
-  }
-}
-
 function createPromotionRecord(
-  input: CreatePromotionInput,
+  input: AdminPromotionCreateRequest,
   promotionId: string,
   now: string,
 ): Promotion {
-  return {
+  const currentInput = parseAdminPromotionCreateRequest(input);
+  const record: Promotion = {
     promotionId,
-    type: input.type,
-    displayName: input.displayName,
-    description: input.description,
+    type: currentInput.type,
+    displayName: currentInput.displayName,
+    description: currentInput.description ?? '',
     status: 'draft',
-    maxParticipants: input.maxParticipants,
-    perUserGasAllowanceMist: input.perUserGasAllowanceMist,
-    claimDeadlineAt: input.claimDeadlineAt,
-    postClaimUseWindowMs: input.postClaimUseWindowMs,
-    startAt: input.startAt,
+    maxParticipants: currentInput.maxParticipants,
+    perUserGasAllowanceMist: currentInput.perUserGasAllowanceMist,
+    claimDeadlineAt: currentInput.claimDeadlineAt ?? null,
+    postClaimUseWindowMs: currentInput.postClaimUseWindowMs ?? 0,
+    startAt: currentInput.startAt ?? null,
     pauseReason: null,
     archiveReason: null,
     createdAt: now,
     updatedAt: now,
   };
+  parsePromotionLedgerBudget(record.maxParticipants, record.perUserGasAllowanceMist);
+  return record;
 }
 
-function snapshotUpdatePromotionInput(input: UpdatePromotionInput): UpdatePromotionInput {
-  const snapshot: UpdatePromotionInput = {};
-  if (input.displayName !== undefined) snapshot.displayName = input.displayName;
-  if (input.description !== undefined) snapshot.description = input.description;
-  if (input.maxParticipants !== undefined) snapshot.maxParticipants = input.maxParticipants;
-  if (input.perUserGasAllowanceMist !== undefined) {
-    snapshot.perUserGasAllowanceMist = input.perUserGasAllowanceMist;
-  }
-  if (input.claimDeadlineAt !== undefined) snapshot.claimDeadlineAt = input.claimDeadlineAt;
-  if (input.postClaimUseWindowMs !== undefined) {
-    snapshot.postClaimUseWindowMs = input.postClaimUseWindowMs;
-  }
-  if (input.startAt !== undefined) snapshot.startAt = input.startAt;
-  return snapshot;
+function snapshotUpdatePromotionInput(
+  input: AdminPromotionUpdateRequest,
+): AdminPromotionUpdateRequest {
+  return parseAdminPromotionUpdateRequest(input);
 }
 
 function updatePromotionRecord(
   existing: Promotion,
-  input: UpdatePromotionInput,
+  input: AdminPromotionUpdateRequest,
   now: string,
 ): Promotion {
   ensureUpdatableFields(existing, input);
-  return {
+  const updated: Promotion = {
     ...existing,
     ...input,
     updatedAt: now,
   };
+  parsePromotionLedgerBudget(updated.maxParticipants, updated.perUserGasAllowanceMist);
+  return updated;
 }
 
 function transitionPromotionRecord(
@@ -292,7 +221,9 @@ function transitionPromotionRecord(
   if (!isValidTransition(existing.status, newStatus)) {
     throw new InvalidStatusTransitionError(existing.status, newStatus);
   }
-  if (newStatus === 'active') validateActivationPrerequisites(existing);
+  if (newStatus === 'active') {
+    parsePromotionLedgerBudget(existing.maxParticipants, existing.perUserGasAllowanceMist);
+  }
   return {
     ...existing,
     status: newStatus,
@@ -325,7 +256,7 @@ export class MemoryPromotionStore implements PromotionStoreAdapter {
     return `promo-test-${this._counter.toString().padStart(4, '0')}`;
   }
 
-  async create(input: CreatePromotionInput): Promise<Promotion> {
+  async create(input: AdminPromotionCreateRequest): Promise<Promotion> {
     const promotionId = this.generateId();
     const now = new Date().toISOString();
     const record = createPromotionRecord(input, promotionId, now);
@@ -347,7 +278,10 @@ export class MemoryPromotionStore implements PromotionStoreAdapter {
     return filtered.map(clonePromotion);
   }
 
-  async update(promotionId: string, input: UpdatePromotionInput): Promise<Promotion | null> {
+  async update(
+    promotionId: string,
+    input: AdminPromotionUpdateRequest,
+  ): Promise<Promotion | null> {
     const now = new Date().toISOString();
     const patch = snapshotUpdatePromotionInput(input);
     const existing = this._records.get(promotionId);
@@ -370,11 +304,12 @@ export class MemoryPromotionStore implements PromotionStoreAdapter {
     return clonePromotion(updated);
   }
 
-  async delete(promotionId: string): Promise<boolean> {
+  async delete(promotionId: string): Promise<PromotionDeleteResult> {
     const decision = decidePromotionDelete(this._records.get(promotionId) ?? null);
-    if (decision !== 'delete') return false;
+    if (decision === 'not_found') return { status: 'not_found' };
+    if (decision === 'not_deletable') return { status: 'not_deletable' };
     this._records.delete(promotionId);
-    return true;
+    return { status: 'deleted' };
   }
 }
 
@@ -430,7 +365,7 @@ export class RedisPromotionStore implements PromotionStoreAdapter {
     return raw === null ? null : { raw, record: JSON.parse(raw) as Promotion };
   }
 
-  async create(input: CreatePromotionInput): Promise<Promotion> {
+  async create(input: AdminPromotionCreateRequest): Promise<Promotion> {
     const promotionId = crypto.randomUUID();
     const now = new Date().toISOString();
     const record = createPromotionRecord(input, promotionId, now);
@@ -464,7 +399,10 @@ export class RedisPromotionStore implements PromotionStoreAdapter {
       .map((raw) => JSON.parse(raw) as Promotion);
   }
 
-  async update(promotionId: string, input: UpdatePromotionInput): Promise<Promotion | null> {
+  async update(
+    promotionId: string,
+    input: AdminPromotionUpdateRequest,
+  ): Promise<Promotion | null> {
     const now = new Date().toISOString();
     const patch = snapshotUpdatePromotionInput(input);
     const current = await this._readSerialized(promotionId);
@@ -507,7 +445,7 @@ export class RedisPromotionStore implements PromotionStoreAdapter {
     throw new Error(`Unexpected STATUS_LUA result: ${String(result)}`);
   }
 
-  async delete(promotionId: string): Promise<boolean> {
+  async delete(promotionId: string): Promise<PromotionDeleteResult> {
     const expectedRaw = await this._client.get(this._recordKey(promotionId));
     const decision = decidePromotionDelete(
       expectedRaw === null ? null : (JSON.parse(expectedRaw) as Promotion),
@@ -519,19 +457,19 @@ export class RedisPromotionStore implements PromotionStoreAdapter {
     );
     if (result === 'OK') {
       if (decision !== 'delete') throw new Error('DELETE_LUA contradicted the current record');
-      return true;
+      return { status: 'deleted' };
     }
     if (result === 'NOT_FOUND') {
       if (decision !== 'not_found') {
         throw new PromotionCurrentConflictError(promotionId, 'delete');
       }
-      return false;
+      return { status: 'not_found' };
     }
     if (result === 'NOT_DELETABLE') {
       if (decision !== 'not_deletable') {
         throw new Error('DELETE_LUA contradicted the current record');
       }
-      return false;
+      return { status: 'not_deletable' };
     }
     if (result === 'CURRENT_CONFLICT') {
       throw new PromotionCurrentConflictError(promotionId, 'delete');

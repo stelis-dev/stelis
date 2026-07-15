@@ -322,7 +322,7 @@ async function setup(opts?: {
     },
     list: async () => [],
     update: async () => null,
-    delete: async () => true,
+    delete: async () => ({ status: 'deleted' as const }),
     transitionStatus: async () => null,
   } satisfies import('../src/studio/promotionStore.js').PromotionStoreAdapter;
 
@@ -1371,7 +1371,7 @@ describe('handlePromotionSponsor', () => {
       },
       list: async () => [],
       update: async () => null,
-      delete: async () => true,
+      delete: async () => ({ status: 'deleted' as const }),
       transitionStatus: async () => null,
     } satisfies import('../src/studio/promotionStore.js').PromotionStoreAdapter;
 
@@ -1470,7 +1470,7 @@ describe('handlePromotionSponsor', () => {
       },
       list: async () => [],
       update: async () => null,
-      delete: async () => true,
+      delete: async () => ({ status: 'deleted' as const }),
       transitionStatus: async () => null,
     } satisfies import('../src/studio/promotionStore.js').PromotionStoreAdapter;
 

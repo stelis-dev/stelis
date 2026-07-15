@@ -23,16 +23,16 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  getSponsoredLogs,
-  type SponsoredExecutionAggregate,
-  type SponsoredExecutionLogEntry,
-  type SponsoredLogsMode,
-} from '../api/client';
+import { getSponsoredLogs } from '../api/client';
+import type {
+  AdminSponsoredExecutionAggregate,
+  AdminSponsoredExecutionLogEntry,
+  AdminSponsoredLogsMode,
+} from '@stelis/contracts';
 import { SponsoredLogsKpi } from '../components/SponsoredLogsKpi';
 import { mistToSui, truncateAddress } from '../utils';
 
-const MODE_OPTIONS: readonly { value: SponsoredLogsMode; label: string }[] = [
+const MODE_OPTIONS: readonly { value: AdminSponsoredLogsMode; label: string }[] = [
   { value: 'all', label: 'All' },
   { value: 'generic', label: 'Generic' },
   { value: 'promotion', label: 'Promotion' },
@@ -41,13 +41,13 @@ const MODE_OPTIONS: readonly { value: SponsoredLogsMode; label: string }[] = [
 const REFRESH_INTERVAL_MS = 30_000;
 
 export function SponsoredLogsPage() {
-  const [mode, setMode] = useState<SponsoredLogsMode>('all');
-  const [summary, setSummary] = useState<SponsoredExecutionAggregate | null>(null);
-  const [entries, setEntries] = useState<SponsoredExecutionLogEntry[]>([]);
+  const [mode, setMode] = useState<AdminSponsoredLogsMode>('all');
+  const [summary, setSummary] = useState<AdminSponsoredExecutionAggregate | null>(null);
+  const [entries, setEntries] = useState<AdminSponsoredExecutionLogEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchData = useCallback(async (m: SponsoredLogsMode) => {
+  const fetchData = useCallback(async (m: AdminSponsoredLogsMode) => {
     setLoading(true);
     try {
       const res = await getSponsoredLogs(m);
@@ -113,8 +113,8 @@ function ModeFilter({
   value,
   onChange,
 }: {
-  readonly value: SponsoredLogsMode;
-  readonly onChange: (next: SponsoredLogsMode) => void;
+  readonly value: AdminSponsoredLogsMode;
+  readonly onChange: (next: AdminSponsoredLogsMode) => void;
 }) {
   return (
     <div
@@ -162,7 +162,7 @@ function SponsoredLogsTable({
   entries,
   loading,
 }: {
-  readonly entries: SponsoredExecutionLogEntry[];
+  readonly entries: AdminSponsoredExecutionLogEntry[];
   readonly loading: boolean;
 }) {
   if (entries.length === 0) {
@@ -195,7 +195,7 @@ function SponsoredLogsTable({
   );
 }
 
-function SponsoredLogsRow({ entry }: { readonly entry: SponsoredExecutionLogEntry }) {
+function SponsoredLogsRow({ entry }: { readonly entry: AdminSponsoredExecutionLogEntry }) {
   const isUnknown = entry.economicsStatus === 'unknown';
   const negativeNet = !isUnknown && entry.hostNetMist?.startsWith('-');
   // Post-submit accounting failures (e.g. SPONSOR_EXEC_GAS_USED_MISSING,
@@ -265,7 +265,7 @@ function SponsoredLogsRow({ entry }: { readonly entry: SponsoredExecutionLogEntr
   );
 }
 
-function useIdentityLabel(entry: SponsoredExecutionLogEntry): string {
+function useIdentityLabel(entry: AdminSponsoredExecutionLogEntry): string {
   return useMemo(() => {
     if (entry.mode === 'promotion') {
       const promo = entry.promotionId ?? '—';

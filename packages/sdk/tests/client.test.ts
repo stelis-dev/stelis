@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { StelisClient, StelisApiException } from '../src/client.js';
 import type { RelayConfigResponse } from '../src/types.js';
+import { hostErrorPublicMessage, type HostErrorCode } from '@stelis/contracts';
 import { makeRelayPrepareRequest } from './helpers/currentFixtures.js';
 
 // Mock global fetch
@@ -377,12 +378,23 @@ describe('StelisClient', () => {
         request: () => Promise<unknown>;
       }> = [
         {
-          body: { error: 'Current error', code: 'CONFIG_UNAVAILABLE' },
+          body: { error: hostErrorPublicMessage('INTERNAL_ERROR'), code: 'INTERNAL_ERROR' },
+          status: 500,
+          request: () => client.getStatus(),
+        },
+        {
+          body: {
+            error: hostErrorPublicMessage('CONFIG_UNAVAILABLE'),
+            code: 'CONFIG_UNAVAILABLE',
+          },
           status: 503,
           request: () => client.getConfig(),
         },
         {
-          body: { error: 'Current error', code: 'INSUFFICIENT_BALANCE' },
+          body: {
+            error: hostErrorPublicMessage('INSUFFICIENT_BALANCE'),
+            code: 'INSUFFICIENT_BALANCE',
+          },
           status: 422,
           request: () =>
             client.prepare(
@@ -395,7 +407,7 @@ describe('StelisClient', () => {
         },
         {
           body: {
-            error: 'Current error',
+            error: hostErrorPublicMessage('SPONSOR_ONCHAIN_FAILED'),
             code: 'SPONSOR_ONCHAIN_FAILED',
             digest: '0xfailed',
           },
@@ -404,7 +416,7 @@ describe('StelisClient', () => {
             client.sponsor({ txBytes: 'tx', userSignature: 'sig', receiptId: 'receipt' }),
         },
         {
-          body: { error: 'Current error', code: 'NOT_CLAIMED' },
+          body: { error: hostErrorPublicMessage('NOT_CLAIMED'), code: 'NOT_CLAIMED' },
           status: 403,
           request: () =>
             client.promotionPrepare(
@@ -414,7 +426,11 @@ describe('StelisClient', () => {
             ),
         },
         {
-          body: { error: 'Current error', code: 'ONCHAIN_REVERT', digest: '0xpromotion' },
+          body: {
+            error: hostErrorPublicMessage('ONCHAIN_REVERT'),
+            code: 'ONCHAIN_REVERT',
+            digest: '0xpromotion',
+          },
           status: 422,
           request: () =>
             client.promotionSponsor(
@@ -424,12 +440,15 @@ describe('StelisClient', () => {
             ),
         },
         {
-          body: { error: 'Current error', code: 'AUTH_FAILED' },
+          body: { error: hostErrorPublicMessage('AUTH_FAILED'), code: 'AUTH_FAILED' },
           status: 401,
           request: () => client.listPromotions('jwt'),
         },
         {
-          body: { error: 'Current error', code: 'CLIENT_IP_UNRESOLVED' },
+          body: {
+            error: hostErrorPublicMessage('CLIENT_IP_UNRESOLVED'),
+            code: 'CLIENT_IP_UNRESOLVED',
+          },
           status: 400,
           request: () => client.getPromotionDetail('promotion', 'jwt'),
         },
@@ -501,32 +520,37 @@ describe('StelisClient', () => {
       ];
 
       for (const { code, status, request } of wrongRouteResponses) {
-        mockFetch.mockResolvedValueOnce(jsonResponse({ error: 'Wrong route', code }, status));
-        await expect(request()).rejects.toMatchObject({
-          code: 'UNKNOWN',
-          status,
-          message: `Relay API returned a non-current error response (HTTP ${status})`,
-        });
+        mockFetch.mockResolvedValueOnce(
+          jsonResponse({ error: hostErrorPublicMessage(code as HostErrorCode), code }, status),
+        );
+        await expect(request()).rejects.toThrow(
+          `Stelis Host returned a non-current error response (HTTP ${status})`,
+        );
       }
     });
 
     it('rejects a current code paired with the wrong HTTP status', async () => {
       mockFetch.mockResolvedValueOnce(
-        jsonResponse({ error: 'Wrong status', code: 'AUTH_FAILED' }, 422),
+        jsonResponse({ error: hostErrorPublicMessage('AUTH_FAILED'), code: 'AUTH_FAILED' }, 422),
       );
-      await expect(client.listPromotions('jwt')).rejects.toMatchObject({
-        code: 'UNKNOWN',
-        status: 422,
-      });
+      await expect(client.listPromotions('jwt')).rejects.toThrow(
+        'Stelis Host returned a non-current error response (HTTP 422)',
+      );
     });
 
     it('rejects a known on-chain terminal code without its required digest', async () => {
       mockFetch.mockResolvedValueOnce(
-        jsonResponse({ error: 'Missing identity', code: 'SPONSOR_ONCHAIN_FAILED' }, 422),
+        jsonResponse(
+          {
+            error: hostErrorPublicMessage('SPONSOR_ONCHAIN_FAILED'),
+            code: 'SPONSOR_ONCHAIN_FAILED',
+          },
+          422,
+        ),
       );
       await expect(
         client.sponsor({ txBytes: 'tx', userSignature: 'sig', receiptId: 'receipt' }),
-      ).rejects.toMatchObject({ code: 'UNKNOWN', status: 422 });
+      ).rejects.toThrow('Stelis Host returned a non-current error response (HTTP 422)');
     });
 
     it('does not echo a non-current remote error body', async () => {
@@ -540,31 +564,28 @@ describe('StelisClient', () => {
 
       try {
         await client.getStatus();
-        expect.fail('Expected StelisApiException');
+        expect.fail('Expected a Host contract error');
       } catch (e) {
-        const err = e as StelisApiException;
-        expect(err).toBeInstanceOf(StelisApiException);
-        expect(err.code).toBe('UNKNOWN');
-        expect(err.status).toBe(500);
-        expect(err.message).toBe('Relay API returned a non-current error response (HTTP 500)');
+        const err = e as Error;
+        expect(err).toBeInstanceOf(Error);
+        expect(err).not.toBeInstanceOf(StelisApiException);
+        expect(err.message).toBe('Stelis Host returned a non-current error response (HTTP 500)');
         expect(err.message).not.toContain('A server error occurred');
       }
     });
 
-    it('preserves an uncoded rate-limit error message and retry metadata', async () => {
+    it('rejects an uncoded rate-limit body instead of preserving remote text or metadata', async () => {
       mockFetch.mockResolvedValueOnce(
         jsonResponse({ error: 'Rate limit exceeded', retryAfterMs: 2500 }, 429),
       );
 
       try {
         await client.getStatus();
-        expect.fail('Expected StelisApiException');
+        expect.fail('Expected a Host contract error');
       } catch (e) {
-        const err = e as StelisApiException;
-        expect(err).toBeInstanceOf(StelisApiException);
-        expect(err.code).toBe('UNKNOWN');
-        expect(err.message).toBe('Rate limit exceeded');
-        expect(err.meta).toEqual({ retryAfterMs: 2500 });
+        const err = e as Error;
+        expect(err).not.toBeInstanceOf(StelisApiException);
+        expect(err.message).toBe('Stelis Host returned a non-current error response (HTTP 429)');
       }
     });
 
@@ -572,7 +593,7 @@ describe('StelisClient', () => {
       mockFetch.mockResolvedValueOnce(
         jsonResponse(
           {
-            error: 'Settle input too low',
+            error: hostErrorPublicMessage('INSUFFICIENT_SETTLE_INPUT'),
             code: 'INSUFFICIENT_SETTLE_INPUT',
             minSettleMist: '1000',
             requiredTotalIn: '2000',
@@ -602,9 +623,21 @@ describe('StelisClient', () => {
 
     it('rejects unknown or mistyped remote error fields without preserving them', async () => {
       for (const body of [
-        { error: 'bad', code: 'BAD_REQUEST', secretKey: 'must-not-leak' },
-        { error: 'bad', code: 'BAD_REQUEST', isEstimate: false },
-        { error: 'bad', code: 'BAD_REQUEST', minSettleMist: '1' },
+        {
+          error: hostErrorPublicMessage('BAD_REQUEST'),
+          code: 'BAD_REQUEST',
+          secretKey: 'must-not-leak',
+        },
+        {
+          error: hostErrorPublicMessage('BAD_REQUEST'),
+          code: 'BAD_REQUEST',
+          isEstimate: false,
+        },
+        {
+          error: hostErrorPublicMessage('BAD_REQUEST'),
+          code: 'BAD_REQUEST',
+          minSettleMist: '1',
+        },
       ]) {
         mockFetch.mockResolvedValueOnce(jsonResponse(body, 400));
         try {
@@ -615,13 +648,12 @@ describe('StelisClient', () => {
               settlementTokenType: '0x2::sui::SUI',
             }),
           );
-          expect.fail('Expected StelisApiException');
+          expect.fail('Expected a Host contract error');
         } catch (error) {
-          const apiError = error as StelisApiException;
-          expect(apiError.code).toBe('UNKNOWN');
-          expect(apiError.meta).toBeUndefined();
+          const apiError = error as Error;
+          expect(apiError).not.toBeInstanceOf(StelisApiException);
           expect(apiError.message).toBe(
-            'Relay API returned a non-current error response (HTTP 400)',
+            'Stelis Host returned a non-current error response (HTTP 400)',
           );
           expect(JSON.stringify(apiError)).not.toContain('must-not-leak');
         }
@@ -637,7 +669,7 @@ describe('StelisClient', () => {
       );
 
       await expect(client.getStatus()).rejects.toThrow(
-        /Relay API returned a non-JSON success response \(HTTP 200\)/,
+        /Stelis Host returned a non-JSON success response \(HTTP 200\)/,
       );
     });
 

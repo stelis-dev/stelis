@@ -14,6 +14,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
+import { MAX_PROMOTION_LEDGER_VALUE_MIST } from '@stelis/contracts';
 import type { PromotionExecutionLedger } from '../src/studio/executionLedger.js';
 import type { ClaimOpts, ReserveParams } from '../src/studio/domain.js';
 
@@ -126,9 +127,32 @@ export function runLedgerConformanceTests(
       ).rejects.toThrow('perUserGasAllowanceMist must be a non-negative decimal integer string');
     });
 
+    it('rejects zero per-user allowance before creating an entitlement', async () => {
+      await expect(
+        ledger.claim(PROMO_ID, USER_A, defaultClaimOpts({ perUserGasAllowanceMist: '0' })),
+      ).rejects.toThrow('perUserGasAllowanceMist must be greater than zero');
+    });
+
+    it('accepts the exact current Promotion ledger upper bound', async () => {
+      const result = await ledger.claim(
+        PROMO_ID,
+        USER_A,
+        defaultClaimOpts({
+          maxParticipants: 1,
+          perUserGasAllowanceMist: MAX_PROMOTION_LEDGER_VALUE_MIST.toString(),
+        }),
+      );
+      expect(result.ok).toBe(true);
+      await expect(ledger.getBudgetSummary(PROMO_ID)).resolves.toEqual({
+        availableMist: MAX_PROMOTION_LEDGER_VALUE_MIST,
+        reservedMist: 0n,
+        consumedMist: 0n,
+      });
+    });
+
     it('rejects perUserGasAllowanceMist > MAX_PROMOTION_LEDGER_VALUE_MIST (Number.MAX_SAFE_INTEGER)', async () => {
-      // Defensive bound parity with the activation gate. Any out-of-band
-      // caller that bypasses `validateActivationPrerequisites` and tries
+      // Defensive bound parity with the Promotion write boundary. Any out-of-band
+      // caller that bypasses the Promotion store guard and tries
       // to claim a promotion with an over-bound `perUserGasAllowanceMist`
       // must be refused at the ledger layer so the Redis budget keys
       // never receive a value that breaks Lua int64 arithmetic.
@@ -213,11 +237,11 @@ export function runLedgerConformanceTests(
       );
     });
 
-    it('rejects reservation amount > MAX_PROMOTION_LEDGER_VALUE_MIST (defensive ledger-boundary lock; mirrors the activation-gate cap)', async () => {
-      // The activation gate normally caps `perUserGasAllowanceMist` at
+    it('rejects reservation amount > MAX_PROMOTION_LEDGER_VALUE_MIST (defensive ledger-boundary lock; mirrors the Promotion write cap)', async () => {
+      // The Promotion write boundary normally caps `perUserGasAllowanceMist` at
       // the bound, so realistic reservations are well below it. This
       // conformance case exercises the defensive ledger-side guard so
-      // any out-of-band caller that bypasses activation cannot push
+      // any out-of-band caller that bypasses the store cannot push
       // Redis-Lua arithmetic above the 2^53−1 precision boundary.
       const overBound = BigInt(Number.MAX_SAFE_INTEGER) + 1n;
       await expect(ledger.reserve(defaultReserveParams({ amountMist: overBound }))).rejects.toThrow(

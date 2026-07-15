@@ -6,8 +6,8 @@
  * POST /studio/promotions/:id/{claim,prepare,sponsor}.
  * Intentionally does NOT own: promotionStore/executionLedger null-guard, studio
  * mode, globalAllowedTargets, sponsor operations gate, body parse, handler call,
- * per-route error mapping. Those stay in the route because their guard set and
- * messages differ per operation.
+ * per-route error mapping. Those stay in the route because their guard set
+ * differs per operation; public messages remain contracts-owned.
  *
  * Shape — plain async helper, NOT a Hono middleware. Routes call it
  * explicitly AFTER their route-local 503 guards (studio mode, stores,
@@ -34,7 +34,7 @@ import {
   verifyDeveloperJwt,
   type VerifiedDeveloperIdentity,
 } from '@stelis/core-api/studio';
-import { checkBlockedRequest, toBlockedError } from '@stelis/core-api';
+import { checkBlockedRequest } from '@stelis/core-api';
 import type { HostErrorCode } from '@stelis/contracts';
 import type { AppApiContext } from '../context.js';
 import type { ResolveClientIp } from '../clientIp.js';
@@ -44,7 +44,7 @@ import {
   DeveloperVerifyUnavailableError,
 } from '../developerJwtVerifyCallback.js';
 import { formatRetryAfterSeconds } from '../retryAfter.js';
-import { codedHostError, respondMapped, uncodedHostError } from '../errorMap.js';
+import { codedHostError, respondMapped } from '../errorMap.js';
 
 type StudioAuthenticationErrorCode = 'AUTH_FAILED' | 'AUTH_JWT_INVALID' | 'AUTH_UNAVAILABLE';
 
@@ -137,27 +137,12 @@ export async function runStudioAuth(
     if (authErr instanceof StudioAuthenticationError) {
       return {
         ok: false,
-        response: respondMapped(
-          c,
-          codedHostError(
-            {
-              error:
-                authErr.code === 'AUTH_UNAVAILABLE'
-                  ? 'Authentication service unavailable'
-                  : 'Authentication failed',
-              code: authErr.code,
-            },
-            opts.allowedErrorCodes,
-          ),
-        ),
+        response: respondMapped(c, codedHostError(authErr.code, opts.allowedErrorCodes)),
       };
     }
     return {
       ok: false,
-      response: respondMapped(
-        c,
-        uncodedHostError({ error: 'Internal server error' }, opts.allowedErrorCodes, 500),
-      ),
+      response: respondMapped(c, codedHostError('INTERNAL_ERROR', opts.allowedErrorCodes)),
     };
   }
 
@@ -174,9 +159,12 @@ export async function runStudioAuth(
       ok: false,
       response: respondMapped(
         c,
-        codedHostError(toBlockedError(blocked), opts.allowedErrorCodes, {
-          'Retry-After': formatRetryAfterSeconds(blocked.retryAfterMs),
-        }),
+        codedHostError(
+          'ABUSE_BLOCKED',
+          opts.allowedErrorCodes,
+          blocked.retryAfterMs === undefined ? {} : { retryAfterMs: blocked.retryAfterMs },
+          { 'Retry-After': formatRetryAfterSeconds(blocked.retryAfterMs) },
+        ),
       ),
     };
   }
@@ -195,10 +183,10 @@ export async function runStudioAuth(
         ok: false,
         response: respondMapped(
           c,
-          uncodedHostError(
-            { error: 'Rate limit exceeded', retryAfterMs: rl.retryAfterMs },
+          codedHostError(
+            'RATE_LIMITED',
             opts.allowedErrorCodes,
-            429,
+            { retryAfterMs: rl.retryAfterMs },
             { 'Retry-After': formatRetryAfterSeconds(rl.retryAfterMs) },
           ),
         ),

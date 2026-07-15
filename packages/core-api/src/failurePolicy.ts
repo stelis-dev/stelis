@@ -5,7 +5,17 @@
  * failures.ts runtime predicates, abuse-blocker adapters, and app-api
  * error mapping.
  */
-import type { HostErrorCode } from '@stelis/contracts';
+import type {
+  PromotionPrepareErrorCode,
+  PromotionSponsorErrorCode,
+  RelayConfigErrorCode,
+  RelayPrepareErrorCode,
+  RelaySponsorErrorCode,
+  RelayStatusErrorCode,
+  StudioClaimErrorCode,
+  StudioDetailErrorCode,
+  StudioListErrorCode,
+} from '@stelis/contracts';
 
 // ─────────────────────────────────────────────
 // Public type exports
@@ -52,7 +62,18 @@ export type PromotionAbuseCode = (typeof PROMOTION_ABUSE_CODES)[keyof typeof PRO
  * promotion-specific internal abuse codes. Public HTTP projection belongs to
  * `@stelis/contracts`; this module owns classification and abuse impact.
  */
-export type FailureCode = HostErrorCode | PromotionAbuseCode;
+type RelayAndStudioFailureCode =
+  | RelayStatusErrorCode
+  | RelayConfigErrorCode
+  | RelayPrepareErrorCode
+  | RelaySponsorErrorCode
+  | StudioListErrorCode
+  | StudioDetailErrorCode
+  | StudioClaimErrorCode
+  | PromotionPrepareErrorCode
+  | PromotionSponsorErrorCode;
+
+export type FailureCode = RelayAndStudioFailureCode | PromotionAbuseCode;
 
 /**
  * Code-level classification (orthogonal to subcode-level carve-out).
@@ -326,10 +347,11 @@ export const FAILURE_TABLE: Readonly<Record<FailureCode, FailurePolicy>> = {
     abuseImpact: SKIP_BOTH,
     notes: 'User-prefix address-balance withdrawal cannot be accounted exactly.',
   },
-  SLIPPAGE_QUERY_FAILED: {
+  MARKET_QUOTE_UNAVAILABLE: {
     classification: 'infra',
     abuseImpact: SKIP_BOTH,
-    notes: 'DeepBook query RPC failure at build time.',
+    notes:
+      'Current quote acquisition includes external RPC and market-data failures, so callers are not penalized.',
   },
   SLIPPAGE_EXCEEDED: {
     classification: 'normal',
@@ -456,10 +478,20 @@ export const FAILURE_TABLE: Readonly<Record<FailureCode, FailurePolicy>> = {
     abuseImpact: SKIP_BOTH,
     notes: 'Already-blocked subject; never recorded again.',
   },
+  RATE_LIMITED: {
+    classification: 'ignored',
+    abuseImpact: SKIP_BOTH,
+    notes: 'The active rate limit is already the protection; do not count the rejection again.',
+  },
   BLOCK_CHECK_UNAVAILABLE: {
     classification: 'infra',
     abuseImpact: SKIP_BOTH,
     notes: 'Abuse blocker adapter throw — fail-closed availability defect.',
+  },
+  STUDIO_UNAVAILABLE: {
+    classification: 'infra',
+    abuseImpact: SKIP_BOTH,
+    notes: 'The current Host has no usable Studio runtime for the requested route.',
   },
   VAULT_STATE_INCONSISTENT: {
     classification: 'drift',

@@ -2,31 +2,15 @@
  * SecurityPage — abuse blocklist management and admin audit review.
  */
 import { useEffect, useState, useCallback } from 'react';
-import { getAuditLogs, getBlocklist, removeBlocklistEntry, type BlockEntry } from '../api/client';
+import { getAuditLogs, getBlocklist, removeBlocklistEntry } from '../api/client';
+import type { AdminAuditLogEntry, AdminBlocklistEntry } from '@stelis/contracts';
 import { truncateAddress } from '../utils';
-
-interface AuditLogEntry {
-  ts?: string;
-  event?: string;
-  level?: string;
-  ip?: string;
-  address?: string;
-  [key: string]: unknown;
-}
-
-function parseAuditEntry(raw: string): AuditLogEntry | null {
-  try {
-    return JSON.parse(raw) as AuditLogEntry;
-  } catch {
-    return null;
-  }
-}
 
 const AUDIT_PAGE_SIZE = 15;
 
 export function SecurityPage() {
-  const [blocklist, setBlocklist] = useState<BlockEntry[]>([]);
-  const [auditLogs, setAuditLogs] = useState<string[]>([]);
+  const [blocklist, setBlocklist] = useState<AdminBlocklistEntry[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AdminAuditLogEntry[]>([]);
   const [auditPage, setAuditPage] = useState(0);
   const [msg, setMsg] = useState('');
   const [loading, setLoading] = useState(false);
@@ -34,7 +18,7 @@ export function SecurityPage() {
   const loadBlocklist = useCallback(async () => {
     try {
       const json = await getBlocklist();
-      setBlocklist(json.blocklist ?? []);
+      setBlocklist(json.blocklist);
     } catch {
       /* ignore */
     }
@@ -43,7 +27,7 @@ export function SecurityPage() {
   const loadAuditLogs = useCallback(async () => {
     try {
       const json = await getAuditLogs();
-      setAuditLogs(json.logs ?? []);
+      setAuditLogs(json.logs);
       setAuditPage(0);
     } catch (err) {
       setMsg(`Error: ${err instanceof Error ? err.message : 'unknown'}`);
@@ -153,12 +137,9 @@ export function SecurityPage() {
           <p style={{ color: '#64748b', margin: 0 }}>No audit events recorded.</p>
         ) : (
           (() => {
-            const parsed = auditLogs
-              .map((raw, i) => ({ raw, i, entry: parseAuditEntry(raw) }))
-              .filter((x) => x.entry);
-            const totalPages = Math.max(1, Math.ceil(parsed.length / AUDIT_PAGE_SIZE));
+            const totalPages = Math.max(1, Math.ceil(auditLogs.length / AUDIT_PAGE_SIZE));
             const safePage = Math.min(auditPage, totalPages - 1);
-            const paged = parsed.slice(
+            const paged = auditLogs.slice(
               safePage * AUDIT_PAGE_SIZE,
               (safePage + 1) * AUDIT_PAGE_SIZE,
             );
@@ -174,20 +155,14 @@ export function SecurityPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {paged.map(({ i, entry }) => {
-                      if (!entry) return null;
-                      const isWarn = entry.level === 'warn';
+                    {paged.map((entry, index) => {
                       return (
-                        <tr key={i} style={isWarn ? { color: '#fbbf24' } : undefined}>
-                          <td style={{ fontSize: 13 }}>
-                            {entry.ts ? new Date(entry.ts).toLocaleString() : '—'}
-                          </td>
+                        <tr key={`${entry.ts}:${entry.event}:${index}`}>
+                          <td style={{ fontSize: 13 }}>{new Date(entry.ts).toLocaleString()}</td>
                           <td>
-                            <span className={`badge ${isWarn ? 'badge-yellow' : 'badge-green'}`}>
-                              {entry.event ?? '—'}
-                            </span>
+                            <span className="badge badge-green">{entry.event}</span>
                           </td>
-                          <td>{entry.ip ?? '—'}</td>
+                          <td>{entry.ip}</td>
                           <td style={{ fontFamily: 'monospace', fontSize: 13 }}>
                             {entry.address ? truncateAddress(entry.address) : '—'}
                           </td>

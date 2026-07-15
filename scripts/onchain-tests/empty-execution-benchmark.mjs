@@ -447,7 +447,7 @@ function parseRetryAfterMs(value) {
 }
 
 function rateLimitRetryAfterMs(err) {
-  if (!(err instanceof StelisApiException) || err.status !== 429 || err.code !== 'UNKNOWN') {
+  if (!(err instanceof StelisApiException) || err.status !== 429 || err.code !== 'RATE_LIMITED') {
     return null;
   }
   return parseRetryAfterMs(err.meta?.retryAfterMs);
@@ -502,13 +502,14 @@ async function postRelaySponsor(apiUrl, body) {
     let apiError;
     try {
       apiError = parseHostErrorResponse(data, RELAY_SPONSOR_ERROR_CODES, res.status);
-    } catch {
-      apiError = undefined;
+    } catch (error) {
+      throw new Error(
+        `Relay API /sponsor returned a non-current error response (HTTP ${res.status}; ${summarizeHttpBody(raw)})`,
+        { cause: error },
+      );
     }
-    const code = apiError?.code ?? 'UNKNOWN';
-    const message =
-      apiError?.error ??
-      `Relay API /sponsor returned a non-current error response (HTTP ${res.status}; ${summarizeHttpBody(raw)})`;
+    const code = apiError.code;
+    const message = apiError.error;
     const extra = projectBenchmarkErrorMeta(apiError);
     throw new StelisApiException(
       code,

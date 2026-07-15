@@ -294,7 +294,7 @@ async function dryRunForGas(
 function assertSingleHopOnly(settlementSwapPath: SingleHopSettlementSwapPath): void {
   if (settlementSwapPath.hops.length !== 1) {
     throw new PrepareValidationError(
-      'SLIPPAGE_QUERY_FAILED',
+      'MARKET_QUOTE_UNAVAILABLE',
       `Unsupported hop count ${settlementSwapPath.hops.length} (only one-hop settlement swap paths are supported)`,
       { stage: 'hop_validation', poolId: settlementSwapPath.hops[0]?.poolId ?? 'unknown' },
     );
@@ -363,7 +363,7 @@ async function loadRawMidPrices(
   } catch (err) {
     if (err instanceof SlippageQueryError) {
       throw new PrepareValidationError(
-        'SLIPPAGE_QUERY_FAILED',
+        'MARKET_QUOTE_UNAVAILABLE',
         `Mid-price query failed: ${err.message}`,
         {
           stage,
@@ -382,7 +382,7 @@ function normalizeMarketPolicyError(
 ): never {
   const poolId = descriptor.hops[0]?.poolId ?? 'unknown';
   if (err instanceof MarketQuoteUnavailableError) {
-    throw new PrepareValidationError('SLIPPAGE_QUERY_FAILED', err.message, { stage, poolId });
+    throw new PrepareValidationError('MARKET_QUOTE_UNAVAILABLE', err.message, { stage, poolId });
   }
   if (err instanceof ExecutionGapExceededError) {
     throw new PrepareValidationError('SLIPPAGE_EXCEEDED', err.message, { stage, poolId });
@@ -400,8 +400,8 @@ function normalizeMarketPolicyError(
 // as-is (network glitches, unexpected throw types, etc.).
 function classifyQuoteFailure(
   err: unknown,
-): 'SLIPPAGE_QUERY_FAILED' | 'SLIPPAGE_EXCEEDED' | 'UNKNOWN' {
-  if (err instanceof MarketQuoteUnavailableError) return 'SLIPPAGE_QUERY_FAILED';
+): 'MARKET_QUOTE_UNAVAILABLE' | 'SLIPPAGE_EXCEEDED' | 'UNKNOWN' {
+  if (err instanceof MarketQuoteUnavailableError) return 'MARKET_QUOTE_UNAVAILABLE';
   if (err instanceof ExecutionGapExceededError) return 'SLIPPAGE_EXCEEDED';
   if (err instanceof SwapUnviableUnderPolicyError) return 'SLIPPAGE_EXCEEDED';
   return 'UNKNOWN';

@@ -238,7 +238,7 @@ function serializeError(error: unknown): Record<string, unknown> {
       error: error.message,
       code: error.code,
       status: error.status,
-      body: error.body,
+      ...(error.meta ? { meta: error.meta } : {}),
     };
   }
   if (error instanceof Error) {

@@ -17,7 +17,12 @@ import type { SponsorPoolAdapter } from '../context.js';
 import type { PrepareStoreAdapter } from '../store/prepareTypes.js';
 import type { AbuseBlockerAdapter } from '../store/abuseBlockTypes.js';
 import type { VerifiedDeveloperIdentity } from './developerJwtVerifier.js';
-import type { PromotionSponsorErrorCode, SponsorFailureSubcode } from '@stelis/contracts';
+import type {
+  PromotionSponsorErrorCode,
+  PromotionSponsorRequest,
+  PromotionSponsorResponse,
+  SponsorFailureSubcode,
+} from '@stelis/contracts';
 import {
   createStudioExecutionPolicy,
   createStudioSignAndSubmitPort,
@@ -63,29 +68,13 @@ export interface PromotionSponsorContext {
 }
 
 /** Request parameters for promotion sponsor. */
-export interface PromotionSponsorParams {
+interface PromotionSponsorParams extends PromotionSponsorRequest {
   /** Promotion ID (from path parameter). */
   promotionId: string;
-  /** Receipt ID from promotion prepare response. */
-  receiptId: string;
-  /** Full transaction bytes (base64). */
-  txBytes: string;
-  /** User's signature (base64). */
-  userSignature: string;
   /** Pre-verified developer identity (route owns crypto verification). */
   verifiedIdentity: VerifiedDeveloperIdentity;
   /** Client IP for abuse tracking. */
   clientIp: string;
-}
-
-/** Successful promotion sponsor result. */
-export interface PromotionSponsorResult {
-  /** Transaction digest. */
-  digest: string;
-  /** Transaction effects. */
-  effects: unknown;
-  /** Actual gas consumed (MIST). */
-  actualGasMist: string;
 }
 
 // ─────────────────────────────────────────────
@@ -114,7 +103,7 @@ export class PromotionSponsorError extends Error {
 export async function handlePromotionSponsor(
   ctx: PromotionSponsorContext,
   params: PromotionSponsorParams,
-): Promise<PromotionSponsorResult> {
+): Promise<PromotionSponsorResponse> {
   let txBytes: Uint8Array;
   try {
     txBytes = decodeTxBytes(params.txBytes);

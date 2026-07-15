@@ -26,8 +26,6 @@ type SponsorFailureRecordCode = Exclude<
   'SPONSOR_PREFLIGHT_FAILED' | 'SPONSOR_ONCHAIN_FAILED'
 >;
 
-export const ABUSE_BLOCKED_CODE = 'ABUSE_BLOCKED';
-
 /**
  * Availability defect: the abuse-blocker adapter (memory or Redis) raised
  * while servicing `checkIp` / `checkSubject`. The request cannot be
@@ -36,7 +34,6 @@ export const ABUSE_BLOCKED_CODE = 'ABUSE_BLOCKED';
  * rather than fail-open bypass or a misleading 500.
  */
 export class BlockCheckUnavailableError extends Error {
-  readonly code = 'BLOCK_CHECK_UNAVAILABLE' as const;
   constructor(message = 'Abuse block check is temporarily unavailable') {
     super(message);
     this.name = 'BlockCheckUnavailableError';
@@ -184,16 +181,4 @@ export async function recordSponsorFailureForAbuse(
 function subjectLogFields(subject: AbuseSubject | undefined): Record<string, string> {
   if (!subject) return {};
   return subject.kind === 'address' ? { address: subject.address } : { userId: subject.userId };
-}
-
-export function toBlockedError(status: AbuseBlockStatus): {
-  error: string;
-  code: typeof ABUSE_BLOCKED_CODE;
-  retryAfterMs?: number;
-} {
-  return {
-    error: 'Request temporarily blocked',
-    code: ABUSE_BLOCKED_CODE,
-    ...(status.retryAfterMs === undefined ? {} : { retryAfterMs: status.retryAfterMs }),
-  };
 }

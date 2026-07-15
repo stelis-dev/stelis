@@ -7,7 +7,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Hono } from 'hono';
-import { assertResponseKeys } from './helpers/schemaAssert.js';
+import { parsePromotionPrepareResponse, parsePromotionSponsorResponse } from '@stelis/contracts';
 
 // ── Hoisted mocks ───────────────────────────────────────────────────────
 const {
@@ -128,7 +128,6 @@ const {
     }
   }
   class _BlockCheckUnavailableError extends Error {
-    readonly code = 'BLOCK_CHECK_UNAVAILABLE' as const;
     constructor(message = 'Abuse block check is temporarily unavailable') {
       super(message);
       this.name = 'BlockCheckUnavailableError';
@@ -183,7 +182,6 @@ vi.mock('@stelis/core-api', async () => {
     ...actual,
     readJsonBodyWithLimit: vi.fn().mockImplementation(async (req: Request) => req.json()),
     checkBlockedRequest: vi.fn().mockResolvedValue({ blocked: false }),
-    toBlockedError: vi.fn().mockReturnValue({ error: 'Blocked', code: 'ABUSE_BLOCKED' }),
     MAX_SMALL_REQUEST_BODY_BYTES: 32 * 1024,
     MAX_PREPARE_REQUEST_BODY_BYTES: 96 * 1024,
     MAX_SPONSOR_REQUEST_BODY_BYTES: 128 * 1024,
@@ -475,7 +473,7 @@ describe('studio routes', () => {
       expect(body.txBytes).toBe('mock-tx-bytes');
       expect(body.receiptId).toBe('0xreceipt');
 
-      assertResponseKeys(body, 'promotionPrepareResponse');
+      expect(parsePromotionPrepareResponse(body)).toEqual(body);
     });
 
     it('checks IP, userId, and promotionId rate-limit keys on successful prepare', async () => {
@@ -516,10 +514,7 @@ describe('studio routes', () => {
       const ctx = createMockCtx(true);
       ctx.studioGlobalAllowedTargets = new Set<string>();
       mockBuildSponsorOperationsBlockedResponse.mockReturnValueOnce({
-        body: {
-          error: 'No sponsor slots currently available',
-          code: 'SPONSOR_CAPACITY_UNAVAILABLE',
-        },
+        errorCode: 'SPONSOR_CAPACITY_UNAVAILABLE',
         headers: {},
       });
       const app = makeApp(ctx);
@@ -706,10 +701,7 @@ describe('studio routes', () => {
       ctx.studioGlobalAllowedTargets = new Set<string>();
       mockBuildSponsorOperationsBlockedResponse.mockReturnValueOnce({
         headers: {},
-        body: {
-          error: 'No sponsor slots currently available',
-          code: 'SPONSOR_CAPACITY_UNAVAILABLE',
-        },
+        errorCode: 'SPONSOR_CAPACITY_UNAVAILABLE',
       });
       const app = makeApp(ctx);
       const res = await app.request('/studio/promotions/promo-1/sponsor', {
@@ -809,7 +801,7 @@ describe('studio routes', () => {
       // wake. Callback-side state writes are locked in
       // `sponsorPromotionSponsored.test.ts` (core-api).
 
-      assertResponseKeys(body, 'promotionSponsorResponse');
+      expect(parsePromotionSponsorResponse(body)).toEqual(body);
     });
 
     it('checks IP, userId, and promotionId rate-limit keys on successful sponsor', async () => {
@@ -916,10 +908,7 @@ describe('studio routes', () => {
       const ctx = createMockCtx(true);
       ctx.studioGlobalAllowedTargets = new Set<string>();
       mockBuildSponsorOperationsBlockedResponse.mockReturnValueOnce({
-        body: {
-          error: 'No sponsor slots currently available',
-          code: 'SPONSOR_CAPACITY_UNAVAILABLE',
-        },
+        errorCode: 'SPONSOR_CAPACITY_UNAVAILABLE',
         headers: {},
       });
       const app = makeApp(ctx);

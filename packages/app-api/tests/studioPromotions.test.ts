@@ -8,10 +8,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Hono } from 'hono';
 import {
-  assertResponseKeys,
-  assertNestedObjectKeys,
-  assertArrayItemKeys,
-} from './helpers/schemaAssert.js';
+  parsePromotionClaimResponse,
+  parsePromotionDetailResponse,
+  parsePromotionListResponse,
+} from '@stelis/contracts';
 
 // ── Hoisted mocks ───────────────────────────────────────────────────────
 const { mockVerifyDeveloperJwt } = vi.hoisted(() => ({
@@ -42,13 +42,13 @@ import {
   MemoryPromotionStore,
   MemoryPromotionExecutionLedger,
 } from '@stelis/core-api/testing/studio';
-import type { CreatePromotionInput } from '@stelis/core-api/studio';
+import type { AdminPromotionCreateRequest } from '@stelis/contracts';
 
 const resolveClientIp: ResolveClientIp = () => '127.0.0.1';
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
-const BASE_PROMO: CreatePromotionInput = {
+const BASE_PROMO: AdminPromotionCreateRequest = {
   type: 'gas_sponsorship',
   displayName: 'Test Promo',
   description: 'Test description',
@@ -141,8 +141,7 @@ describe('studio promotion routes', () => {
       expect(body.promotions[0].canUseSponsoredAction).toBe(false);
       expect(body.promotions[0].promotionRemainingBudgetMist).toBeTruthy();
 
-      assertResponseKeys(body, 'promotionListResponse');
-      assertArrayItemKeys(body, 'promotions', 'promotionListItem');
+      expect(parsePromotionListResponse(body)).toEqual(body);
     });
 
     it('checks block state and rate-limit keys on successful list', async () => {
@@ -246,8 +245,7 @@ describe('studio promotion routes', () => {
       expect(body.detail.claimStatus).toBe('not_claimed');
       expect(body.detail.canClaim).toBe(true);
 
-      assertResponseKeys(body, 'promotionDetailResponse');
-      assertNestedObjectKeys(body, 'detail', 'userPromotionDetail');
+      expect(parsePromotionDetailResponse(body)).toEqual(body);
     });
 
     it('checks block state and rate-limit keys on successful detail', async () => {
@@ -286,7 +284,10 @@ describe('studio promotion routes', () => {
 
       expect(res.status).toBe(429);
       const body = await res.json();
-      expect(body.error).toBe('Rate limit exceeded');
+      expect(body).toMatchObject({
+        code: 'RATE_LIMITED',
+        error: 'Request temporarily blocked',
+      });
     });
 
     it('returns future startAt as detail.canClaim=false + unavailableReason=promotion_not_started', async () => {
@@ -366,8 +367,7 @@ describe('studio promotion routes', () => {
       expect(body.entitlement.userId).toBe('user-1');
       expect(body.entitlement.remainingGasAllowanceMist).toBe('5000000');
 
-      assertResponseKeys(body, 'promotionClaimResponse');
-      assertNestedObjectKeys(body, 'entitlement', 'promotionEntitlement');
+      expect(parsePromotionClaimResponse(body)).toEqual(body);
     });
 
     it('returns PROMOTION_NOT_ACTIVE when startAt is in the future', async () => {
@@ -384,7 +384,7 @@ describe('studio promotion routes', () => {
       const body = await res.json();
       expect(body).toMatchObject({
         code: 'PROMOTION_NOT_ACTIVE',
-        error: 'Promotion has not started',
+        error: 'Request conflicts with current state',
       });
     });
 
@@ -447,7 +447,10 @@ describe('studio promotion routes', () => {
       });
       expect(res.status).toBe(409);
       const body = await res.json();
-      expect(body).toMatchObject({ code: 'ALREADY_CLAIMED', error: 'Promotion already claimed' });
+      expect(body).toMatchObject({
+        code: 'ALREADY_CLAIMED',
+        error: 'Request conflicts with current state',
+      });
     });
 
     it('returns 409 when max participants reached', async () => {
@@ -472,7 +475,7 @@ describe('studio promotion routes', () => {
       const body = await res.json();
       expect(body).toMatchObject({
         code: 'PROMOTION_CAPACITY_REACHED',
-        error: 'Promotion participant capacity has been reached',
+        error: 'Request conflicts with current state',
       });
     });
 
@@ -489,7 +492,7 @@ describe('studio promotion routes', () => {
       const body = await res.json();
       expect(body).toMatchObject({
         code: 'PROMOTION_NOT_ACTIVE',
-        error: 'Promotion is not active',
+        error: 'Request conflicts with current state',
       });
     });
 
@@ -539,7 +542,10 @@ describe('studio promotion routes', () => {
       });
       expect(res.status).toBe(429);
       const body = await res.json();
-      expect(body.error).toBe('Rate limit exceeded');
+      expect(body).toMatchObject({
+        code: 'RATE_LIMITED',
+        error: 'Request temporarily blocked',
+      });
     });
 
     it('checks IP, userId, and promotionId rate-limit keys on successful claim', async () => {

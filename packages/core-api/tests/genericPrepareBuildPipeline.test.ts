@@ -2639,7 +2639,7 @@ describe('runGenericPrepareBuildPipeline — slippage error paths', () => {
       credit: '0',
     });
 
-  it('throws SLIPPAGE_QUERY_FAILED when midPrice is null (0n)', async () => {
+  it('throws MARKET_QUOTE_UNAVAILABLE when midPrice is null (0n)', async () => {
     const ctx = makeCtx();
     const input = swapInput();
 
@@ -2649,11 +2649,11 @@ describe('runGenericPrepareBuildPipeline — slippage error paths', () => {
     mockSolveExecutableSwap.mockRejectedValue(new MQE('Mid-price unavailable (empty orderbook)'));
 
     await expect(runGenericPrepareBuildPipeline(ctx, input)).rejects.toThrow(
-      expect.objectContaining({ code: 'SLIPPAGE_QUERY_FAILED' }),
+      expect.objectContaining({ code: 'MARKET_QUOTE_UNAVAILABLE' }),
     );
   });
 
-  it('throws SLIPPAGE_QUERY_FAILED with RPC message when batchGetHopMidPrices throws SlippageQueryError', async () => {
+  it('throws MARKET_QUOTE_UNAVAILABLE with RPC message when batchGetHopMidPrices throws SlippageQueryError', async () => {
     const ctx = makeCtx();
     const input = swapInput();
 
@@ -2661,14 +2661,14 @@ describe('runGenericPrepareBuildPipeline — slippage error paths', () => {
     mockBatchGetHopMidPrices.mockRejectedValue(new SQE('simulateTransaction failed: RPC timeout'));
 
     const err = await runGenericPrepareBuildPipeline(ctx, input).catch((e: unknown) => e);
-    expect(err).toEqual(expect.objectContaining({ code: 'SLIPPAGE_QUERY_FAILED' }));
+    expect(err).toEqual(expect.objectContaining({ code: 'MARKET_QUOTE_UNAVAILABLE' }));
     expect((err as PrepareValidationError).meta?.stage).toBe('mid_price_collection');
     // Message must include query-failure context (not "empty orderbook")
     expect((err as Error).message).toContain('Mid-price query failed');
     expect((err as Error).message).toContain('RPC timeout');
   });
 
-  it('throws SLIPPAGE_QUERY_FAILED when solveExecutableSwap throws MarketQuoteUnavailableError', async () => {
+  it('throws MARKET_QUOTE_UNAVAILABLE when solveExecutableSwap throws MarketQuoteUnavailableError', async () => {
     const ctx = makeCtx();
     const input = swapInput();
 
@@ -2677,7 +2677,7 @@ describe('runGenericPrepareBuildPipeline — slippage error paths', () => {
     mockSolveExecutableSwap.mockRejectedValue(new MQE('RPC timeout'));
 
     await expect(runGenericPrepareBuildPipeline(ctx, input)).rejects.toThrow(
-      expect.objectContaining({ code: 'SLIPPAGE_QUERY_FAILED' }),
+      expect.objectContaining({ code: 'MARKET_QUOTE_UNAVAILABLE' }),
     );
   });
 
@@ -3203,7 +3203,7 @@ describe('runGenericPrepareBuildPipeline — quote RPC observability fields', ()
   // timing for any quote-RPC work performed before the failure.
   // ──────────────────────────────────────────────────────────────────────
 
-  it('emits quote_rpc_failed (SLIPPAGE_QUERY_FAILED) on pass1 when solve throws MarketQuoteUnavailableError', async () => {
+  it('emits quote_rpc_failed (MARKET_QUOTE_UNAVAILABLE) on pass1 when solve throws MarketQuoteUnavailableError', async () => {
     const ctx = makeCtx();
     const input = makeInput({
       profile: 'new_user',
@@ -3225,12 +3225,12 @@ describe('runGenericPrepareBuildPipeline — quote RPC observability fields', ()
 
     const events = captureStageEvents();
     const err = await runGenericPrepareBuildPipeline(ctx, input).catch((e: unknown) => e);
-    expect(err).toEqual(expect.objectContaining({ code: 'SLIPPAGE_QUERY_FAILED' }));
+    expect(err).toEqual(expect.objectContaining({ code: 'MARKET_QUOTE_UNAVAILABLE' }));
 
     const failed = events.find((e) => e.stage === 'quote_rpc_failed');
     expect(failed).toBeDefined();
     expect(failed!.payload.pass).toBe('pass1');
-    expect(failed!.payload.error_code).toBe('SLIPPAGE_QUERY_FAILED');
+    expect(failed!.payload.error_code).toBe('MARKET_QUOTE_UNAVAILABLE');
     expect(failed!.payload.quote_quantity_in_rpc_calls).toBe(2);
     expect(failed!.payload.quote_quantity_out_verify_rpc_calls).toBe(3);
     expect(failed!.payload.quote_total_rpc_calls).toBe(5);
@@ -3710,12 +3710,12 @@ describe('runGenericPrepareBuildPipeline — quote RPC observability fields', ()
     const events = captureStageEvents();
     const err = await runGenericPrepareBuildPipeline(ctx, input).catch((e: unknown) => e);
     // loadRawMidPrices wraps SlippageQueryError into PrepareValidationError.
-    expect(err).toEqual(expect.objectContaining({ code: 'SLIPPAGE_QUERY_FAILED' }));
+    expect(err).toEqual(expect.objectContaining({ code: 'MARKET_QUOTE_UNAVAILABLE' }));
 
     const failed = events.find((e) => e.stage === 'mid_price_rpc_failed');
     expect(failed).toBeDefined();
     expect(failed!.payload.pass).toBe('pass1');
-    expect(failed!.payload.error_code).toBe('SLIPPAGE_QUERY_FAILED');
+    expect(failed!.payload.error_code).toBe('MARKET_QUOTE_UNAVAILABLE');
     expect(typeof failed!.payload.mid_price_total_ms).toBe('number');
     expect(failed!.payload.mid_price_stats_complete).toBe(false);
     expect(failed!.payload.pool_id).toBe('0xPOOL');

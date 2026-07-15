@@ -1,5 +1,5 @@
 /**
- * StelisClient — thin HTTP wrapper around the Relay API.
+ * StelisClient — thin HTTP wrapper around a Stelis Host's Relay API and Studio routes.
  *
  * Usage:
  *   const client = new StelisClient({ endpoint: 'http://localhost:3200/relay' });
@@ -35,6 +35,7 @@ import {
   RELAY_CONFIG_ERROR_CODES,
   RELAY_PREPARE_ERROR_CODES,
   RELAY_SPONSOR_ERROR_CODES,
+  RELAY_STATUS_ERROR_CODES,
   STUDIO_DETAIL_ERROR_CODES,
   STUDIO_LIST_ERROR_CODES,
   type HostErrorCode,
@@ -62,7 +63,7 @@ const DEFAULT_REQUEST_TIMEOUTS: ResolvedRequestTimeouts = {
 
 export class StelisApiException extends Error {
   constructor(
-    public readonly code: HostErrorCode | 'UNKNOWN',
+    public readonly code: HostErrorCode,
     message: string,
     public readonly status: number,
     /** Closed current Host error fields other than `error` and `code`. */
@@ -96,7 +97,9 @@ export class StelisClient {
   // ─────────────────────────────────────────
 
   async getStatus(): Promise<RelayStatusResponse> {
-    return parseRelayStatusResponse(await this.get('/status', this.timeouts.statusMs, []));
+    return parseRelayStatusResponse(
+      await this.get('/status', this.timeouts.statusMs, RELAY_STATUS_ERROR_CODES),
+    );
   }
 
   async getConfig(): Promise<RelayConfigResponse> {
@@ -284,27 +287,22 @@ export class StelisClient {
       try {
         apiError = parseHostErrorResponse(data, allowedErrorCodes, res.status);
       } catch {
-        apiError = undefined;
+        throw new Error(`Stelis Host returned a non-current error response (HTTP ${res.status})`);
       }
-      const code = apiError?.code ?? 'UNKNOWN';
-      const message =
-        apiError?.error ?? `Relay API returned a non-current error response (HTTP ${res.status})`;
       let extra: HostErrorMeta | undefined;
-      if (apiError) {
-        const { error: _error, code: _code, ...currentMeta } = apiError;
-        if (Object.keys(currentMeta).length > 0) extra = currentMeta;
-      }
+      const { error: _error, code: _code, ...currentMeta } = apiError;
+      if (Object.keys(currentMeta).length > 0) extra = currentMeta;
       throw new StelisApiException(
-        code,
-        message,
+        apiError.code,
+        apiError.error,
         res.status,
         extra && Object.keys(extra).length > 0 ? extra : undefined,
       );
     }
 
     if (data === undefined) {
-      // Successful HTTP status with a non-JSON body indicates an invalid Relay API response.
-      throw new Error(`Relay API returned a non-JSON success response (HTTP ${res.status})`);
+      // Successful HTTP status with a non-JSON body indicates an invalid Host response.
+      throw new Error(`Stelis Host returned a non-JSON success response (HTTP ${res.status})`);
     }
 
     return data;

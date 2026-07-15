@@ -53,7 +53,7 @@ import type { AppApiContext } from '../context.js';
 import type { ResolveClientIp } from '../clientIp.js';
 import { buildSponsorUnavailableResponse } from '../sponsor-operations/gateResponse.js';
 import { runStudioAuth } from '../middleware/studioAuth.js';
-import { codedHostError, mapError, respondMapped, uncodedHostError } from '../errorMap.js';
+import { codedHostError, mapError, respondMapped } from '../errorMap.js';
 import { safeErrorSummary } from '@stelis/core-api/observability';
 
 export function createStudioRoutes(
@@ -62,20 +62,14 @@ export function createStudioRoutes(
 ) {
   const app = new Hono();
 
-  const claimFailures = {
-    promotion_not_found: { code: 'PROMOTION_NOT_FOUND', message: 'Promotion not found' },
-    promotion_not_active: { code: 'PROMOTION_NOT_ACTIVE', message: 'Promotion is not active' },
-    promotion_not_started: { code: 'PROMOTION_NOT_ACTIVE', message: 'Promotion has not started' },
-    claim_deadline_passed: {
-      code: 'CLAIM_DEADLINE_PASSED',
-      message: 'Promotion claim deadline has passed',
-    },
-    max_participants_reached: {
-      code: 'PROMOTION_CAPACITY_REACHED',
-      message: 'Promotion participant capacity has been reached',
-    },
-    already_claimed: { code: 'ALREADY_CLAIMED', message: 'Promotion already claimed' },
-  } as const satisfies Record<ClaimFailureReason, { code: string; message: string }>;
+  const claimFailureCodes = {
+    promotion_not_found: 'PROMOTION_NOT_FOUND',
+    promotion_not_active: 'PROMOTION_NOT_ACTIVE',
+    promotion_not_started: 'PROMOTION_NOT_ACTIVE',
+    claim_deadline_passed: 'CLAIM_DEADLINE_PASSED',
+    max_participants_reached: 'PROMOTION_CAPACITY_REACHED',
+    already_claimed: 'ALREADY_CLAIMED',
+  } as const satisfies Record<ClaimFailureReason, (typeof STUDIO_CLAIM_ERROR_CODES)[number]>;
 
   // ── GET /studio/promotions — developer-JWT principal promotion list ──
   // Guard precedence: route-local 503 → shared JWT/block/rate-limit prelude.
@@ -83,14 +77,7 @@ export function createStudioRoutes(
     try {
       const ctx = await contextPromise;
       if (!ctx.promotionStore || !ctx.executionLedger) {
-        return respondMapped(
-          c,
-          uncodedHostError(
-            { error: 'Promotion system not available (studio not enabled)' },
-            STUDIO_LIST_ERROR_CODES,
-            503,
-          ),
-        );
+        return respondMapped(c, codedHostError('STUDIO_UNAVAILABLE', STUDIO_LIST_ERROR_CODES));
       }
 
       const auth = await runStudioAuth(c, ctx, resolveClientIp, {
@@ -124,10 +111,7 @@ export function createStudioRoutes(
     } catch (err) {
       const mapped = mapError(err, STUDIO_LIST_ERROR_CODES);
       if (mapped) return respondMapped(c, mapped);
-      return respondMapped(
-        c,
-        uncodedHostError({ error: 'Internal server error' }, STUDIO_LIST_ERROR_CODES, 500),
-      );
+      return respondMapped(c, codedHostError('INTERNAL_ERROR', STUDIO_LIST_ERROR_CODES));
     }
   });
 
@@ -137,14 +121,7 @@ export function createStudioRoutes(
     try {
       const ctx = await contextPromise;
       if (!ctx.promotionStore || !ctx.executionLedger) {
-        return respondMapped(
-          c,
-          uncodedHostError(
-            { error: 'Promotion system not available (studio not enabled)' },
-            STUDIO_DETAIL_ERROR_CODES,
-            503,
-          ),
-        );
+        return respondMapped(c, codedHostError('STUDIO_UNAVAILABLE', STUDIO_DETAIL_ERROR_CODES));
       }
 
       const auth = await runStudioAuth(c, ctx, resolveClientIp, {
@@ -158,13 +135,7 @@ export function createStudioRoutes(
       const promotionId = c.req.param('id');
       const promotion = await ctx.promotionStore.get(promotionId);
       if (!promotion) {
-        return respondMapped(
-          c,
-          codedHostError(
-            { error: 'Promotion not found', code: 'PROMOTION_NOT_FOUND' },
-            STUDIO_DETAIL_ERROR_CODES,
-          ),
-        );
+        return respondMapped(c, codedHostError('PROMOTION_NOT_FOUND', STUDIO_DETAIL_ERROR_CODES));
       }
 
       const [entitlement, claimedCount, budgetSummary] = await Promise.all([
@@ -186,10 +157,7 @@ export function createStudioRoutes(
     } catch (err) {
       const mapped = mapError(err, STUDIO_DETAIL_ERROR_CODES);
       if (mapped) return respondMapped(c, mapped);
-      return respondMapped(
-        c,
-        uncodedHostError({ error: 'Internal server error' }, STUDIO_DETAIL_ERROR_CODES, 500),
-      );
+      return respondMapped(c, codedHostError('INTERNAL_ERROR', STUDIO_DETAIL_ERROR_CODES));
     }
   });
 
@@ -201,14 +169,7 @@ export function createStudioRoutes(
       // 503 guards first — infrastructure/availability failures outrank
       // auth and rate-limit.
       if (!ctx.promotionStore || !ctx.executionLedger) {
-        return respondMapped(
-          c,
-          uncodedHostError(
-            { error: 'Promotion system not available (studio not enabled)' },
-            STUDIO_CLAIM_ERROR_CODES,
-            503,
-          ),
-        );
+        return respondMapped(c, codedHostError('STUDIO_UNAVAILABLE', STUDIO_CLAIM_ERROR_CODES));
       }
 
       const auth = await runStudioAuth(c, ctx, resolveClientIp, {
@@ -249,11 +210,8 @@ export function createStudioRoutes(
           );
         }
 
-        const failure = claimFailures[result.reason];
-        return respondMapped(
-          c,
-          codedHostError({ error: failure.message, code: failure.code }, STUDIO_CLAIM_ERROR_CODES),
-        );
+        const failureCode = claimFailureCodes[result.reason];
+        return respondMapped(c, codedHostError(failureCode, STUDIO_CLAIM_ERROR_CODES));
       }
 
       const response = { entitlement: result.entitlement } satisfies PromotionClaimResponse;
@@ -261,10 +219,7 @@ export function createStudioRoutes(
     } catch (err) {
       const mapped = mapError(err, STUDIO_CLAIM_ERROR_CODES);
       if (mapped) return respondMapped(c, mapped);
-      return respondMapped(
-        c,
-        uncodedHostError({ error: 'Internal server error' }, STUDIO_CLAIM_ERROR_CODES, 500),
-      );
+      return respondMapped(c, codedHostError('INTERNAL_ERROR', STUDIO_CLAIM_ERROR_CODES));
     }
   });
 
@@ -279,31 +234,19 @@ export function createStudioRoutes(
       if (!ctx.studio) {
         return respondMapped(
           c,
-          uncodedHostError(
-            { error: 'Studio mode is not enabled on this server' },
-            PROMOTION_PREPARE_ERROR_CODES,
-            503,
-          ),
+          codedHostError('STUDIO_UNAVAILABLE', PROMOTION_PREPARE_ERROR_CODES),
         );
       }
       if (!ctx.promotionStore || !ctx.executionLedger) {
         return respondMapped(
           c,
-          uncodedHostError(
-            { error: 'Promotion system not available' },
-            PROMOTION_PREPARE_ERROR_CODES,
-            503,
-          ),
+          codedHostError('STUDIO_UNAVAILABLE', PROMOTION_PREPARE_ERROR_CODES),
         );
       }
       if (!ctx.studioGlobalAllowedTargets) {
         return respondMapped(
           c,
-          uncodedHostError(
-            { error: 'Global target policy not configured' },
-            PROMOTION_PREPARE_ERROR_CODES,
-            503,
-          ),
+          codedHostError('STUDIO_UNAVAILABLE', PROMOTION_PREPARE_ERROR_CODES),
         );
       }
 
@@ -319,7 +262,7 @@ export function createStudioRoutes(
         for (const [k, v] of Object.entries(blocked.headers)) c.header(k, v);
         return respondMapped(
           c,
-          codedHostError(blocked.body, PROMOTION_PREPARE_ERROR_CODES, blocked.headers),
+          codedHostError(blocked.errorCode, PROMOTION_PREPARE_ERROR_CODES, {}, blocked.headers),
         );
       }
 
@@ -357,28 +300,13 @@ export function createStudioRoutes(
       return c.json(result);
     } catch (err) {
       if (err instanceof HostWireParseError) {
-        return respondMapped(
-          c,
-          codedHostError(
-            {
-              error: 'Request body does not match the current API contract',
-              code: 'BAD_REQUEST',
-            },
-            PROMOTION_PREPARE_ERROR_CODES,
-          ),
-        );
+        return respondMapped(c, codedHostError('BAD_REQUEST', PROMOTION_PREPARE_ERROR_CODES));
       }
       const mapped = mapError(err, PROMOTION_PREPARE_ERROR_CODES);
       if (mapped) return respondMapped(c, mapped);
       // eslint-disable-next-line no-console
       console.error('[app-api /studio/promotions/:id/prepare] 500 error:', safeErrorSummary(err));
-      return respondMapped(
-        c,
-        codedHostError(
-          { error: 'Internal server error', code: 'INTERNAL_ERROR' },
-          PROMOTION_PREPARE_ERROR_CODES,
-        ),
-      );
+      return respondMapped(c, codedHostError('INTERNAL_ERROR', PROMOTION_PREPARE_ERROR_CODES));
     }
   });
 
@@ -393,31 +321,19 @@ export function createStudioRoutes(
       if (!ctx.studio) {
         return respondMapped(
           c,
-          uncodedHostError(
-            { error: 'Studio mode is not enabled on this server' },
-            PROMOTION_SPONSOR_ERROR_CODES,
-            503,
-          ),
+          codedHostError('STUDIO_UNAVAILABLE', PROMOTION_SPONSOR_ERROR_CODES),
         );
       }
       if (!ctx.promotionStore || !ctx.executionLedger) {
         return respondMapped(
           c,
-          uncodedHostError(
-            { error: 'Promotion system not available' },
-            PROMOTION_SPONSOR_ERROR_CODES,
-            503,
-          ),
+          codedHostError('STUDIO_UNAVAILABLE', PROMOTION_SPONSOR_ERROR_CODES),
         );
       }
       if (!ctx.studioGlobalAllowedTargets) {
         return respondMapped(
           c,
-          uncodedHostError(
-            { error: 'Global target policy not configured' },
-            PROMOTION_SPONSOR_ERROR_CODES,
-            503,
-          ),
+          codedHostError('STUDIO_UNAVAILABLE', PROMOTION_SPONSOR_ERROR_CODES),
         );
       }
 
@@ -427,7 +343,7 @@ export function createStudioRoutes(
         for (const [k, v] of Object.entries(blocked.headers)) c.header(k, v);
         return respondMapped(
           c,
-          codedHostError(blocked.body, PROMOTION_SPONSOR_ERROR_CODES, blocked.headers),
+          codedHostError(blocked.errorCode, PROMOTION_SPONSOR_ERROR_CODES, {}, blocked.headers),
         );
       }
 
@@ -476,28 +392,13 @@ export function createStudioRoutes(
       return c.json(sponsorResult);
     } catch (err) {
       if (err instanceof HostWireParseError) {
-        return respondMapped(
-          c,
-          codedHostError(
-            {
-              error: 'Request body does not match the current API contract',
-              code: 'BAD_REQUEST',
-            },
-            PROMOTION_SPONSOR_ERROR_CODES,
-          ),
-        );
+        return respondMapped(c, codedHostError('BAD_REQUEST', PROMOTION_SPONSOR_ERROR_CODES));
       }
       const mapped = mapError(err, PROMOTION_SPONSOR_ERROR_CODES);
       if (mapped) return respondMapped(c, mapped);
       // eslint-disable-next-line no-console
       console.error('[app-api /studio/promotions/:id/sponsor] 500 error:', safeErrorSummary(err));
-      return respondMapped(
-        c,
-        codedHostError(
-          { error: 'Internal server error', code: 'SPONSOR_FAILED' },
-          PROMOTION_SPONSOR_ERROR_CODES,
-        ),
-      );
+      return respondMapped(c, codedHostError('SPONSOR_FAILED', PROMOTION_SPONSOR_ERROR_CODES));
     }
   });
 

@@ -27,11 +27,7 @@ function mockFetchResponses(responses: Record<string, unknown>) {
   return vi.fn().mockImplementation((url: string) => {
     const body = responses[url];
     if (body === undefined) {
-      return Promise.resolve({
-        ok: false,
-        status: 404,
-        json: () => Promise.resolve({ error: 'NOT_FOUND' }),
-      });
+      return Promise.reject(new Error(`Unhandled test request: ${url}`));
     }
     return Promise.resolve({
       ok: true,
@@ -51,6 +47,17 @@ const SPONSOR_OPERATIONS_DATA = {
   network: 'testnet',
   primaryAddress: '0x' + 'd'.repeat(64),
   settlementPayoutRecipientAddress: '0x' + 'b'.repeat(64),
+  sponsorBalanceWarnMist: '1000000000',
+  sponsorBalanceRefillTargetMist: '2000000000',
+  refillEnabled: true,
+  quotedHostFeeMist: '100000',
+  onChainIds: {
+    packageId: '0x' + '1'.repeat(64),
+    configId: '0x' + '2'.repeat(64),
+    vaultRegistryId: '0x' + '3'.repeat(64),
+    deepbookPackageId: '0x' + '4'.repeat(64),
+  },
+  studioEnabled: false,
   rpcFleet: {
     endpoints: [
       {
@@ -76,9 +83,35 @@ const SPONSOR_OPERATIONS_DATA = {
     slotLeases: {
       leasedSlots: 0,
       freeSlots: 3,
-      slots: [],
+      slots: [
+        { address: '0x' + 'd'.repeat(64), leased: false },
+        { address: '0x' + 'e'.repeat(64), leased: false },
+        { address: '0x' + 'f'.repeat(64), leased: false },
+      ],
     },
-    slots: [],
+    slots: [
+      {
+        address: '0x' + 'd'.repeat(64),
+        state: 'healthy',
+        balanceMist: '3000000000',
+        lastObservedAtMs: 1_700_000_000_000,
+        lastError: null,
+      },
+      {
+        address: '0x' + 'e'.repeat(64),
+        state: 'healthy',
+        balanceMist: '3000000000',
+        lastObservedAtMs: 1_700_000_000_000,
+        lastError: null,
+      },
+      {
+        address: '0x' + 'f'.repeat(64),
+        state: 'healthy',
+        balanceMist: '3000000000',
+        lastObservedAtMs: 1_700_000_000_000,
+        lastError: null,
+      },
+    ],
     sponsorRefillAccount: {
       address: '0x' + 'c'.repeat(64),
       balanceMist: '2000000000',
@@ -134,7 +167,7 @@ describe('AuthGuard integration', () => {
       vi.fn().mockResolvedValue({
         ok: false,
         status: 401,
-        json: () => Promise.resolve({ error: 'UNAUTHORIZED' }),
+        json: () => Promise.resolve({ error: 'Authentication failed', code: 'ADMIN_UNAUTHORIZED' }),
       }),
     );
 
@@ -294,11 +327,7 @@ describe('DashboardPage integration', () => {
               }),
           });
         }
-        return Promise.resolve({
-          ok: false,
-          status: 404,
-          json: () => Promise.resolve({ error: 'NOT_FOUND' }),
-        });
+        return Promise.reject(new Error(`Unhandled test request: ${method} ${url}`));
       }),
     );
 
@@ -387,7 +416,22 @@ describe('DashboardPage integration', () => {
       ...SPONSOR_OPERATIONS_DATA,
       sponsorOperations: {
         ...SPONSOR_OPERATIONS_DATA.sponsorOperations,
-        gateErrorCode: 'NO_HEALTHY_SPONSOR',
+        gateErrorCode: 'SPONSOR_CAPACITY_UNAVAILABLE',
+        availableSlots: 0,
+        degradedSlots: 3,
+        slots: SPONSOR_OPERATIONS_DATA.sponsorOperations.slots.map((slot) => ({
+          ...slot,
+          state: 'rpc_unreachable',
+          lastError: 'RPC unavailable',
+        })),
+        slotLeases: {
+          leasedSlots: 3,
+          freeSlots: 0,
+          slots: SPONSOR_OPERATIONS_DATA.sponsorOperations.slotLeases.slots.map((slot) => ({
+            ...slot,
+            leased: true,
+          })),
+        },
       },
     };
     vi.stubGlobal(
@@ -401,7 +445,7 @@ describe('DashboardPage integration', () => {
     render(<DirectOutletProvider element={<DashboardPage />} />);
 
     await waitFor(() => {
-      expect(screen.getByText('Closed — NO_HEALTHY_SPONSOR')).toBeDefined();
+      expect(screen.getByText('Closed — SPONSOR_CAPACITY_UNAVAILABLE')).toBeDefined();
     });
   });
 
@@ -411,15 +455,9 @@ describe('DashboardPage integration', () => {
       ...SPONSOR_OPERATIONS_DATA,
       sponsorOperations: {
         ...SPONSOR_OPERATIONS_DATA.sponsorOperations,
-        slots: [
-          {
-            address: '0x' + 'e'.repeat(64),
-            state: 'healthy',
-            balanceMist: hugeMist,
-            lastObservedAtMs: 1_700_000_000_000,
-            lastError: null,
-          },
-        ],
+        slots: SPONSOR_OPERATIONS_DATA.sponsorOperations.slots.map((slot, index) =>
+          index === 0 ? { ...slot, balanceMist: hugeMist } : slot,
+        ),
         sponsorRefillAccount: {
           ...SPONSOR_OPERATIONS_DATA.sponsorOperations.sponsorRefillAccount,
           balanceMist: hugeMist,
@@ -495,11 +533,7 @@ describe('DashboardPage integration', () => {
               }),
           });
         }
-        return Promise.resolve({
-          ok: false,
-          status: 404,
-          json: () => Promise.resolve({ error: 'NOT_FOUND' }),
-        });
+        return Promise.reject(new Error(`Unhandled test request: ${method} ${url}`));
       }),
     );
 
@@ -582,7 +616,8 @@ describe('DashboardPage integration', () => {
               json: () =>
                 Promise.resolve({
                   code: 'WITHDRAWAL_PENDING',
-                  error: 'Withdrawal outcome is pending recovery.',
+                  error: 'Service temporarily unavailable',
+                  operationId: 'withdrawal-op-pending',
                 }),
             });
           }
@@ -597,11 +632,7 @@ describe('DashboardPage integration', () => {
               }),
           });
         }
-        return Promise.resolve({
-          ok: false,
-          status: 404,
-          json: () => Promise.resolve({ error: 'NOT_FOUND' }),
-        });
+        return Promise.reject(new Error(`Unhandled test request: ${method} ${url}`));
       }),
     );
 
@@ -636,17 +667,19 @@ describe('DashboardPage integration', () => {
       request: {
         adminAddress: VALID_SESSION.address,
         network: 'mainnet',
-        nonce: 'stelis-withdraw:mainnet:123',
-        signature: '0xMAINNET_SIG',
-        amountMist: '1500000000',
+        request: {
+          nonce: 'stelis-withdraw:mainnet:123',
+          signature: '0xMAINNET_SIG',
+          amountMist: '1500000000',
+        },
       },
     },
     {
-      name: 'legacy-without-network',
+      name: 'invalid-without-network',
       request: {
         adminAddress: VALID_SESSION.address,
-        nonce: 'stelis-withdraw:legacy:123',
-        signature: '0xLEGACY_SIG',
+        nonce: 'stelis-withdraw:invalid:123',
+        signature: '0xINVALID_SIG',
         amountMist: '1500000000',
       },
     },
@@ -708,15 +741,12 @@ describe('DashboardPage integration', () => {
             json: () =>
               Promise.resolve({
                 code: 'WITHDRAWAL_PENDING',
-                error: 'Withdrawal outcome is pending recovery.',
+                error: 'Service temporarily unavailable',
+                operationId: 'withdrawal-op-pending',
               }),
           });
         }
-        return Promise.resolve({
-          ok: false,
-          status: 404,
-          json: () => Promise.resolve({ error: 'NOT_FOUND' }),
-        });
+        return Promise.reject(new Error(`Unhandled test request: ${method} ${url}`));
       }),
     );
 
@@ -739,12 +769,14 @@ describe('DashboardPage integration', () => {
     {
       status: 409,
       code: 'WITHDRAWAL_NOT_ACCEPTED',
-      error: 'This withdrawal was not accepted.',
+      error: 'Request conflicts with current state',
+      operationId: 'withdrawal-op-not-accepted',
     },
     {
       status: 401,
       code: 'WITHDRAWAL_SIGNATURE_INVALID',
-      error: 'Invalid signature',
+      error: 'Authentication failed',
+      operationId: undefined,
     },
   ])('clears a stored request after terminal response $code', async (response) => {
     sessionStorage.setItem(
@@ -752,9 +784,11 @@ describe('DashboardPage integration', () => {
       JSON.stringify({
         adminAddress: VALID_SESSION.address,
         network: 'testnet',
-        nonce: 'stelis-withdraw:unaccepted:123',
-        signature: '0xUNACCEPTED',
-        amountMist: '1500000000',
+        request: {
+          nonce: 'stelis-withdraw:unaccepted:123',
+          signature: '0xUNACCEPTED',
+          amountMist: '1500000000',
+        },
       }),
     );
     vi.stubGlobal(
@@ -772,14 +806,17 @@ describe('DashboardPage integration', () => {
           return Promise.resolve({
             ok: false,
             status: response.status,
-            json: () => Promise.resolve({ code: response.code, error: response.error }),
+            json: () =>
+              Promise.resolve({
+                code: response.code,
+                error: response.error,
+                ...(response.operationId === undefined
+                  ? {}
+                  : { operationId: response.operationId }),
+              }),
           });
         }
-        return Promise.resolve({
-          ok: false,
-          status: 404,
-          json: () => Promise.resolve({ error: 'NOT_FOUND' }),
-        });
+        return Promise.reject(new Error(`Unhandled test request: ${method} ${url}`));
       }),
     );
 
@@ -1030,13 +1067,12 @@ describe('SecurityPage integration', () => {
         '/api/blocklist': { blocklist: [] },
         '/api/logs': {
           logs: [
-            JSON.stringify({
+            {
               ts: '2026-01-02T03:04:05.000Z',
               event: 'admin_login_success',
-              level: 'info',
               ip: '127.0.0.1',
               address: '0x' + 'a'.repeat(64),
-            }),
+            },
           ],
         },
       }),
@@ -1157,7 +1193,7 @@ describe('PromotionsPage integration', () => {
             json: () =>
               Promise.resolve({
                 code: 'PROMOTION_CURRENT_CONFLICT',
-                error: 'Promotion promo-conflict changed while attempting update',
+                error: 'Request conflicts with current state',
               }),
           }));
         }
@@ -1169,15 +1205,11 @@ describe('PromotionsPage integration', () => {
             json: () =>
               Promise.resolve({
                 code: 'PROMOTION_CURRENT_CONFLICT',
-                error: 'Promotion promo-conflict changed while attempting status',
+                error: 'Request conflicts with current state',
               }),
           }));
         }
-        return Promise.resolve({
-          ok: false,
-          status: 404,
-          json: () => Promise.resolve({ error: 'NOT_FOUND' }),
-        });
+        return Promise.reject(new Error(`Unhandled test request: ${method} ${url}`));
       }),
     );
 
@@ -1198,9 +1230,7 @@ describe('PromotionsPage integration', () => {
     releaseUpdateConflict();
     await waitFor(() => expect(screen.getByText('Concurrent Promotion')).toBeDefined());
     expect(screen.queryByRole('heading', { name: 'Edit Promotion' })).toBeNull();
-    expect(
-      screen.getByText('Promotion promo-conflict changed while attempting update'),
-    ).toBeDefined();
+    expect(screen.getByText('Request conflicts with current state')).toBeDefined();
     expect(listReads).toBe(2);
     expect(updateWrites).toBe(1);
 
@@ -1213,9 +1243,7 @@ describe('PromotionsPage integration', () => {
     releaseStatusConflict();
 
     await waitFor(() =>
-      expect(
-        screen.getByText('Promotion promo-conflict changed while attempting status'),
-      ).toBeDefined(),
+      expect(screen.getByText('Request conflicts with current state')).toBeDefined(),
     );
     expect(screen.queryByRole('heading', { name: 'Edit Promotion' })).toBeNull();
     expect(listReads).toBe(3);
@@ -1273,11 +1301,7 @@ describe('PromotionsPage integration', () => {
               ),
           }));
         }
-        return Promise.resolve({
-          ok: false,
-          status: 404,
-          json: () => Promise.resolve({ error: 'NOT_FOUND' }),
-        });
+        return Promise.reject(new Error(`Unhandled test request: ${method} ${url}`));
       }),
     );
 
@@ -1335,7 +1359,10 @@ describe('ConfigPage integration', () => {
         {
           settlementTokenSymbol: 'DEEP',
           settlementTokenType: DEEP_TYPE,
+          settlementTokenDecimals: 9,
           settlementSwapDirection: 'baseForQuote',
+          lotSize: 1,
+          minSize: 1,
           hops: [
             {
               poolId: '0x' + 'a1'.repeat(32),

@@ -49,8 +49,8 @@ export interface PromotionAdminSummary {
   totalRemainingBudgetMist: string;
   /**
    * Total required budget (maxParticipants × perUserGasAllowanceMist).
-   * Display/read-model value only; draft products that exceed the ledger
-   * numeric bound are still shown exactly and are rejected on activation.
+   * The shared Promotion ledger-value guard validates this product before a
+   * record can be stored, activated, or projected through the Host wire.
    */
   totalRequiredBudgetMist: string;
 }

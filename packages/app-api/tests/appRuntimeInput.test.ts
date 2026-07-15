@@ -156,6 +156,24 @@ describe('createApp runtime input boundary', () => {
       'https://admin.snapshot.example',
     );
 
+    const adminUpdate = await result.app.request('/api/promotions/promotion-1', {
+      method: 'OPTIONS',
+      headers: {
+        Origin: 'https://admin.snapshot.example',
+        'Access-Control-Request-Method': 'PUT',
+      },
+    });
+    expect(adminUpdate.headers.get('access-control-allow-origin')).toBe(
+      'https://admin.snapshot.example',
+    );
+    expect(adminUpdate.headers.get('access-control-allow-methods')?.split(',')).toEqual([
+      'GET',
+      'POST',
+      'PUT',
+      'DELETE',
+      'OPTIONS',
+    ]);
+
     const mutated = await result.app.request('/auth/preflight', {
       method: 'OPTIONS',
       headers: {

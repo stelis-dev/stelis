@@ -10,12 +10,8 @@
  *
  */
 import { useEffect, useState } from 'react';
-import {
-  getSponsorOperations,
-  getStudio,
-  type SponsorOperationsStatus,
-  type StudioStatusResponse,
-} from '../api/client';
+import { getSponsorOperations, getStudio } from '../api/client';
+import type { AdminSponsorOperationsResponse, AdminStudioResponse } from '@stelis/contracts';
 import { mistToSui, truncateId, CopyButton } from '../utils';
 
 function SuiAmount({ mist }: { mist: string }) {
@@ -35,8 +31,8 @@ function formatBpsPercent(bps: number): string {
 }
 
 export function ConfigPage() {
-  const [data, setData] = useState<SponsorOperationsStatus | null>(null);
-  const [studioStatus, setStudioStatus] = useState<StudioStatusResponse | null>(null);
+  const [data, setData] = useState<AdminSponsorOperationsResponse | null>(null);
+  const [studioStatus, setStudioStatus] = useState<AdminStudioResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
@@ -125,7 +121,7 @@ export function ConfigPage() {
                   Low-balance Threshold
                 </td>
                 <td style={{ textAlign: 'right' }}>
-                  <SuiAmount mist={data.sponsorBalanceWarnMist ?? '0'} />
+                  <SuiAmount mist={data.sponsorBalanceWarnMist} />
                 </td>
               </tr>
               <tr>
@@ -136,7 +132,7 @@ export function ConfigPage() {
                   Refill Target
                 </td>
                 <td style={{ textAlign: 'right' }}>
-                  <SuiAmount mist={data.sponsorBalanceRefillTargetMist ?? '0'} />
+                  <SuiAmount mist={data.sponsorBalanceRefillTargetMist} />
                 </td>
               </tr>
             </tbody>
@@ -172,7 +168,7 @@ export function ConfigPage() {
                   Host Fee
                 </td>
                 <td style={{ textAlign: 'right' }}>
-                  <SuiAmount mist={data.quotedHostFeeMist ?? '0'} />
+                  <SuiAmount mist={data.quotedHostFeeMist} />
                 </td>
               </tr>
               <tr>
@@ -395,7 +391,7 @@ export function ConfigPage() {
       )}
 
       {/* ═══════════════ §5: On-chain IDs ═══════════════ */}
-      {data?.onChainIds && (
+      {data && (
         <div className="admin-card">
           <div className="admin-card-title">On-chain IDs</div>
           <table className="admin-table">

@@ -52,7 +52,6 @@ stelis/
   docs/
     index.md
     repository-structure.md
-    schemas/
     architecture/
   scripts/
 ```

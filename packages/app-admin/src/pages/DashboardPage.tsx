@@ -9,14 +9,16 @@ import {
   issueSponsorRefillAccountWithdrawalChallenge,
   executeSponsorRefillAccountWithdrawal,
   getSponsoredLogsSummary,
-  type SponsorOperationsStatus,
-  type SponsoredExecutionAggregate,
 } from '../api/client';
 import { SponsoredLogsKpi } from '../components/SponsoredLogsKpi';
 import {
   buildSponsorRefillAccountWithdrawMessage,
   isPositiveU64DecimalString,
+  parseSponsorRefillAccountWithdrawalRequest,
+  type AdminSponsorOperationsResponse,
+  type AdminSponsoredExecutionAggregate,
   type SuiNetwork,
+  type SponsorRefillAccountWithdrawalRequest,
   type SponsorSlotState,
 } from '@stelis/contracts';
 import { getWallets } from '@mysten/wallet-standard';
@@ -61,12 +63,10 @@ type WithdrawSignerResolution =
     }
   | { ok: false; message: string };
 
-interface SignedWithdrawalRequest {
+interface PendingWithdrawal {
   readonly adminAddress: string;
   readonly network: SuiNetwork;
-  readonly nonce: string;
-  readonly signature: string;
-  readonly amountMist: string;
+  readonly request: SponsorRefillAccountWithdrawalRequest;
 }
 
 const PENDING_WITHDRAWAL_STORAGE_KEY = 'stelis:admin:pending-withdrawal';
@@ -74,7 +74,7 @@ const PENDING_WITHDRAWAL_STORAGE_KEY = 'stelis:admin:pending-withdrawal';
 function readPendingWithdrawal(
   adminAddress: string | null,
   network: SuiNetwork,
-): SignedWithdrawalRequest | null {
+): PendingWithdrawal | null {
   try {
     if (adminAddress === null) {
       sessionStorage.removeItem(PENDING_WITHDRAWAL_STORAGE_KEY);
@@ -82,21 +82,28 @@ function readPendingWithdrawal(
     }
     const raw = sessionStorage.getItem(PENDING_WITHDRAWAL_STORAGE_KEY);
     if (raw === null) return null;
-    const parsed = JSON.parse(raw) as Partial<SignedWithdrawalRequest>;
+    const parsed: unknown = JSON.parse(raw);
     if (
-      parsed.adminAddress !== adminAddress ||
-      parsed.network !== network ||
-      typeof parsed.nonce !== 'string' ||
-      parsed.nonce.length === 0 ||
-      typeof parsed.signature !== 'string' ||
-      parsed.signature.length === 0 ||
-      typeof parsed.amountMist !== 'string' ||
-      !isPositiveU64DecimalString(parsed.amountMist)
+      typeof parsed !== 'object' ||
+      parsed === null ||
+      Array.isArray(parsed) ||
+      Object.keys(parsed).some(
+        (key) => key !== 'adminAddress' && key !== 'network' && key !== 'request',
+      )
     ) {
       sessionStorage.removeItem(PENDING_WITHDRAWAL_STORAGE_KEY);
       return null;
     }
-    return parsed as SignedWithdrawalRequest;
+    const envelope = parsed as Record<string, unknown>;
+    if (envelope.adminAddress !== adminAddress || envelope.network !== network) {
+      sessionStorage.removeItem(PENDING_WITHDRAWAL_STORAGE_KEY);
+      return null;
+    }
+    return {
+      adminAddress,
+      network,
+      request: parseSponsorRefillAccountWithdrawalRequest(envelope.request),
+    };
   } catch {
     try {
       sessionStorage.removeItem(PENDING_WITHDRAWAL_STORAGE_KEY);
@@ -108,14 +115,14 @@ function readPendingWithdrawal(
 }
 
 function pendingWithdrawalMatchesRuntime(
-  request: SignedWithdrawalRequest,
+  request: PendingWithdrawal,
   adminAddress: string | null,
   network: SuiNetwork,
 ): boolean {
   return request.adminAddress === adminAddress && request.network === network;
 }
 
-function rememberPendingWithdrawal(request: SignedWithdrawalRequest | null): void {
+function rememberPendingWithdrawal(request: PendingWithdrawal | null): void {
   try {
     if (request === null) {
       sessionStorage.removeItem(PENDING_WITHDRAWAL_STORAGE_KEY);
@@ -183,7 +190,7 @@ function resolveWithdrawSigner(adminAddress: string): WithdrawSignerResolution {
   };
 }
 
-type RpcFleet = NonNullable<SponsorOperationsStatus['rpcFleet']>;
+type RpcFleet = AdminSponsorOperationsResponse['rpcFleet'];
 
 function RpcFleetCard({ rpcFleet }: { rpcFleet: RpcFleet }) {
   return (
@@ -249,7 +256,7 @@ function WithdrawSection({
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [pendingRequest, setPendingRequest] = useState<SignedWithdrawalRequest | null>(() =>
+  const [pendingRequest, setPendingRequest] = useState<PendingWithdrawal | null>(() =>
     readPendingWithdrawal(adminAddress, network),
   );
   const amountValidation = validateWithdrawAmountInput(amount);
@@ -295,16 +302,16 @@ function WithdrawSection({
           message: new TextEncoder().encode(message),
           account: signerResolution.suiAccount,
         });
-        request = { adminAddress, network, nonce, signature, amountMist };
+        request = {
+          adminAddress,
+          network,
+          request: parseSponsorRefillAccountWithdrawalRequest({ nonce, signature, amountMist }),
+        };
         setPendingRequest(request);
         rememberPendingWithdrawal(request);
       }
 
-      const { digest } = await executeSponsorRefillAccountWithdrawal({
-        nonce: request.nonce,
-        signature: request.signature,
-        amountMist: request.amountMist,
-      });
+      const { digest } = await executeSponsorRefillAccountWithdrawal(request.request);
       setPendingRequest(null);
       rememberPendingWithdrawal(null);
       setResult(`Success: ${digest}`);
@@ -386,7 +393,7 @@ function WithdrawSection({
       </div>
       {pendingRequest && (
         <div style={{ fontSize: 11, color: '#fbbf24', marginTop: 6 }}>
-          Pending signed request: {pendingRequest.amountMist} MIST
+          Pending signed request: {pendingRequest.request.amountMist} MIST
         </div>
       )}
       <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 10, lineHeight: 1.6 }}>
@@ -411,11 +418,11 @@ function WithdrawSection({
 
 export function DashboardPage() {
   const { session } = useOutletContext<AuthContext>();
-  const [data, setData] = useState<SponsorOperationsStatus | null>(null);
+  const [data, setData] = useState<AdminSponsorOperationsResponse | null>(null);
   const [error, setError] = useState('');
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
-  const [sponsoredSummary, setSponsoredSummary] = useState<SponsoredExecutionAggregate | null>(
+  const [sponsoredSummary, setSponsoredSummary] = useState<AdminSponsoredExecutionAggregate | null>(
     null,
   );
   const [sponsoredLoading, setSponsoredLoading] = useState(false);
@@ -600,7 +607,7 @@ export function DashboardPage() {
       </div>
 
       {/* RPC Fleet */}
-      {data.rpcFleet && <RpcFleetCard rpcFleet={data.rpcFleet} />}
+      <RpcFleetCard rpcFleet={data.rpcFleet} />
 
       {/* Service Accounts */}
       <div className="admin-card">

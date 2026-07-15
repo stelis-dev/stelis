@@ -6,10 +6,8 @@
  * and pure domain helpers (`computeTotalRequiredBudgetMist`). Handlers and
  * derived read models import from here.
  *
- * Adapter-local shapes (input DTOs like `CreatePromotionInput`, status
- * transition constant and guard, activation-prerequisite check, transition
- * error classes) live alongside their adapter in `promotionStore.ts` — they
- * are tightly coupled to the store API and not shared vocabulary.
+ * The Promotion store consumes the current contracts-owned Admin request
+ * shapes and owns only persistence and lifecycle transitions.
  *
  * @module studio/domain
  */
@@ -20,6 +18,7 @@ import type {
   PromotionStatus as HostPromotionStatus,
   PromotionType as HostPromotionType,
 } from '@stelis/contracts';
+import { parsePromotionLedgerBudget } from './executionLedgerValueGuards.js';
 
 // ─────────────────────────────────────────────
 // Promotion (operator-configured definition)
@@ -40,9 +39,7 @@ export type PromotionType = HostPromotionType;
  */
 export type PromotionStatus = HostPromotionStatus;
 
-// Status-transition constant, activation guard, and error classes live in
-// `promotionStore.ts` — they are tightly coupled to the adapter API and
-// share a single owner there.
+// Status-transition rules and errors live with the Promotion store adapter.
 
 /**
  * Promotion — operator-configured definition and lifecycle state.
@@ -63,7 +60,7 @@ export interface Promotion {
   status: PromotionStatus;
   /**
    * Maximum number of users that can claim this promotion.
-   * gas_sponsorship requires maxParticipants > 0 (enforced at activation).
+   * gas_sponsorship requires maxParticipants > 0 at every write boundary.
    */
   maxParticipants: number;
   /** Per-user gas allowance in MIST (string for bigint precision). */
@@ -87,8 +84,7 @@ export interface Promotion {
   updatedAt: string;
 }
 
-// Input DTOs for the promotion store live in `promotionStore.ts`
-// (`CreatePromotionInput`, `UpdatePromotionInput`) alongside the adapter.
+// Promotion store methods consume the contracts-owned Admin requests directly.
 
 // ─────────────────────────────────────────────
 // Entitlement (per-user execution state)
@@ -254,21 +250,14 @@ export type ReleaseFailureReason = 'reservation_not_found';
  * Pure derivation: maxParticipants * perUserGasAllowanceMist.
  * Returns string for bigint-safe representation.
  *
- * This is a read-model / display helper, not an execution safety gate. It
- * intentionally returns the exact BigInt product even when a draft promotion's
- * product exceeds `MAX_PROMOTION_LEDGER_VALUE_MIST`, so operators can see the
- * offending value before activation rejects it. The activation gate and
- * ExecutionLedger boundaries own the runtime bound enforcement.
+ * This read-model uses the same semantic authority as every write and ledger
+ * boundary, so it cannot project a value the current ledger cannot represent.
  */
 export function computeTotalRequiredBudgetMist(
   promotion: Pick<Promotion, 'maxParticipants' | 'perUserGasAllowanceMist'>,
 ): string {
-  if (!Number.isSafeInteger(promotion.maxParticipants) || promotion.maxParticipants <= 0) {
-    throw new Error('maxParticipants must be a positive safe integer');
-  }
-  if (!/^(?:0|[1-9]\d*)$/.test(promotion.perUserGasAllowanceMist)) {
-    throw new Error('perUserGasAllowanceMist must be a non-negative decimal integer string');
-  }
-  const perUserGasAllowanceMist = BigInt(promotion.perUserGasAllowanceMist);
-  return (BigInt(promotion.maxParticipants) * perUserGasAllowanceMist).toString();
+  return parsePromotionLedgerBudget(
+    promotion.maxParticipants,
+    promotion.perUserGasAllowanceMist,
+  ).totalBudgetMist.toString();
 }

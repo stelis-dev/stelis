@@ -1,5 +1,7 @@
 /** Current machine-readable error vocabulary exposed by a Stelis Host. */
 
+export const RELAY_STATUS_ERROR_CODES = ['INTERNAL_ERROR'] as const;
+
 export const RELAY_CONFIG_ERROR_CODES = ['CONFIG_UNAVAILABLE'] as const;
 
 const STUDIO_AUTH_ERROR_CODES = [
@@ -9,17 +11,21 @@ const STUDIO_AUTH_ERROR_CODES = [
   'AUTH_UNAVAILABLE',
   'ABUSE_BLOCKED',
   'BLOCK_CHECK_UNAVAILABLE',
+  'RATE_LIMITED',
+  'INTERNAL_ERROR',
 ] as const;
 
-export const STUDIO_LIST_ERROR_CODES = [...STUDIO_AUTH_ERROR_CODES] as const;
+export const STUDIO_LIST_ERROR_CODES = [...STUDIO_AUTH_ERROR_CODES, 'STUDIO_UNAVAILABLE'] as const;
 
 export const STUDIO_DETAIL_ERROR_CODES = [
   ...STUDIO_AUTH_ERROR_CODES,
+  'STUDIO_UNAVAILABLE',
   'PROMOTION_NOT_FOUND',
 ] as const;
 
 export const STUDIO_CLAIM_ERROR_CODES = [
   ...STUDIO_AUTH_ERROR_CODES,
+  'STUDIO_UNAVAILABLE',
   'BAD_REQUEST',
   'REQUEST_BODY_TOO_LARGE',
   'PROMOTION_NOT_FOUND',
@@ -62,7 +68,7 @@ export const RELAY_PREPARE_ERROR_CODES = [
   'DRY_RUN_FAILED',
   'DRY_RUN_NO_GAS',
   'UNACCOUNTABLE_WITHDRAWAL',
-  'SLIPPAGE_QUERY_FAILED',
+  'MARKET_QUOTE_UNAVAILABLE',
   'SLIPPAGE_EXCEEDED',
   'SLIPPAGE_CONVERGENCE_FAILED',
   'L1_TOO_MANY_COMMANDS',
@@ -91,6 +97,7 @@ export const RELAY_PREPARE_ERROR_CODES = [
   'SPONSOR_LEASE_COMMIT_FAILED',
   'ABUSE_BLOCKED',
   'BLOCK_CHECK_UNAVAILABLE',
+  'RATE_LIMITED',
   'VAULT_STATE_INCONSISTENT',
   'INTERNAL_ERROR',
 ] as const;
@@ -120,6 +127,7 @@ export const RELAY_SPONSOR_ERROR_CODES = [
   'SPONSOR_FAILED',
   'ABUSE_BLOCKED',
   'BLOCK_CHECK_UNAVAILABLE',
+  'RATE_LIMITED',
 ] as const;
 
 export const PROMOTION_PREPARE_ERROR_CODES = [
@@ -131,6 +139,8 @@ export const PROMOTION_PREPARE_ERROR_CODES = [
   'AUTH_UNAVAILABLE',
   'ABUSE_BLOCKED',
   'BLOCK_CHECK_UNAVAILABLE',
+  'RATE_LIMITED',
+  'STUDIO_UNAVAILABLE',
   'BAD_TX_KIND',
   'SENDER_ADDRESS_MISMATCH',
   'PROMOTION_NOT_FOUND',
@@ -167,6 +177,8 @@ export const PROMOTION_SPONSOR_ERROR_CODES = [
   'AUTH_UNAVAILABLE',
   'ABUSE_BLOCKED',
   'BLOCK_CHECK_UNAVAILABLE',
+  'RATE_LIMITED',
+  'STUDIO_UNAVAILABLE',
   'SPONSOR_CAPACITY_UNAVAILABLE',
   'SPONSOR_REFILL_ACCOUNT_UNHEALTHY',
   'SPONSOR_CONGESTION',
@@ -192,8 +204,141 @@ export const PROMOTION_SPONSOR_ERROR_CODES = [
   'GAS_EFFECTS_MISSING',
   'CONSUME_FAILED',
   'SPONSOR_FAILED',
+  'INTERNAL_ERROR',
 ] as const;
 
+/** Current errors for `POST /auth/nonce`. */
+export const ADMIN_AUTH_NONCE_ERROR_CODES = [
+  'CLIENT_IP_UNRESOLVED',
+  'RATE_LIMITED',
+  'ADMIN_UNAVAILABLE',
+  'INTERNAL_ERROR',
+] as const;
+
+/** Current errors shared by `POST /auth/verify` and `POST /auth/renew`. */
+export const ADMIN_AUTH_VERIFY_ERROR_CODES = [
+  'BAD_REQUEST',
+  'REQUEST_BODY_TOO_LARGE',
+  'CLIENT_IP_UNRESOLVED',
+  'RATE_LIMITED',
+  'ADMIN_UNAUTHORIZED',
+  'ADMIN_UNAVAILABLE',
+  'INTERNAL_ERROR',
+] as const;
+
+/** Current errors for `POST /auth/logout`. */
+export const ADMIN_AUTH_LOGOUT_ERROR_CODES = ['ADMIN_UNAUTHORIZED', 'INTERNAL_ERROR'] as const;
+
+/** Current errors for `GET /auth/session`. */
+export const ADMIN_SESSION_ERROR_CODES = ['ADMIN_UNAUTHORIZED'] as const;
+
+/** Current errors for Admin reads without route parameters. */
+export const ADMIN_READ_ERROR_CODES = ['ADMIN_UNAUTHORIZED', 'INTERNAL_ERROR'] as const;
+
+/** Current errors for `DELETE /api/blocklist`. */
+export const ADMIN_BLOCKLIST_DELETE_ERROR_CODES = [
+  'BAD_REQUEST',
+  'REQUEST_BODY_TOO_LARGE',
+  'ADMIN_UNAUTHORIZED',
+  'ADMIN_FORBIDDEN',
+  'INTERNAL_ERROR',
+] as const;
+
+/** Current errors for sponsored-log reads. */
+export const ADMIN_SPONSORED_LOGS_ERROR_CODES = [
+  'BAD_REQUEST',
+  'ADMIN_UNAUTHORIZED',
+  'INTERNAL_ERROR',
+] as const;
+
+/** Current errors for `GET /api/promotions`. */
+export const ADMIN_PROMOTION_LIST_ERROR_CODES = [
+  'BAD_REQUEST',
+  'ADMIN_UNAUTHORIZED',
+  'ADMIN_UNAVAILABLE',
+  'INTERNAL_ERROR',
+] as const;
+
+/** Current errors for Admin promotion reads with an ID route parameter. */
+export const ADMIN_PROMOTION_READ_ERROR_CODES = [
+  'ADMIN_UNAUTHORIZED',
+  'ADMIN_UNAVAILABLE',
+  'ADMIN_NOT_FOUND',
+  'INTERNAL_ERROR',
+] as const;
+
+/** Current errors for `POST /api/promotions`. */
+export const ADMIN_PROMOTION_CREATE_ERROR_CODES = [
+  'BAD_REQUEST',
+  'REQUEST_BODY_TOO_LARGE',
+  'CLIENT_IP_UNRESOLVED',
+  'ADMIN_UNAUTHORIZED',
+  'ADMIN_UNAVAILABLE',
+  'ADMIN_UNPROCESSABLE',
+  'PROMOTION_CURRENT_CONFLICT',
+  'INTERNAL_ERROR',
+] as const;
+
+/** Current errors for `PUT /api/promotions/:id`. */
+export const ADMIN_PROMOTION_UPDATE_ERROR_CODES = [
+  'BAD_REQUEST',
+  'REQUEST_BODY_TOO_LARGE',
+  'ADMIN_UNAUTHORIZED',
+  'ADMIN_NOT_FOUND',
+  'ADMIN_CONFLICT',
+  'ADMIN_UNPROCESSABLE',
+  'ADMIN_UNAVAILABLE',
+  'PROMOTION_CURRENT_CONFLICT',
+  'INTERNAL_ERROR',
+] as const;
+
+/** Current errors for `POST /api/promotions/:id/status`. */
+export const ADMIN_PROMOTION_STATUS_ERROR_CODES = [
+  'BAD_REQUEST',
+  'REQUEST_BODY_TOO_LARGE',
+  'ADMIN_UNAUTHORIZED',
+  'ADMIN_NOT_FOUND',
+  'ADMIN_CONFLICT',
+  'ADMIN_UNPROCESSABLE',
+  'ADMIN_UNAVAILABLE',
+  'PROMOTION_CURRENT_CONFLICT',
+  'INTERNAL_ERROR',
+] as const;
+
+/** Current errors for `DELETE /api/promotions/:id`. */
+export const ADMIN_PROMOTION_DELETE_ERROR_CODES = [
+  'ADMIN_UNAUTHORIZED',
+  'ADMIN_NOT_FOUND',
+  'ADMIN_CONFLICT',
+  'ADMIN_UNAVAILABLE',
+  'PROMOTION_CURRENT_CONFLICT',
+  'INTERNAL_ERROR',
+] as const;
+
+/** Current errors for the Sponsor Refill Account withdrawal challenge. */
+export const ADMIN_WITHDRAWAL_CHALLENGE_ERROR_CODES = [
+  'CLIENT_IP_UNRESOLVED',
+  'ADMIN_UNAUTHORIZED',
+  'INTERNAL_ERROR',
+] as const;
+
+/** Current errors for Sponsor Refill Account withdrawal execution. */
+export const ADMIN_WITHDRAWAL_ERROR_CODES = [
+  'BAD_REQUEST',
+  'REQUEST_BODY_TOO_LARGE',
+  'CLIENT_IP_UNRESOLVED',
+  'RATE_LIMITED',
+  'ADMIN_UNAUTHORIZED',
+  'WITHDRAWAL_SIGNATURE_INVALID',
+  'WITHDRAWAL_NONCE_MISSING',
+  'WITHDRAWAL_RUNWAY_BLOCKED',
+  'WITHDRAWAL_NOT_ACCEPTED',
+  'WITHDRAWAL_PENDING',
+  'WITHDRAWAL_FAILED',
+  'INTERNAL_ERROR',
+] as const;
+
+export type RelayStatusErrorCode = (typeof RELAY_STATUS_ERROR_CODES)[number];
 export type RelayConfigErrorCode = (typeof RELAY_CONFIG_ERROR_CODES)[number];
 export type StudioListErrorCode = (typeof STUDIO_LIST_ERROR_CODES)[number];
 export type StudioDetailErrorCode = (typeof STUDIO_DETAIL_ERROR_CODES)[number];
@@ -202,7 +347,23 @@ export type RelayPrepareErrorCode = (typeof RELAY_PREPARE_ERROR_CODES)[number];
 export type RelaySponsorErrorCode = (typeof RELAY_SPONSOR_ERROR_CODES)[number];
 export type PromotionPrepareErrorCode = (typeof PROMOTION_PREPARE_ERROR_CODES)[number];
 export type PromotionSponsorErrorCode = (typeof PROMOTION_SPONSOR_ERROR_CODES)[number];
+type AdminAuthNonceErrorCode = (typeof ADMIN_AUTH_NONCE_ERROR_CODES)[number];
+type AdminAuthVerifyErrorCode = (typeof ADMIN_AUTH_VERIFY_ERROR_CODES)[number];
+type AdminAuthLogoutErrorCode = (typeof ADMIN_AUTH_LOGOUT_ERROR_CODES)[number];
+type AdminSessionErrorCode = (typeof ADMIN_SESSION_ERROR_CODES)[number];
+type AdminReadErrorCode = (typeof ADMIN_READ_ERROR_CODES)[number];
+type AdminBlocklistDeleteErrorCode = (typeof ADMIN_BLOCKLIST_DELETE_ERROR_CODES)[number];
+type AdminSponsoredLogsErrorCode = (typeof ADMIN_SPONSORED_LOGS_ERROR_CODES)[number];
+type AdminPromotionListErrorCode = (typeof ADMIN_PROMOTION_LIST_ERROR_CODES)[number];
+type AdminPromotionReadErrorCode = (typeof ADMIN_PROMOTION_READ_ERROR_CODES)[number];
+type AdminPromotionCreateErrorCode = (typeof ADMIN_PROMOTION_CREATE_ERROR_CODES)[number];
+type AdminPromotionUpdateErrorCode = (typeof ADMIN_PROMOTION_UPDATE_ERROR_CODES)[number];
+type AdminPromotionStatusErrorCode = (typeof ADMIN_PROMOTION_STATUS_ERROR_CODES)[number];
+type AdminPromotionDeleteErrorCode = (typeof ADMIN_PROMOTION_DELETE_ERROR_CODES)[number];
+type AdminWithdrawalChallengeErrorCode = (typeof ADMIN_WITHDRAWAL_CHALLENGE_ERROR_CODES)[number];
+type AdminWithdrawalErrorCode = (typeof ADMIN_WITHDRAWAL_ERROR_CODES)[number];
 export type HostErrorCode =
+  | RelayStatusErrorCode
   | RelayConfigErrorCode
   | StudioListErrorCode
   | StudioDetailErrorCode
@@ -210,9 +371,25 @@ export type HostErrorCode =
   | RelayPrepareErrorCode
   | RelaySponsorErrorCode
   | PromotionPrepareErrorCode
-  | PromotionSponsorErrorCode;
+  | PromotionSponsorErrorCode
+  | AdminAuthNonceErrorCode
+  | AdminAuthVerifyErrorCode
+  | AdminAuthLogoutErrorCode
+  | AdminSessionErrorCode
+  | AdminReadErrorCode
+  | AdminBlocklistDeleteErrorCode
+  | AdminSponsoredLogsErrorCode
+  | AdminPromotionListErrorCode
+  | AdminPromotionReadErrorCode
+  | AdminPromotionCreateErrorCode
+  | AdminPromotionUpdateErrorCode
+  | AdminPromotionStatusErrorCode
+  | AdminPromotionDeleteErrorCode
+  | AdminWithdrawalChallengeErrorCode
+  | AdminWithdrawalErrorCode;
 
 const HOST_ERROR_CODE_SET: ReadonlySet<string> = new Set([
+  ...RELAY_STATUS_ERROR_CODES,
   ...RELAY_CONFIG_ERROR_CODES,
   ...STUDIO_LIST_ERROR_CODES,
   ...STUDIO_DETAIL_ERROR_CODES,
@@ -221,6 +398,21 @@ const HOST_ERROR_CODE_SET: ReadonlySet<string> = new Set([
   ...RELAY_SPONSOR_ERROR_CODES,
   ...PROMOTION_PREPARE_ERROR_CODES,
   ...PROMOTION_SPONSOR_ERROR_CODES,
+  ...ADMIN_AUTH_NONCE_ERROR_CODES,
+  ...ADMIN_AUTH_VERIFY_ERROR_CODES,
+  ...ADMIN_AUTH_LOGOUT_ERROR_CODES,
+  ...ADMIN_SESSION_ERROR_CODES,
+  ...ADMIN_READ_ERROR_CODES,
+  ...ADMIN_BLOCKLIST_DELETE_ERROR_CODES,
+  ...ADMIN_SPONSORED_LOGS_ERROR_CODES,
+  ...ADMIN_PROMOTION_LIST_ERROR_CODES,
+  ...ADMIN_PROMOTION_READ_ERROR_CODES,
+  ...ADMIN_PROMOTION_CREATE_ERROR_CODES,
+  ...ADMIN_PROMOTION_UPDATE_ERROR_CODES,
+  ...ADMIN_PROMOTION_STATUS_ERROR_CODES,
+  ...ADMIN_PROMOTION_DELETE_ERROR_CODES,
+  ...ADMIN_WITHDRAWAL_CHALLENGE_ERROR_CODES,
+  ...ADMIN_WITHDRAWAL_ERROR_CODES,
 ]);
 
 export function isHostErrorCode(value: unknown): value is HostErrorCode {
@@ -290,6 +482,7 @@ export type HostErrorMetaField =
   | 'retryAfterMs'
   | 'subcode'
   | 'digest'
+  | 'operationId'
   | 'minSettleMist'
   | 'requiredTotalIn'
   | 'isEstimate';
@@ -334,7 +527,7 @@ export const HOST_ERROR_HTTP_STATUS = {
   DRY_RUN_FAILED: 422,
   DRY_RUN_NO_GAS: 422,
   UNACCOUNTABLE_WITHDRAWAL: 422,
-  SLIPPAGE_QUERY_FAILED: 422,
+  MARKET_QUOTE_UNAVAILABLE: 422,
   SLIPPAGE_EXCEEDED: 422,
   SLIPPAGE_CONVERGENCE_FAILED: 422,
   L1_TOO_MANY_COMMANDS: 422,
@@ -363,6 +556,8 @@ export const HOST_ERROR_HTTP_STATUS = {
   SPONSOR_LEASE_COMMIT_FAILED: 500,
   ABUSE_BLOCKED: 429,
   BLOCK_CHECK_UNAVAILABLE: 503,
+  RATE_LIMITED: 429,
+  STUDIO_UNAVAILABLE: 503,
   VAULT_STATE_INCONSISTENT: 422,
   INTERNAL_ERROR: 500,
   PREPARED_TX_NOT_FOUND: 422,
@@ -410,7 +605,39 @@ export const HOST_ERROR_HTTP_STATUS = {
   ONCHAIN_REVERT: 422,
   GAS_EFFECTS_MISSING: 500,
   CONSUME_FAILED: 500,
+  ADMIN_UNAUTHORIZED: 401,
+  ADMIN_FORBIDDEN: 403,
+  ADMIN_NOT_FOUND: 404,
+  ADMIN_CONFLICT: 409,
+  ADMIN_UNPROCESSABLE: 422,
+  ADMIN_UNAVAILABLE: 503,
+  PROMOTION_CURRENT_CONFLICT: 409,
+  WITHDRAWAL_SIGNATURE_INVALID: 401,
+  WITHDRAWAL_NONCE_MISSING: 401,
+  WITHDRAWAL_RUNWAY_BLOCKED: 400,
+  WITHDRAWAL_NOT_ACCEPTED: 409,
+  WITHDRAWAL_PENDING: 503,
+  WITHDRAWAL_FAILED: 422,
 } as const satisfies Readonly<Record<HostErrorCode, HostErrorHttpStatus>>;
+
+const HOST_ERROR_PUBLIC_MESSAGE_BY_STATUS = {
+  400: 'Invalid request',
+  401: 'Authentication failed',
+  403: 'Request forbidden',
+  404: 'Resource not found',
+  409: 'Request conflicts with current state',
+  410: 'Resource expired',
+  413: 'Request body too large',
+  422: 'Request rejected',
+  429: 'Request temporarily blocked',
+  500: 'Internal server error',
+  503: 'Service temporarily unavailable',
+} as const satisfies Readonly<Record<HostErrorHttpStatus, string>>;
+
+/** Single public-message authority for every current coded Host error. */
+export function hostErrorPublicMessage(code: HostErrorCode): string {
+  return HOST_ERROR_PUBLIC_MESSAGE_BY_STATUS[HOST_ERROR_HTTP_STATUS[code]];
+}
 
 export interface HostErrorMetaPolicy {
   readonly allowed: readonly HostErrorMetaField[];
@@ -428,6 +655,7 @@ const SETTLEMENT_DIAGNOSTIC_FIELDS = [
 export const HOST_ERROR_META_POLICY: Readonly<Partial<Record<HostErrorCode, HostErrorMetaPolicy>>> =
   {
     ABUSE_BLOCKED: { allowed: ['retryAfterMs'] },
+    RATE_LIMITED: { allowed: ['retryAfterMs'], required: ['retryAfterMs'] },
     INSUFFICIENT_BALANCE: { allowed: SETTLEMENT_DIAGNOSTIC_FIELDS },
     CLAIM_WOULD_EXCEED_MAX: { allowed: SETTLEMENT_DIAGNOSTIC_FIELDS },
     INSUFFICIENT_SETTLE_INPUT: { allowed: SETTLEMENT_DIAGNOSTIC_FIELDS },
@@ -451,4 +679,12 @@ export const HOST_ERROR_META_POLICY: Readonly<Partial<Record<HostErrorCode, Host
     },
     GAS_EFFECTS_MISSING: { allowed: ['digest'], required: ['digest'] },
     CONSUME_FAILED: { allowed: ['digest'], required: ['digest'] },
+    WITHDRAWAL_NOT_ACCEPTED: {
+      allowed: ['operationId', 'digest'],
+      required: ['operationId'],
+    },
+    WITHDRAWAL_PENDING: {
+      allowed: ['operationId', 'digest'],
+      required: ['operationId'],
+    },
   };

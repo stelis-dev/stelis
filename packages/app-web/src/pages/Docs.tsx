@@ -368,9 +368,9 @@ export function DocsPage() {
           {'{ "error": "<message>", "code": "<ERROR_CODE>" }'}
         </code>
         <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-          Every error includes <code>error</code>. Domain errors also include <code>code</code>;
-          rate-limit responses may instead include <code>retryAfterMs</code>. See{' '}
-          <code>docs/api.md</code> for route-specific semantics.
+          Every current error includes a route-owned <code>code</code> and its canonical public{' '}
+          <code>error</code> message. Rate-limit errors also include <code>retryAfterMs</code>. See{' '}
+          <code>docs/api.md</code> for route-specific codes and metadata.
         </span>
       </div>
 

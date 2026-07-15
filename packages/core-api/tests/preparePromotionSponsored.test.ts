@@ -13,13 +13,14 @@
  *   - Use window expiry
  */
 import { describe, test, expect, vi } from 'vitest';
+import type { AdminPromotionCreateRequest } from '@stelis/contracts';
 import { canonicalizePromotionTarget } from '../src/studio/promotionTargetPolicy.js';
 import {
   handlePromotionPrepare,
   PromotionPrepareError,
   type PromotionPrepareContext,
 } from '../src/studio/preparePromotionSponsoredHandler.js';
-import { MemoryPromotionStore, type CreatePromotionInput } from '../src/studio/promotionStore.js';
+import { MemoryPromotionStore } from '../src/studio/promotionStore.js';
 import { MemoryPromotionExecutionLedger } from '../src/studio/executionLedgerMemory.js';
 import { MemoryPrepareStore } from '../src/store/memoryPrepareStore.js';
 import { MemoryPrepareInflight } from '../src/store/memoryPrepareInflight.js';
@@ -57,7 +58,7 @@ const SIMULATION_GAS_USED = {
   storageRebate: '200000',
 };
 
-const BASE_PROMO: CreatePromotionInput = {
+const BASE_PROMO: AdminPromotionCreateRequest = {
   type: 'gas_sponsorship',
   displayName: 'Test Promotion Prepare',
   description: 'Unit test promotion',

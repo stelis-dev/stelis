@@ -5,22 +5,26 @@
  * Redis adapter follows the same interface and is tested separately with integration tests.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
+import type {
+  AdminPromotionCreateRequest,
+  AdminPromotionUpdateRequest,
+} from '@stelis/contracts';
 import {
   MemoryPromotionStore,
   InvalidStatusTransitionError,
-  PromotionActivationError,
   PromotionCurrentConflictError,
   PromotionFieldImmutableError,
   isValidTransition,
-  type CreatePromotionInput,
-  type UpdatePromotionInput,
 } from '../src/studio/promotionStore.js';
+import { PromotionLedgerValueError } from '../src/studio/executionLedgerValueGuards.js';
 import { computeTotalRequiredBudgetMist } from '../src/studio/domain.js';
 import type { PromotionStatus } from '../src/studio/domain.js';
 
 // ── Fixtures ────────────────────────────────────────────────────────────
 
-function makeInput(overrides: Partial<CreatePromotionInput> = {}): CreatePromotionInput {
+function makeInput(
+  overrides: Partial<AdminPromotionCreateRequest> = {},
+): AdminPromotionCreateRequest {
   return {
     type: 'gas_sponsorship',
     displayName: 'Test Promo',
@@ -65,6 +69,24 @@ describe('MemoryPromotionStore', () => {
       const r1 = await store.create(makeInput());
       const r2 = await store.create(makeInput());
       expect(r1.promotionId).not.toBe(r2.promotionId);
+    });
+
+    it('rejects a draft budget that the execution ledger cannot represent', async () => {
+      await expect(
+        store.create(
+          makeInput({
+            maxParticipants: 1_000_000,
+            perUserGasAllowanceMist: '9007199254740',
+          }),
+        ),
+      ).rejects.toThrow(PromotionLedgerValueError);
+      await expect(store.list()).resolves.toEqual([]);
+    });
+
+    it('rejects zero allowance before creating a draft', async () => {
+      await expect(
+        store.create(makeInput({ perUserGasAllowanceMist: '0' })),
+      ).rejects.toThrow(/canonical positive u64 decimal string/);
     });
 
     it('rejects a generated-ID collision without overwriting the current record', async () => {
@@ -198,6 +220,18 @@ describe('MemoryPromotionStore', () => {
       expect(updated!.updatedAt).toBeTruthy();
     });
 
+    it('rejects a draft update whose complete budget exceeds the ledger bound', async () => {
+      const created = await store.create(makeInput());
+
+      await expect(
+        store.update(created.promotionId, {
+          maxParticipants: 1_000_000,
+          perUserGasAllowanceMist: '9007199254740',
+        }),
+      ).rejects.toThrow(PromotionLedgerValueError);
+      await expect(store.get(created.promotionId)).resolves.toEqual(created);
+    });
+
     it('allows setting claimDeadlineAt to null', async () => {
       const created = await store.create(makeInput({ claimDeadlineAt: '2025-12-31T00:00:00Z' }));
       const updated = await store.update(created.promotionId, { claimDeadlineAt: null });
@@ -218,27 +252,19 @@ describe('MemoryPromotionStore', () => {
       });
     });
 
-    it('ignores undeclared runtime fields instead of replacing record identity or status', async () => {
+    it('rejects undeclared runtime fields instead of replacing record identity or status', async () => {
       const created = await store.create(makeInput());
       const unsafeInput = {
         displayName: 'Allowed update',
         promotionId: 'attacker-controlled-id',
         status: 'archived',
-      } as unknown as UpdatePromotionInput;
+      } as unknown as AdminPromotionUpdateRequest;
 
-      const updated = await store.update(created.promotionId, unsafeInput);
-
-      expect(updated).toMatchObject({
-        promotionId: created.promotionId,
-        status: 'draft',
-        displayName: 'Allowed update',
-      });
+      await expect(store.update(created.promotionId, unsafeInput)).rejects.toThrow(
+        /contains a non-current field/,
+      );
+      await expect(store.get(created.promotionId)).resolves.toEqual(created);
       await expect(store.get('attacker-controlled-id')).resolves.toBeNull();
-      await expect(store.get(created.promotionId)).resolves.toMatchObject({
-        promotionId: created.promotionId,
-        status: 'draft',
-        displayName: 'Allowed update',
-      });
     });
 
     // ── Immutable-after-draft fields ──────────────────────────────
@@ -396,40 +422,20 @@ describe('MemoryPromotionStore', () => {
       );
     });
 
-    it('blocks activation with maxParticipants=0 for gas_sponsorship', async () => {
-      const created = await store.create(makeInput({ maxParticipants: 0 }));
-      await expect(store.transitionStatus(created.promotionId, 'active')).rejects.toThrow(
-        PromotionActivationError,
-      );
-    });
-
-    it('blocks activation with perUserGasAllowanceMist=0 for gas_sponsorship', async () => {
-      const created = await store.create(makeInput({ perUserGasAllowanceMist: '0' }));
-      await expect(store.transitionStatus(created.promotionId, 'active')).rejects.toThrow(
-        PromotionActivationError,
-      );
-    });
-
-    it('blocks activation with non-decimal perUserGasAllowanceMist', async () => {
-      const created = await store.create(makeInput({ perUserGasAllowanceMist: '0x10' }));
-      await expect(store.transitionStatus(created.promotionId, 'active')).rejects.toThrow(
-        PromotionActivationError,
-      );
-    });
   });
 
   // ── delete ────────────────────────────────────────────────────
 
   describe('delete', () => {
-    it('returns false for non-existent promotion', async () => {
+    it('distinguishes a non-existent promotion', async () => {
       const result = await store.delete('non-existent');
-      expect(result).toBe(false);
+      expect(result).toEqual({ status: 'not_found' });
     });
 
     it('deletes a draft promotion', async () => {
       const created = await store.create(makeInput());
       const result = await store.delete(created.promotionId);
-      expect(result).toBe(true);
+      expect(result).toEqual({ status: 'deleted' });
 
       const found = await store.get(created.promotionId);
       expect(found).toBeNull();
@@ -440,7 +446,7 @@ describe('MemoryPromotionStore', () => {
       await store.transitionStatus(created.promotionId, 'active');
 
       const result = await store.delete(created.promotionId);
-      expect(result).toBe(false);
+      expect(result).toEqual({ status: 'not_deletable' });
 
       // Record still exists
       const found = await store.get(created.promotionId);

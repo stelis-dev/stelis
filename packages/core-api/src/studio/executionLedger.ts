@@ -46,33 +46,6 @@ export const PROMOTION_EXECUTION_LEDGER_DEFAULT_RESERVATION_TTL_MS = 60_000;
  */
 export const PROMOTION_EXECUTION_LEDGER_DEFAULT_REAPER_INTERVAL_MS = 15_000;
 
-/**
- * Promotion ledger numeric bound. All MIST values that flow into the
- * ledger (per-user allowance, total budget, reservation amount, consumed
- * delta) must be ≤ this constant.
- *
- * Why `Number.MAX_SAFE_INTEGER` (`2^53 − 1 = 9_007_199_254_740_991`):
- * - Redis `INCRBY` / `DECRBY` operate on int64 (`±2^63`), but the Lua
- *   scripts that drive `reserve()`, `consume()`, and `release()` (see
- *   `LUA_RESERVE` / `LUA_CONSUME` / `LUA_RELEASE` in
- *   `executionLedgerRedis.ts`) read the result back as Lua numbers.
- *   Redis-embedded Lua 5.1 represents numbers as 64-bit doubles,
- *   which lose integer precision above `2^53 − 1`. Comparisons like
- *   `if delta > 0`/`if afterDeduct < 0` and arithmetic like
- *   `local absD = -delta` would silently misbehave once the values
- *   crossed the JS-safe-integer ceiling.
- * - Pinning the cap at `Number.MAX_SAFE_INTEGER` keeps Memory and Redis
- *   conformance aligned with the promotion activation bound.
- *
- * Practical scale is cataloged with `MAX_PROMOTION_LEDGER_VALUE_MIST` in
- * docs/parameters.md#studio-ledger-limits. Any realistic promotion stays
- * well below this cap.
- *
- * MIST values are kept as `bigint`; this constant is `bigint` so callers
- * never coerce through `Number(...)`.
- */
-export const MAX_PROMOTION_LEDGER_VALUE_MIST: bigint = BigInt(Number.MAX_SAFE_INTEGER);
-
 // ─────────────────────────────────────────────
 // Interface
 // ─────────────────────────────────────────────
@@ -108,11 +81,11 @@ export interface PromotionExecutionLedger {
    *     zero aggregate keys only after the entitlement gate passes inside
    *     the reserve Lua script. Neither path can install a zero
    *     `budget:avail` ahead of the real total.
-   *   - Memory: claim records `promoConfig` (`maxParticipants`,
-   *     `perUserGasAllowanceMist`); the in-memory `budgets` map entry
+   *   - Memory: claim records the shared semantic guard's exact total budget;
+   *     the in-memory `budgets` map entry
    *     is materialized lazily by `ensureBudget(promotionId)` on the
    *     first reserve. Read paths (`getBudgetSummary`) derive an
-   *     ephemeral snapshot from `promoConfig` without persisting any
+   *     ephemeral snapshot from that validated total without persisting any
    *     `BudgetState`.
    *
    * Either way, after a successful claim the next `reserve()` sees a

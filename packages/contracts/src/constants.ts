@@ -6,6 +6,9 @@
 
 import type { DeepBookSwapDirection, SettlementSwapDirection, SuiNetwork } from './types.js';
 
+/** Largest exact integer that every current JSON/Redis Promotion consumer can represent. */
+export const MAX_PROMOTION_LEDGER_VALUE_MIST = BigInt(Number.MAX_SAFE_INTEGER);
+
 // ─────────────────────────────────────────────
 // Settlement swap direction data tables and lookups
 // ─────────────────────────────────────────────

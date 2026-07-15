@@ -2,7 +2,10 @@
 
 This document lists the public relay and Studio routes, plus the mounted auth and admin route groups currently exposed by `@stelis/app-api`.
 
-The schema file [`schemas/relay-api.schema.json`](./schemas/relay-api.schema.json) covers the relay and promotion request/response shapes that are locked by tests.
+The runtime parsers exported by `@stelis/contracts` are the executable schema
+for Relay API, Studio, Auth, and Admin request and response bodies. Host
+producers and current clients consume those parsers; there is no parallel
+hand-maintained JSON Schema.
 
 ## Route Groups
 
@@ -153,20 +156,20 @@ The `executionCostClaim` returned by this route is the transaction-derived gas-r
 
 ## Error Responses
 
-Every public Relay API and Studio error response contains an `error` string. Domain failures also
-contain a `code` from the current route-specific error enum. Transport-level
-failures may omit `code`; rate-limit responses contain `retryAfterMs` and a
-`Retry-After` header instead. The current error body is closed: the only
-optional fields are `code`, `retryAfterMs`, `subcode`, `digest`,
-`minSettleMist`, `requiredTotalIn`, and `isEstimate`. Clients must reject a
-response with another field or a value outside the documented type instead of
-preserving an arbitrary server diagnostic dictionary. Treat `code` and the
-typed optional fields as the machine-readable contract; `error` is a stable
-human summary and does not carry internal or upstream error text.
+Every current Relay, Studio, Auth, and Admin error response contains an `error`
+string and a `code` from the current route error vocabulary. Rate limiting uses
+`RATE_LIMITED` together with `retryAfterMs` and a `Retry-After` header. The
+current error body is closed: the only optional metadata fields are
+`retryAfterMs`, `subcode`, `digest`, `operationId`, `minSettleMist`,
+`requiredTotalIn`, and `isEstimate`. Clients must reject a response with
+another field or a value outside the documented type instead of preserving an
+arbitrary server diagnostic dictionary. Treat `code` and the typed optional
+fields as the machine-readable contract. The `error` summary comes from the
+same contracts-owned authority and does not carry internal or upstream text.
 
 Each current `code` has one HTTP status and one metadata policy owned by
 `@stelis/contracts`. Producers do not override status per call, and consumers
-reject a code/status mismatch. Known submitted transactions retain `digest` on
+reject a code/status or code/message mismatch. Known submitted transactions retain `digest` on
 on-chain revert, congestion, and post-submit terminal-processing failures so a
 caller can reconcile the exact transaction. If the Host issued the sponsor
 signature but cannot prove a current terminal Sui result, it returns
@@ -174,11 +177,9 @@ signature but cannot prove a current terminal Sui result, it returns
 Callers reconcile that digest instead of assuming the transaction was never
 submitted or blindly rebuilding it. Every one of these codes requires
 `digest`.
-Use the route-specific `*HostError` definition in
-[`schemas/relay-api.schema.json`](./schemas/relay-api.schema.json) when
-validating a response body; the common `hostError` definition closes metadata
-relationships, while the runtime parser additionally binds the body code to
-the HTTP status because status is not part of JSON.
+Use `parseHostErrorResponse` with the route-specific code list exported by
+`@stelis/contracts` when validating a response body. The parser closes metadata
+relationships and binds the body code to the HTTP status.
 
 `CLIENT_IP_UNRESOLVED` is a current shared route-boundary error code. Relay
 prepare/sponsor and Studio routes can return it before admission state is
@@ -217,6 +218,11 @@ Mounted auth routes:
 ## Admin Routes
 
 `/api/*` routes are operator routes. SDK and MCP clients must not depend on them.
+Auth and Admin request and response bodies use the current parsers exported by
+`@stelis/contracts`; `@stelis/app-admin` rejects uncoded errors and malformed
+success responses. `/api/logs` returns structured audit entries with `ts`,
+`event`, and `ip`, plus the current optional `address`, `reason`, `error`, and
+`detail` fields.
 
 Mounted admin routes:
 

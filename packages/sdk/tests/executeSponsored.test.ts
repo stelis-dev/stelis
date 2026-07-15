@@ -384,11 +384,11 @@ describe('StelisSDK.executeSponsored', () => {
     }
   });
 
-  // ── 11: SLIPPAGE_QUERY_FAILED → TRANSACTION_FAILED (pre-wired) ────────
-  it('normalizes SLIPPAGE_QUERY_FAILED to TRANSACTION_FAILED', async () => {
+  // ── 11: MARKET_QUOTE_UNAVAILABLE → TRANSACTION_FAILED ─────────────────
+  it('normalizes MARKET_QUOTE_UNAVAILABLE to TRANSACTION_FAILED', async () => {
     const { StelisApiException } = await import('../src/client.js');
     mockPrepare.mockRejectedValueOnce(
-      new StelisApiException('SLIPPAGE_QUERY_FAILED', 'RPC query failed', 422),
+      new StelisApiException('MARKET_QUOTE_UNAVAILABLE', 'RPC query failed', 422),
     );
 
     try {

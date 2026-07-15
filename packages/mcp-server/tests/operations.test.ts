@@ -9,7 +9,7 @@ import {
   prepareSponsoredTransaction,
   submitPromotionSponsoredTransaction,
 } from '../src/operations.js';
-import { RELAY_CONFIG_ERROR_CODES } from '@stelis/contracts';
+import { hostErrorPublicMessage, RELAY_CONFIG_ERROR_CODES } from '@stelis/contracts';
 
 function createConfig(fetchFn: FetchLike): StelisMcpServerConfig {
   return {
@@ -45,11 +45,59 @@ describe('resolveRelayApiUrl', () => {
 });
 
 describe('current Host error boundary', () => {
+  it('uses the Host boundary term for local timeout failures', async () => {
+    const fetchFn = vi.fn<FetchLike>(
+      (_input, init) =>
+        new Promise((_resolve, reject) => {
+          const signal = init?.signal;
+          if (!signal) {
+            reject(new Error('Expected an abort signal'));
+            return;
+          }
+          if (signal.aborted) {
+            reject(new DOMException('Aborted', 'AbortError'));
+            return;
+          }
+          signal.addEventListener(
+            'abort',
+            () => reject(new DOMException('Aborted', 'AbortError')),
+            { once: true },
+          );
+        }),
+    );
+
+    await expect(
+      requestJson(createConfig(fetchFn), {
+        path: '/config',
+        timeoutMs: 1,
+        allowedErrorCodes: RELAY_CONFIG_ERROR_CODES,
+      }),
+    ).rejects.toThrow('Stelis Host request timed out after 1 ms.');
+  });
+
+  it('rejects a successful non-JSON response without retaining its body', async () => {
+    const fetchFn = vi
+      .fn<FetchLike>()
+      .mockResolvedValue(new Response('<html>sk-live-secret</html>', { status: 200 }));
+
+    try {
+      await requestJson(createConfig(fetchFn), {
+        path: '/config',
+        allowedErrorCodes: RELAY_CONFIG_ERROR_CODES,
+      });
+      expect.fail('Expected a non-JSON response error');
+    } catch (error) {
+      const hostError = error as Error;
+      expect(hostError.message).toBe('Invalid non-JSON response from Stelis Host (HTTP 200).');
+      expect(JSON.stringify(hostError)).not.toContain('sk-live-secret');
+    }
+  });
+
   it('preserves only a valid closed Host error response', async () => {
     const fetchFn = vi.fn<FetchLike>().mockResolvedValue(
       jsonResponse(
         {
-          error: 'Relay config unavailable',
+          error: hostErrorPublicMessage('CONFIG_UNAVAILABLE'),
           code: 'CONFIG_UNAVAILABLE',
         },
         503,
@@ -62,12 +110,9 @@ describe('current Host error boundary', () => {
         allowedErrorCodes: RELAY_CONFIG_ERROR_CODES,
       }),
     ).rejects.toMatchObject({
-      message: 'Relay config unavailable',
+      message: hostErrorPublicMessage('CONFIG_UNAVAILABLE'),
       code: 'CONFIG_UNAVAILABLE',
-      body: {
-        error: 'Relay config unavailable',
-        code: 'CONFIG_UNAVAILABLE',
-      },
+      meta: undefined,
     });
   });
 
@@ -81,15 +126,13 @@ describe('current Host error boundary', () => {
         path: '/config',
         allowedErrorCodes: RELAY_CONFIG_ERROR_CODES,
       });
-      expect.fail('Expected StelisMcpHttpError');
+      expect.fail('Expected a Host contract error');
     } catch (error) {
-      expect(error).toBeInstanceOf(StelisMcpHttpError);
-      const hostError = error as StelisMcpHttpError;
+      expect(error).not.toBeInstanceOf(StelisMcpHttpError);
+      const hostError = error as Error;
       expect(hostError.message).toBe(
         'Stelis Host returned a non-current error response (HTTP 500)',
       );
-      expect(hostError.code).toBe('HTTP_ERROR');
-      expect(hostError.body).toBeUndefined();
       expect(JSON.stringify(hostError)).not.toContain('must-not-leak');
       expect(JSON.stringify(hostError)).not.toContain('sk-live-secret');
     }
@@ -99,7 +142,7 @@ describe('current Host error boundary', () => {
     const fetchFn = vi.fn<FetchLike>().mockResolvedValue(
       jsonResponse(
         {
-          error: 'Prepare body invalid',
+          error: hostErrorPublicMessage('BAD_REQUEST'),
           code: 'BAD_REQUEST',
         },
         400,
@@ -111,17 +154,15 @@ describe('current Host error boundary', () => {
         path: '/config',
         allowedErrorCodes: RELAY_CONFIG_ERROR_CODES,
       }),
-    ).rejects.toMatchObject({
-      message: 'Stelis Host returned a non-current error response (HTTP 400)',
-      code: 'HTTP_ERROR',
-      body: undefined,
-    });
+    ).rejects.toThrow('Stelis Host returned a non-current error response (HTTP 400)');
   });
 
   it('keeps Studio read and claim error ownership distinct', async () => {
     const claimFetch = vi
       .fn<FetchLike>()
-      .mockResolvedValue(jsonResponse({ error: 'Claim body invalid', code: 'BAD_REQUEST' }, 400));
+      .mockResolvedValue(
+        jsonResponse({ error: hostErrorPublicMessage('BAD_REQUEST'), code: 'BAD_REQUEST' }, 400),
+      );
     await expect(
       claimPromotion(createConfig(claimFetch), {
         developerJwt: 'jwt',
@@ -131,10 +172,12 @@ describe('current Host error boundary', () => {
 
     const readFetch = vi
       .fn<FetchLike>()
-      .mockResolvedValue(jsonResponse({ error: 'Wrong route', code: 'BAD_REQUEST' }, 400));
-    await expect(
-      listPromotions(createConfig(readFetch), { developerJwt: 'jwt' }),
-    ).rejects.toMatchObject({ code: 'HTTP_ERROR', body: undefined });
+      .mockResolvedValue(
+        jsonResponse({ error: hostErrorPublicMessage('BAD_REQUEST'), code: 'BAD_REQUEST' }, 400),
+      );
+    await expect(listPromotions(createConfig(readFetch), { developerJwt: 'jwt' })).rejects.toThrow(
+      'Stelis Host returned a non-current error response (HTTP 400)',
+    );
   });
 });
 

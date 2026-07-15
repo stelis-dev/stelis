@@ -14,12 +14,14 @@ import {
 } from '@stelis/core-api';
 import { PromotionPrepareError, PromotionSponsorError } from '@stelis/core-api/studio';
 import {
+  hostErrorPublicMessage,
+  parseHostErrorResponse,
   PROMOTION_PREPARE_ERROR_CODES,
   PROMOTION_SPONSOR_ERROR_CODES,
   RELAY_PREPARE_ERROR_CODES,
   RELAY_SPONSOR_ERROR_CODES,
 } from '@stelis/contracts';
-import { codedHostError, mapError, uncodedHostError } from '../src/errorMap.js';
+import { codedHostError, mapError } from '../src/errorMap.js';
 
 const mapRelayPrepare = (error: unknown) => mapError(error, RELAY_PREPARE_ERROR_CODES);
 const mapRelaySponsor = (error: unknown) => mapError(error, RELAY_SPONSOR_ERROR_CODES);
@@ -122,7 +124,7 @@ describe('code-bound metadata', () => {
     expect(
       mapRelaySponsor(new SponsorCongestionError('shared-object congestion', '0xcongestion'))?.body,
     ).toEqual({
-      error: 'Internal server error',
+      error: 'Service temporarily unavailable',
       code: 'SPONSOR_CONGESTION',
       digest: '0xcongestion',
     });
@@ -140,7 +142,7 @@ describe('code-bound metadata', () => {
         new SponsorSubmissionUncertainError('0xsubmitted-unknown', new Error('rpc timeout')),
       )?.body,
     ).toEqual({
-      error: 'Internal server error',
+      error: 'Service temporarily unavailable',
       code: 'SPONSOR_SUBMISSION_UNCERTAIN',
       digest: '0xsubmitted-unknown',
     });
@@ -202,29 +204,34 @@ describe('code-bound metadata', () => {
 
 describe('direct Host response serializer', () => {
   it('derives coded status and rejects route overreach', () => {
-    expect(
-      codedHostError(
-        { error: 'not found', code: 'PROMOTION_NOT_FOUND' },
-        PROMOTION_PREPARE_ERROR_CODES,
-      ).status,
-    ).toBe(404);
-    expect(() =>
-      codedHostError(
-        { error: 'not found', code: 'PROMOTION_NOT_FOUND' },
-        RELAY_SPONSOR_ERROR_CODES,
-      ),
-    ).toThrow(/not valid for this route/);
+    expect(codedHostError('PROMOTION_NOT_FOUND', PROMOTION_PREPARE_ERROR_CODES).status).toBe(404);
+    expect(() => codedHostError('PROMOTION_NOT_FOUND', RELAY_SPONSOR_ERROR_CODES)).toThrow(
+      /not valid for this route/,
+    );
   });
 
-  it('allows uncoded transport failures but not uncoded domain statuses', () => {
-    expect(uncodedHostError({ error: 'unavailable' }, RELAY_PREPARE_ERROR_CODES, 503)).toEqual({
-      status: 503,
-      body: { error: 'unavailable' },
+  it('binds rate-limit metadata to a current code and message', () => {
+    expect(
+      codedHostError('RATE_LIMITED', RELAY_PREPARE_ERROR_CODES, { retryAfterMs: 5000 }),
+    ).toEqual({
+      status: 429,
+      body: {
+        error: 'Request temporarily blocked',
+        code: 'RATE_LIMITED',
+        retryAfterMs: 5000,
+      },
     });
+  });
+
+  it('rejects a coded response whose message drifts from the contracts authority', () => {
     expect(() =>
-      // The cast deliberately probes the runtime boundary.
-      uncodedHostError({ error: 'not found' }, RELAY_PREPARE_ERROR_CODES, 404 as 500),
-    ).toThrow(/domain-status response must carry a current code/);
+      parseHostErrorResponse(
+        { error: 'Promotion not found', code: 'PROMOTION_NOT_FOUND' },
+        PROMOTION_PREPARE_ERROR_CODES,
+        404,
+      ),
+    ).toThrow(/error does not match the current code/);
+    expect(hostErrorPublicMessage('PROMOTION_NOT_FOUND')).toBe('Resource not found');
   });
 });
 

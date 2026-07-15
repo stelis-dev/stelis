@@ -18,7 +18,7 @@
  * `@stelis/contracts` settlement contract. The generator reads the exact
  * compiled modules produced from the locked Move graph.
  *
- * Slippage query errors (SLIPPAGE_QUERY_FAILED) are handled in the
+ * Market-quote errors (MARKET_QUOTE_UNAVAILABLE) are handled in the
  * build-time market-policy solve path.
  *
  * Package + occurrence + outer-command binding:
