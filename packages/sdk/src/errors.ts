@@ -12,6 +12,8 @@ import type { HostErrorMeta } from '@stelis/contracts';
  *
  * Codes:
  * - `INSUFFICIENT_FUNDS` — balance or settle input too low.
+ * - `PAYMENT_COIN_CONFLICT` — exact Host code for unresolved settlement-token payment structure.
+ * - `PAYMENT_COIN_LIMIT_EXCEEDED` — exact Host code with Coin consolidation guidance.
  * - `TRANSACTION_FAILED` — dry-run simulation failure.
  * - `EXECUTION_FAILED` — sponsor preflight / on-chain revert.
  * - *(passthrough)* — a current Host code or SDK-local validation code without a
@@ -36,11 +38,7 @@ export class StelisSponsoredError extends Error {
  */
 export function normalizeApiError(err: StelisApiException): StelisSponsoredError {
   // Direct /prepare classification
-  if (
-    err.code === 'INSUFFICIENT_SETTLE_INPUT' ||
-    err.code === 'INSUFFICIENT_BALANCE' ||
-    err.code === 'PAYMENT_COIN_CONFLICT'
-  ) {
+  if (err.code === 'INSUFFICIENT_SETTLE_INPUT' || err.code === 'INSUFFICIENT_BALANCE') {
     return new StelisSponsoredError(
       'INSUFFICIENT_FUNDS',
       'Transaction cost exceeds available balance. Please add funds or reduce the amount.',

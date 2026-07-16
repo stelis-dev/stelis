@@ -382,9 +382,66 @@ describe('exact current Sui transaction shape', () => {
     expect(() => parseRawSuiSimulationTransaction(opposing, DIGEST)).toThrow(
       'opposing sizeError payload',
     );
+
+    const malformedCleverError = structuredClone(rawAbort);
+    const malformedAbort =
+      malformedCleverError.effects?.status?.error?.errorDetails?.oneofKind === 'abort'
+        ? malformedCleverError.effects.status.error.errorDetails.abort
+        : undefined;
+    if (!malformedAbort) throw new Error('test fixture requires MoveAbort details');
+    malformedAbort.cleverError = 'not-a-clever-error' as never;
+    expect(() => parseRawSuiSimulationTransaction(malformedCleverError, DIGEST)).toThrow(
+      'simulation.transaction.effects.status.error.errorDetails.abort.cleverError: expected an object',
+    );
   });
 
-  it('binds execution-error and detail-kind validation to installed SDK enums', () => {
+  it('rejects consumed Move abort and gas values outside the protobuf u64 range', () => {
+    const overU64 = 1n << 64n;
+    const rawAbort = executedTransaction({
+      effects: {
+        version: 2,
+        transactionDigest: DIGEST,
+        status: {
+          success: false,
+          error: {
+            kind: GrpcTypes.ExecutionError_ExecutionErrorKind.MOVE_ABORT,
+            errorDetails: {
+              oneofKind: 'abort',
+              abort: { abortCode: overU64 },
+            },
+          },
+        },
+        gasUsed: {
+          computationCost: 1n,
+          storageCost: 2n,
+          storageRebate: 0n,
+          nonRefundableStorageFee: 0n,
+        },
+      },
+    });
+    expect(() => parseRawSuiSimulationTransaction(rawAbort, DIGEST)).toThrow(
+      'abort.abortCode: expected a current protobuf u64',
+    );
+
+    const rawGas = executedTransaction({
+      effects: {
+        version: 2,
+        transactionDigest: DIGEST,
+        status: { success: true },
+        gasUsed: {
+          computationCost: overU64,
+          storageCost: 2n,
+          storageRebate: 0n,
+          nonRefundableStorageFee: 0n,
+        },
+      },
+    });
+    expect(() => parseRawSuiSimulationTransaction(rawGas, DIGEST)).toThrow(
+      'gasUsed.computationCost: expected a current protobuf u64',
+    );
+  });
+
+  it('binds normalized execution-error identity to the raw kind and detail tag', () => {
     const rawFailure = (kind: number, errorDetails: object) =>
       executedTransaction({
         effects: {
@@ -445,22 +502,22 @@ describe('exact current Sui transaction shape', () => {
       ),
     ).toThrow('unknown current execution-error kind');
 
-    expect(() =>
+    expect(
       parseRawSuiSimulationTransaction(
         rawFailure(GrpcTypes.ExecutionError_ExecutionErrorKind.COMMAND_ARGUMENT_ERROR, {
           oneofKind: 'commandArgumentError',
           commandArgumentError: {
-            argument: 0,
+            argument: 'discarded',
             kind: GrpcTypes.CommandArgumentError_CommandArgumentErrorKind
               .COMMAND_ARGUMENT_ERROR_KIND_UNKNOWN,
           },
         }),
         DIGEST,
       ),
-    ).toThrow('unknown current command-argument kind');
+    ).toMatchObject({ outcome: 'failure', error: { kind: 'CommandArgumentError' } });
   });
 
-  it('rejects extra fields in closed raw transaction and command-result structs', () => {
+  it('ignores provider fields outside returned transaction and command-result contracts', () => {
     const exactSuccess = executedTransaction({
       effects: {
         version: 2,
@@ -475,20 +532,18 @@ describe('exact current Sui transaction shape', () => {
       },
     });
 
-    expect(() =>
-      parseRawSuiSimulationTransaction({ ...exactSuccess, legacyEffects: {} }, DIGEST),
-    ).toThrow('simulation.transaction.legacyEffects: unsupported current field');
+    expect(
+      parseRawSuiSimulationTransaction({ ...exactSuccess, providerDetail: {} }, DIGEST),
+    ).toMatchObject({ outcome: 'success' });
 
-    const legacyStatus = structuredClone(exactSuccess);
-    Object.assign(legacyStatus.effects!.status!, { legacyStatus: 'success' });
-    expect(() => parseRawSuiSimulationTransaction(legacyStatus, DIGEST)).toThrow(
-      'simulation.transaction.effects.status.legacyStatus: unsupported current field',
-    );
+    const statusWithProviderDetail = structuredClone(exactSuccess);
+    Object.assign(statusWithProviderDetail.effects!.status!, { providerDetail: 'success' });
+    expect(parseRawSuiSimulationTransaction(statusWithProviderDetail, DIGEST)).toMatchObject({
+      outcome: 'success',
+    });
 
-    expect(() =>
-      parseRawSuiCommandResults([
-        { returnValues: [], mutatedByRef: [], legacyMutatedReferences: [] },
-      ]),
-    ).toThrow('simulation.commandOutputs[0].legacyMutatedReferences: unsupported current field');
+    expect(
+      parseRawSuiCommandResults([{ returnValues: [], mutatedByRef: [], providerDetail: [] }]),
+    ).toEqual([{ returnValues: [], mutatedReferences: [] }]);
   });
 });

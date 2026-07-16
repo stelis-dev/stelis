@@ -408,6 +408,21 @@ describe('StelisClient', () => {
         },
         {
           body: {
+            error: hostErrorPublicMessage('PAYMENT_COIN_LIMIT_EXCEEDED'),
+            code: 'PAYMENT_COIN_LIMIT_EXCEEDED',
+          },
+          status: 422,
+          request: () =>
+            client.prepare(
+              makeRelayPrepareRequest({
+                txKindBytes: 'kind',
+                senderAddress: '0x1',
+                settlementTokenType: '0x2::sui::SUI',
+              }),
+            ),
+        },
+        {
+          body: {
             error: hostErrorPublicMessage('SPONSOR_ONCHAIN_FAILED'),
             code: 'SPONSOR_ONCHAIN_FAILED',
             digest: '0xfailed',
@@ -483,6 +498,12 @@ describe('StelisClient', () => {
         },
         {
           code: 'INSUFFICIENT_BALANCE',
+          status: 422,
+          request: () =>
+            client.sponsor({ txBytes: 'tx', userSignature: 'sig', receiptId: 'receipt' }),
+        },
+        {
+          code: 'PAYMENT_COIN_LIMIT_EXCEEDED',
           status: 422,
           request: () =>
             client.sponsor({ txBytes: 'tx', userSignature: 'sig', receiptId: 'receipt' }),

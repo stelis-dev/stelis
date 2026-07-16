@@ -206,27 +206,30 @@ describe('exact current Sui transaction resolution', () => {
     expect(current).toHaveBeenCalledTimes(1);
   });
 
+  it('fails over a consumed resolver u64 outside the protobuf range', async () => {
+    const malformed = vi.fn<RawSimulate>(
+      currentResolution(undefined, (response) => {
+        responseTransaction(response).gasPayment!.budget = 1n << 64n;
+      }),
+    );
+    const current = vi.fn<RawSimulate>(currentResolution());
+
+    await expect(
+      buildSuiTransaction(createSuiEndpointSnapshot([endpoint(malformed), endpoint(current)]), {
+        transaction: transaction(),
+      }),
+    ).resolves.toBeInstanceOf(Uint8Array);
+    expect(malformed).toHaveBeenCalledTimes(1);
+    expect(current).toHaveBeenCalledTimes(1);
+  });
+
   it.each([
-    {
-      boundary: 'simulation response wrapper',
-      mutateResolved: undefined,
-      mutateResponse: (response: GrpcTypes.SimulateTransactionResponse) => {
-        (response as unknown as Record<string, unknown>).legacyResult = true;
-      },
-    },
-    {
-      boundary: 'executed-transaction wrapper',
-      mutateResolved: undefined,
-      mutateResponse: (response: GrpcTypes.SimulateTransactionResponse) => {
-        (response.transaction as unknown as Record<string, unknown>).legacyCheckpoint = 1n;
-      },
-    },
     {
       boundary: 'command oneof wrapper',
       mutateResolved: undefined,
       mutateResponse: (response: GrpcTypes.SimulateTransactionResponse) => {
         const command = programmableTransaction(responseTransaction(response)).commands[0]!.command;
-        (command as unknown as Record<string, unknown>).legacyCommand = {};
+        (command as unknown as Record<string, unknown>).unsupportedField = {};
       },
     },
     {
@@ -234,7 +237,7 @@ describe('exact current Sui transaction resolution', () => {
       mutateResolved: undefined,
       mutateResponse: (response: GrpcTypes.SimulateTransactionResponse) => {
         const moveCall = firstMoveCall(responseTransaction(response));
-        (moveCall as unknown as Record<string, unknown>).legacyTarget = 'example';
+        (moveCall as unknown as Record<string, unknown>).unsupportedField = 'example';
       },
     },
     {
@@ -242,7 +245,7 @@ describe('exact current Sui transaction resolution', () => {
       mutateResolved: undefined,
       mutateResponse: (response: GrpcTypes.SimulateTransactionResponse) => {
         const argument = firstMoveCall(responseTransaction(response)).arguments[0]!;
-        (argument as unknown as Record<string, unknown>).legacyIndex = 0;
+        (argument as unknown as Record<string, unknown>).unsupportedField = 0;
       },
     },
   ])(
@@ -263,6 +266,32 @@ describe('exact current Sui transaction resolution', () => {
 
   it.each([
     {
+      boundary: 'simulation response wrapper',
+      mutateResponse: (response: GrpcTypes.SimulateTransactionResponse) => {
+        (response as unknown as Record<string, unknown>).providerDetail = true;
+      },
+    },
+    {
+      boundary: 'executed-transaction wrapper',
+      mutateResponse: (response: GrpcTypes.SimulateTransactionResponse) => {
+        (response.transaction as unknown as Record<string, unknown>).providerDetail = 1n;
+      },
+    },
+  ])('ignores an additive provider field at the raw $boundary', async ({ mutateResponse }) => {
+    const accepted = vi.fn<RawSimulate>(currentResolution(undefined, mutateResponse));
+    const unused = vi.fn<RawSimulate>(currentResolution());
+
+    await expect(
+      buildSuiTransaction(createSuiEndpointSnapshot([endpoint(accepted), endpoint(unused)]), {
+        transaction: transaction(),
+      }),
+    ).resolves.toBeInstanceOf(Uint8Array);
+    expect(accepted).toHaveBeenCalledTimes(1);
+    expect(unused).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
       boundary: 'commandOutputs omission',
       mutateResponse: (response: GrpcTypes.SimulateTransactionResponse) => {
         delete (response as unknown as Record<string, unknown>).commandOutputs;
@@ -280,17 +309,17 @@ describe('exact current Sui transaction resolution', () => {
         (response.transaction as unknown as Record<string, unknown>).balanceChanges = {};
       },
     },
-  ])('fails over a $boundary in the raw resolution response', async ({ mutateResponse }) => {
-    const malformed = vi.fn<RawSimulate>(currentResolution(undefined, mutateResponse));
-    const current = vi.fn<RawSimulate>(currentResolution());
+  ])('ignores a discarded $boundary in the raw resolution response', async ({ mutateResponse }) => {
+    const accepted = vi.fn<RawSimulate>(currentResolution(undefined, mutateResponse));
+    const unused = vi.fn<RawSimulate>(currentResolution());
 
     await expect(
-      buildSuiTransaction(createSuiEndpointSnapshot([endpoint(malformed), endpoint(current)]), {
+      buildSuiTransaction(createSuiEndpointSnapshot([endpoint(accepted), endpoint(unused)]), {
         transaction: transaction(),
       }),
     ).resolves.toBeInstanceOf(Uint8Array);
-    expect(malformed).toHaveBeenCalledTimes(1);
-    expect(current).toHaveBeenCalledTimes(1);
+    expect(accepted).toHaveBeenCalledTimes(1);
+    expect(unused).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -320,34 +349,43 @@ describe('exact current Sui transaction resolution', () => {
         ];
       },
     },
-  ])('fails over valid but $boundary', async ({ mutateResponse }) => {
-    const unexpected = vi.fn<RawSimulate>(currentResolution(undefined, mutateResponse));
-    const current = vi.fn<RawSimulate>(currentResolution());
+  ])('ignores valid but $boundary', async ({ mutateResponse }) => {
+    const accepted = vi.fn<RawSimulate>(currentResolution(undefined, mutateResponse));
+    const unused = vi.fn<RawSimulate>(currentResolution());
 
     await expect(
-      buildSuiTransaction(createSuiEndpointSnapshot([endpoint(unexpected), endpoint(current)]), {
+      buildSuiTransaction(createSuiEndpointSnapshot([endpoint(accepted), endpoint(unused)]), {
         transaction: transaction(),
       }),
     ).resolves.toBeInstanceOf(Uint8Array);
-    expect(unexpected).toHaveBeenCalledTimes(1);
-    expect(current).toHaveBeenCalledTimes(1);
+    expect(accepted).toHaveBeenCalledTimes(1);
+    expect(unused).not.toHaveBeenCalled();
   });
 
-  it('fails over a malformed command-output item before accepting an empty current response', async () => {
-    const malformed = vi.fn<RawSimulate>(
+  it('ignores malformed command-output and provider-only resolution fields', async () => {
+    const accepted = vi.fn<RawSimulate>(
       currentResolution(undefined, (response) => {
         response.commandOutputs = [{} as GrpcTypes.CommandResult];
+        Object.assign(response, {
+          suggestedGasPrice: 'malformed',
+          providerDetail: 'ignored',
+        });
+        Object.assign(response.transaction!.effects!, {
+          gasUsed: 'malformed',
+          eventsDigest: 'malformed',
+          providerDetail: 'ignored',
+        });
       }),
     );
-    const current = vi.fn<RawSimulate>(currentResolution());
+    const unused = vi.fn<RawSimulate>(currentResolution());
 
     await expect(
-      buildSuiTransaction(createSuiEndpointSnapshot([endpoint(malformed), endpoint(current)]), {
+      buildSuiTransaction(createSuiEndpointSnapshot([endpoint(accepted), endpoint(unused)]), {
         transaction: transaction(),
       }),
     ).resolves.toBeInstanceOf(Uint8Array);
-    expect(malformed).toHaveBeenCalledTimes(1);
-    expect(current).toHaveBeenCalledTimes(1);
+    expect(accepted).toHaveBeenCalledTimes(1);
+    expect(unused).not.toHaveBeenCalled();
   });
 
   it('accepts current primitive and vector TypeTags in commands', async () => {

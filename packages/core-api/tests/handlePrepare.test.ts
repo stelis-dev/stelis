@@ -30,7 +30,7 @@ import {
 
 const gateway = vi.hoisted(() => ({
   getSuiBalance: vi.fn(),
-  listAllSuiCoins: vi.fn(),
+  readBoundedSuiCoins: vi.fn(),
   queryUserCredit: vi.fn(),
   simulateSuiTransaction: vi.fn(),
 }));
@@ -60,7 +60,7 @@ beforeEach(() => {
     coinBalance: '0',
     addressBalance: '0',
   });
-  gateway.listAllSuiCoins.mockReset().mockResolvedValue([]);
+  gateway.readBoundedSuiCoins.mockReset().mockResolvedValue({ status: 'complete', coins: [] });
   gateway.queryUserCredit.mockReset().mockResolvedValue({
     vaultObjectId: null,
     credit: '0',

@@ -236,56 +236,50 @@ describe('current Sui transaction gateways', () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
-  it('fails over omitted or malformed mandatory ExecutedTransaction arrays', async () => {
-    const omittedResponse = simulationResponse(rawTransaction(false));
-    delete (omittedResponse.transaction as unknown as Record<string, unknown>).signatures;
-    const malformedResponse = simulationResponse(rawTransaction(false));
-    (malformedResponse.transaction as unknown as Record<string, unknown>).balanceChanges = {};
-
-    const omitted = vi.fn(async () => ({
-      response: omittedResponse,
-    }));
-    const malformed = vi.fn(async () => ({
-      response: malformedResponse,
-    }));
-    const current = vi.fn(async () => ({
-      response: simulationResponse(rawTransaction(false)),
-    }));
+  it('ignores malformed fields outside the ordinary simulation result', async () => {
+    const response = simulationResponse(rawTransaction(false));
+    delete (response.transaction as unknown as Record<string, unknown>).signatures;
+    (response.transaction as unknown as Record<string, unknown>).balanceChanges = {};
+    (response.transaction as unknown as Record<string, unknown>).checkpoint = 'malformed';
+    Object.assign(response.transaction!.effects!, {
+      epoch: 'malformed',
+      changedObjects: 'malformed',
+      providerDetail: 'ignored',
+    });
+    response.commandOutputs = [{} as GrpcTypes.CommandResult];
+    const accepted = vi.fn(async () => ({ response }));
+    const unused = vi.fn();
 
     await expect(
       simulateSuiTransaction(
         createSuiEndpointSnapshot([
-          client({ transactionExecutionService: { simulateTransaction: omitted } }),
-          client({ transactionExecutionService: { simulateTransaction: malformed } }),
-          client({ transactionExecutionService: { simulateTransaction: current } }),
+          client({ transactionExecutionService: { simulateTransaction: accepted } }),
+          client({ transactionExecutionService: { simulateTransaction: unused } }),
         ]),
         { transaction: BYTES },
       ),
     ).resolves.toMatchObject({ outcome: 'success', digest: DIGEST });
-    expect(omitted).toHaveBeenCalledTimes(1);
-    expect(malformed).toHaveBeenCalledTimes(1);
-    expect(current).toHaveBeenCalledTimes(1);
+    expect(accepted).toHaveBeenCalledTimes(1);
+    expect(unused).not.toHaveBeenCalled();
   });
 
-  it('fails over an omitted mandatory simulation command-output array', async () => {
+  it('accepts an omitted ordinary-simulation command-output array', async () => {
     const omitted = vi.fn(async () => ({
       response: { transaction: rawTransaction(false) },
     }));
-    const current = vi.fn(async () => ({
-      response: simulationResponse(rawTransaction(false)),
-    }));
+    const unused = vi.fn();
 
     await expect(
       simulateSuiTransaction(
         createSuiEndpointSnapshot([
           client({ transactionExecutionService: { simulateTransaction: omitted } }),
-          client({ transactionExecutionService: { simulateTransaction: current } }),
+          client({ transactionExecutionService: { simulateTransaction: unused } }),
         ]),
         { transaction: BYTES },
       ),
     ).resolves.toMatchObject({ outcome: 'success', digest: DIGEST });
     expect(omitted).toHaveBeenCalledTimes(1);
-    expect(current).toHaveBeenCalledTimes(1);
+    expect(unused).not.toHaveBeenCalled();
   });
 
   it('returns command outputs only from the Move-view gateway', async () => {
@@ -386,7 +380,7 @@ describe('current Sui transaction gateways', () => {
     expect(current.simulate).toHaveBeenCalledTimes(2);
   });
 
-  it('validates the mandatory command-output array even when Move-view execution fails', async () => {
+  it('ignores command outputs when Move-view execution fails', async () => {
     const fail = (transaction: GrpcTypes.ExecutedTransaction) => {
       transaction.effects!.status = {
         success: false,
@@ -398,21 +392,12 @@ describe('current Sui transaction gateways', () => {
       return transaction;
     };
     const omitted = moveViewEndpoint((transaction) => ({ transaction: fail(transaction) }));
-    const malformed = moveViewEndpoint((transaction) => ({
-      transaction: fail(transaction),
-      commandOutputs: {},
-    }));
-    const currentFailure = moveViewEndpoint((transaction) => simulationResponse(fail(transaction)));
-
     await expect(
-      simulateSuiMoveView(
-        createSuiEndpointSnapshot([omitted.client, malformed.client, currentFailure.client]),
-        { transaction: moveViewTransaction() },
-      ),
+      simulateSuiMoveView(createSuiEndpointSnapshot([omitted.client]), {
+        transaction: moveViewTransaction(),
+      }),
     ).resolves.toMatchObject({ outcome: 'failure', error: { kind: 'InsufficientGas' } });
     expect(omitted.simulate).toHaveBeenCalledTimes(2);
-    expect(malformed.simulate).toHaveBeenCalledTimes(2);
-    expect(currentFailure.simulate).toHaveBeenCalledTimes(2);
   });
 
   it('binds Move-view command-result cardinality to the submitted PTB', async () => {
@@ -509,12 +494,6 @@ describe('current Sui transaction gateways', () => {
       },
     },
     {
-      boundary: 'malformed effects simulation digest',
-      mutate: (transaction: GrpcTypes.ExecutedTransaction) => {
-        transaction.effects!.transactionDigest = 'not-a-sui-digest';
-      },
-    },
-    {
       boundary: 'TransactionData evidence name',
       mutate: (transaction: GrpcTypes.ExecutedTransaction) => {
         transaction.transaction!.bcs!.name = 'LegacyTransactionData';
@@ -541,6 +520,25 @@ describe('current Sui transaction gateways', () => {
     },
   );
 
+  it('ignores Move-view effects fields outside the returned status', async () => {
+    const accepted = moveViewEndpoint((transaction, outputs) => {
+      Object.assign(transaction.effects!, {
+        version: 99,
+        transactionDigest: 'malformed',
+        gasUsed: { computationCost: -1n },
+        eventsDigest: 'malformed',
+      });
+      return simulationResponse(transaction, outputs);
+    });
+
+    await expect(
+      simulateSuiMoveView(createSuiEndpointSnapshot([accepted.client]), {
+        transaction: moveViewTransaction(),
+      }),
+    ).resolves.toMatchObject({ outcome: 'success' });
+    expect(accepted.simulate).toHaveBeenCalledTimes(2);
+  });
+
   it.each([
     {
       boundary: 'argument discriminant',
@@ -562,9 +560,23 @@ describe('current Sui transaction gateways', () => {
         } as never;
       },
     },
-  ])('fails over malformed current command-output $boundary', async ({ mutate }) => {
-    const malformed = moveViewEndpoint((transaction, outputs) => {
+  ])('ignores discarded Move-view command-output $boundary', async ({ mutate }) => {
+    const accepted = moveViewEndpoint((transaction, outputs) => {
       mutate(outputs[0]!.returnValues[0]!);
+      return simulationResponse(transaction, outputs);
+    });
+
+    await expect(
+      simulateSuiMoveView(createSuiEndpointSnapshot([accepted.client]), {
+        transaction: moveViewTransaction(),
+      }),
+    ).resolves.toMatchObject({ outcome: 'success' });
+    expect(accepted.simulate).toHaveBeenCalledTimes(2);
+  });
+
+  it('fails over a malformed Move-view BCS return value', async () => {
+    const malformed = moveViewEndpoint((transaction, outputs) => {
+      outputs[0]!.returnValues[0]!.value = { name: 'u64', value: undefined };
       return simulationResponse(transaction, outputs);
     });
     const current = moveViewEndpoint((transaction, outputs) =>
@@ -673,6 +685,93 @@ describe('current Sui transaction gateways', () => {
     });
     expect(tampered).toHaveBeenCalledTimes(1);
     expect(current).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails over a malformed consumed event BCS value', async () => {
+    const endpoint = (value: unknown) =>
+      vi.fn(async () => {
+        const transaction = rawTransaction(true, false);
+        return {
+          response: {
+            transaction: {
+              ...transaction,
+              effects: { ...transaction.effects, eventsDigest: EVENT_DIGEST },
+              events: {
+                digest: EVENT_DIGEST,
+                events: [
+                  {
+                    packageId: ID,
+                    module: 'entry',
+                    sender: ID,
+                    eventType: `${ID}::events::Settled`,
+                    contents: { value },
+                  },
+                ],
+              },
+            },
+          },
+        };
+      });
+    const malformed = endpoint('not-bcs-bytes');
+    const current = endpoint(new Uint8Array([7]));
+
+    await expect(
+      getSuiTransactionEvents(
+        createSuiEndpointSnapshot([
+          client({ ledgerService: { getTransaction: malformed } }),
+          client({ ledgerService: { getTransaction: current } }),
+        ]),
+        { digest: DIGEST },
+      ),
+    ).resolves.toMatchObject({
+      outcome: 'success',
+      events: [{ bcs: new Uint8Array([7]) }],
+    });
+    expect(malformed).toHaveBeenCalledTimes(1);
+    expect(current).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores event fields outside the returned event contract', async () => {
+    const event = {
+      packageId: ID,
+      module: 'entry',
+      sender: ID,
+      eventType: `${ID}::events::Settled`,
+      contents: { name: 7, value: new Uint8Array([7]), providerDetail: 'ignored' },
+      json: { malformed: true },
+      providerDetail: 'ignored',
+    };
+    const accepted = vi.fn(async () => {
+      const transaction = rawTransaction(true, false);
+      return {
+        response: {
+          transaction: {
+            ...transaction,
+            effects: {
+              ...transaction.effects,
+              eventsDigest: EVENT_DIGEST,
+              providerDetail: 'ignored',
+            },
+            events: {
+              digest: EVENT_DIGEST,
+              events: [event],
+              bcs: 'malformed-but-discarded',
+              providerDetail: 'ignored',
+            },
+          },
+        },
+      };
+    });
+
+    await expect(
+      getSuiTransactionEvents(
+        createSuiEndpointSnapshot([client({ ledgerService: { getTransaction: accepted } })]),
+        { digest: DIGEST },
+      ),
+    ).resolves.toMatchObject({
+      outcome: 'success',
+      events: [{ packageId: ID, module: 'entry', sender: ID }],
+    });
   });
 
   it('accepts the current omitted event envelope only when effects prove there are no events', async () => {
@@ -788,15 +887,48 @@ describe('current Sui transaction gateways', () => {
     expect(current).toHaveBeenCalledTimes(1);
   });
 
-  it('returns exact balance changes and fails over malformed current entries', async () => {
-    const omittedTransaction = GrpcTypes.ExecutedTransaction.create({
+  it('returns exact balance changes while ignoring fields outside the read mask', async () => {
+    const acceptedTransaction = GrpcTypes.ExecutedTransaction.create({
       digest: DIGEST,
       balanceChanges: [{ address: ID, coinType: '0x2::sui::SUI', amount: '-7' }],
     });
-    delete (omittedTransaction as unknown as Record<string, unknown>).signatures;
-    const omitted = vi.fn(async (_request: unknown, _callOptions: unknown) => ({
-      response: { transaction: omittedTransaction },
+    delete (acceptedTransaction as unknown as Record<string, unknown>).signatures;
+    Object.assign(acceptedTransaction, {
+      effects: 'malformed-but-discarded',
+      providerDetail: 'ignored',
+    });
+    Object.assign(acceptedTransaction.balanceChanges[0]!, { providerDetail: 'ignored' });
+    const accepted = vi.fn(async (_request: unknown, _callOptions: unknown) => ({
+      response: { transaction: acceptedTransaction },
     }));
+    const unused = vi.fn();
+    const result = await getSuiTransactionBalanceChanges(
+      createSuiEndpointSnapshot([
+        client({ ledgerService: { getTransaction: accepted } }),
+        client({ ledgerService: { getTransaction: unused } }),
+      ]),
+      { digest: DIGEST },
+    );
+
+    expect(result).toEqual({
+      digest: DIGEST,
+      balanceChanges: [
+        {
+          address: ID,
+          coinType: `0x${'0'.repeat(63)}2::sui::SUI`,
+          amount: '-7',
+        },
+      ],
+    });
+    expect(accepted).toHaveBeenCalledTimes(1);
+    expect(unused).not.toHaveBeenCalled();
+    const balanceRequest = accepted.mock.calls[0]![0] as {
+      readMask: { paths: string[] };
+    };
+    expect(balanceRequest.readMask.paths).toEqual(['digest', 'balance_changes']);
+  });
+
+  it('fails over malformed returned balance-change values', async () => {
     const malformed = vi.fn(async (_request: unknown, _callOptions: unknown) => ({
       response: {
         transaction: GrpcTypes.ExecutedTransaction.create({
@@ -815,7 +947,6 @@ describe('current Sui transaction gateways', () => {
     }));
     const result = await getSuiTransactionBalanceChanges(
       createSuiEndpointSnapshot([
-        client({ ledgerService: { getTransaction: omitted } }),
         client({ ledgerService: { getTransaction: malformed } }),
         client({ ledgerService: { getTransaction: current } }),
       ]),
@@ -832,7 +963,6 @@ describe('current Sui transaction gateways', () => {
         },
       ],
     });
-    expect(omitted).toHaveBeenCalledTimes(1);
     expect(malformed).toHaveBeenCalledTimes(1);
     expect(current).toHaveBeenCalledTimes(1);
     const balanceRequest = current.mock.calls[0]![0] as {

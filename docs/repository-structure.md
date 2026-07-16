@@ -79,6 +79,7 @@ graph TD
     AppApi --> Contracts
     AppApi --> Relay
     AppApi --> CoreApi
+    AppWeb --> Contracts
     AppWeb --> Sdk
     AppWeb --> Relay
     AppAdmin --> Contracts

@@ -20,7 +20,7 @@ const PACKAGE_IMPORT_ALLOWLIST = {
   '@stelis/core-api': ['@stelis/contracts', '@stelis/core-relay'],
   '@stelis/sdk': ['@stelis/contracts', '@stelis/core-relay'],
   '@stelis/app-api': ['@stelis/contracts', '@stelis/core-api', '@stelis/core-relay'],
-  '@stelis/app-web': ['@stelis/core-relay', '@stelis/sdk'],
+  '@stelis/app-web': ['@stelis/contracts', '@stelis/core-relay', '@stelis/sdk'],
   '@stelis/app-admin': ['@stelis/contracts', '@stelis/core-relay'],
   '@stelis/mcp-server': ['@stelis/contracts'],
 };

@@ -12,7 +12,6 @@ import {
   type SuiEndpointSnapshot,
 } from './suiOperation.js';
 import {
-  parseRawEmptySuiCommandResults,
   parseRawSuiCommandResults,
   parseRawSuiBalanceChangesTransaction,
   parseRawSuiEffectsTransaction,
@@ -73,11 +72,7 @@ const SIMULATION_EFFECTS_READ_MASK = [
 const MOVE_VIEW_READ_MASK = [
   'transaction.transaction.bcs',
   'transaction.transaction.digest',
-  'transaction.effects.version',
   'transaction.effects.status',
-  'transaction.effects.gas_used',
-  'transaction.effects.transaction_digest',
-  'transaction.effects.events_digest',
   'command_outputs',
 ] as const;
 
@@ -216,7 +211,6 @@ export function simulateSuiTransaction(
         { timeout: context.timeoutMs, abort: context.signal },
       );
       return parseOrMalformed('simulate_transaction', () => {
-        parseRawEmptySuiCommandResults(response.commandOutputs);
         return parseRawSuiSimulationTransaction(response.transaction, expectedDigest);
       });
     },
@@ -266,10 +260,10 @@ export function simulateSuiMoveView(
             'does not match the returned TransactionData BCS',
           );
         }
-        const commandResults = parseRawSuiCommandResults(response.commandOutputs);
         if (!evidence.status.success) {
           return { outcome: 'failure', error: evidence.status.error };
         }
+        const commandResults = parseRawSuiCommandResults(response.commandOutputs);
         if (commandResults.length !== resolved.data.commands.length) {
           throw new SuiTransactionShapeError(
             'simulation.commandOutputs',

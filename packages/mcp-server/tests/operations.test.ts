@@ -194,6 +194,64 @@ describe('current Host error boundary', () => {
       listPromotions(createConfig(unrelatedReadFetch), { developerJwt: 'jwt' }),
     ).rejects.toThrow('Stelis Host returned a non-current error response (HTTP 404)');
   });
+
+  it('preserves the bounded Coin object read code and contracts-owned guidance', async () => {
+    const message = hostErrorPublicMessage('PAYMENT_COIN_LIMIT_EXCEEDED');
+    const fetchFn = vi.fn<FetchLike>().mockResolvedValue(
+      jsonResponse(
+        {
+          error: message,
+          code: 'PAYMENT_COIN_LIMIT_EXCEEDED',
+        },
+        422,
+      ),
+    );
+
+    await expect(
+      prepareSponsoredTransaction(createConfig(fetchFn), {
+        txKindBytes: 'kind',
+        senderAddress: '0x1234',
+        settlementTokenType: '0x2::sui::SUI',
+        txKindBytesHash: '0x' + '11'.repeat(32),
+        prepareAuthorizationTimestampMs: 1_700_000_000_000,
+        prepareAuthorizationRequestNonce: 'nonce-1',
+        prepareAuthorizationSignature: 'prepare-signature',
+      }),
+    ).rejects.toMatchObject({
+      code: 'PAYMENT_COIN_LIMIT_EXCEEDED',
+      status: 422,
+      message,
+    });
+  });
+
+  it('preserves a payment Coin conflict without reporting insufficient balance', async () => {
+    const message = hostErrorPublicMessage('PAYMENT_COIN_CONFLICT');
+    const fetchFn = vi.fn<FetchLike>().mockResolvedValue(
+      jsonResponse(
+        {
+          error: message,
+          code: 'PAYMENT_COIN_CONFLICT',
+        },
+        422,
+      ),
+    );
+
+    await expect(
+      prepareSponsoredTransaction(createConfig(fetchFn), {
+        txKindBytes: 'kind',
+        senderAddress: '0x1234',
+        settlementTokenType: '0x2::sui::SUI',
+        txKindBytesHash: '0x' + '11'.repeat(32),
+        prepareAuthorizationTimestampMs: 1_700_000_000_000,
+        prepareAuthorizationRequestNonce: 'nonce-1',
+        prepareAuthorizationSignature: 'prepare-signature',
+      }),
+    ).rejects.toMatchObject({
+      code: 'PAYMENT_COIN_CONFLICT',
+      status: 422,
+      message,
+    });
+  });
 });
 
 describe('Stelis MCP operations', () => {

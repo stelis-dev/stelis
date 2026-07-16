@@ -78,6 +78,32 @@ describe('contracts-owned Host error projection', () => {
       ),
     ).toBeNull();
   });
+
+  it('projects the bounded Coin object read rejection through the Relay prepare boundary', () => {
+    expect(
+      mapRelayPrepare(
+        new PrepareValidationError(
+          'PAYMENT_COIN_LIMIT_EXCEEDED',
+          'internal Coin discovery details must not escape',
+        ),
+      ),
+    ).toEqual({
+      status: 422,
+      body: {
+        error: hostErrorPublicMessage('PAYMENT_COIN_LIMIT_EXCEEDED'),
+        code: 'PAYMENT_COIN_LIMIT_EXCEEDED',
+      },
+    });
+  });
+
+  it('keeps payment-funding guidance independent from the status fallback', () => {
+    expect(hostErrorPublicMessage('PAYMENT_COIN_CONFLICT')).toBe(
+      'Settlement-token payment could not be resolved safely',
+    );
+    expect(hostErrorPublicMessage('PAYMENT_COIN_LIMIT_EXCEEDED')).toBe(
+      'Consolidate settlement-token Coin objects and try again',
+    );
+  });
 });
 
 describe('code-bound metadata', () => {

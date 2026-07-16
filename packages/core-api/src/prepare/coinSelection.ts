@@ -8,8 +8,10 @@
 import { normalizeSuiAddress } from '@mysten/sui/utils';
 import {
   getSuiBalance,
-  listAllSuiCoins,
+  readBoundedSuiCoins,
+  selectSuiCoinSubset,
   type PrefixValueTrace,
+  type SuiCoinReadResult,
   type SuiEndpointSnapshot,
 } from '@stelis/core-relay';
 import type { SwapFundingResolution } from './settlePlanTypes.js';
@@ -19,10 +21,16 @@ interface ResolvedCoinCandidate {
   readonly objectId: string;
   readonly balance: bigint;
   readonly appearsInPrefix: boolean;
+  readonly snapshotCoinIds: readonly string[];
 }
 
 const DECIMAL_BALANCE_RE = /^(?:0|[1-9]\d*)$/;
 const U64_MAX = (1n << 64n) - 1n;
+
+export interface PaymentSourceReader {
+  readCoins(): Promise<SuiCoinReadResult>;
+  readAddressBalance(): Promise<bigint>;
+}
 
 function parseRpcBalance(value: string, label: string): bigint {
   if (!DECIMAL_BALANCE_RE.test(value)) {
@@ -41,6 +49,34 @@ function parseRpcBalance(value: string, label: string): bigint {
   return parsed;
 }
 
+/**
+ * Create one request-local reader for settlement-token funding evidence.
+ *
+ * Coin objects and address balance are each loaded at most once. Reads stay
+ * lazy so a credit-only prepare does not query settlement-token funding.
+ */
+export function createPaymentSourceReader(
+  sui: SuiEndpointSnapshot,
+  owner: string,
+  coinType: string,
+): PaymentSourceReader {
+  let coinRead: Promise<SuiCoinReadResult> | undefined;
+  let addressBalance: Promise<bigint> | undefined;
+
+  return Object.freeze({
+    readCoins(): Promise<SuiCoinReadResult> {
+      coinRead ??= readBoundedSuiCoins(sui, { owner, coinType });
+      return coinRead;
+    },
+    readAddressBalance(): Promise<bigint> {
+      addressBalance ??= getSuiBalance(sui, { owner, coinType }).then((result) =>
+        parseRpcBalance(result.addressBalance, 'Address balance'),
+      );
+      return addressBalance;
+    },
+  });
+}
+
 function canonicalObjectId(value: string, label: string): string {
   try {
     return normalizeSuiAddress(value);
@@ -53,10 +89,10 @@ function canonicalObjectId(value: string, label: string): string {
 }
 
 function normalizeRequiredAmount(value: bigint, tokenSymbol: string): bigint {
-  if (value >= 0n && value <= U64_MAX) return value;
+  if (value > 0n && value <= U64_MAX) return value;
   throw new PrepareValidationError(
     'INVALID_AMOUNT',
-    `Required ${tokenSymbol} amount must be a bigint in the u64 range.`,
+    `Required ${tokenSymbol} amount must be a positive bigint in the u64 range.`,
   );
 }
 
@@ -85,7 +121,12 @@ function resolveCoinCandidates(
         );
       }
       claimedSnapshotIds.add(objectId);
-      candidates.push({ objectId, balance, appearsInPrefix: false });
+      candidates.push({
+        objectId,
+        balance,
+        appearsInPrefix: false,
+        snapshotCoinIds: [objectId],
+      });
       continue;
     }
 
@@ -124,7 +165,12 @@ function resolveCoinCandidates(
       }
       claimedSnapshotIds.add(snapshotId);
     }
-    candidates.push({ objectId, balance: remaining, appearsInPrefix: true });
+    candidates.push({
+      objectId,
+      balance: remaining,
+      appearsInPrefix: true,
+      snapshotCoinIds: [...localSnapshotIds],
+    });
   }
 
   return candidates;
@@ -140,15 +186,18 @@ function resolveCoinCandidates(
 function validateValueConstraints(
   discovered: ReadonlyMap<string, bigint>,
   prefixTrace: PrefixValueTrace,
-  exhausted: boolean,
+  complete: boolean,
+  relevantSnapshotIds?: ReadonlySet<string>,
 ): boolean {
-  let allResolved = true;
+  let relevantValuesResolved = true;
 
   for (const constraint of prefixTrace.valueConstraints) {
     let value = constraint.value.delta;
     let found = 0;
+    let isRelevant = constraint.value.snapshotCoinIds.length === 0;
     for (const snapshotId of constraint.value.snapshotCoinIds) {
       const canonicalSnapshotId = canonicalObjectId(snapshotId, 'Prefix constraint snapshot ID');
+      if (relevantSnapshotIds?.has(canonicalSnapshotId)) isRelevant = true;
       const snapshot = discovered.get(canonicalSnapshotId);
       if (snapshot !== undefined) {
         found += 1;
@@ -158,8 +207,8 @@ function validateValueConstraints(
 
     const expected = constraint.value.snapshotCoinIds.length;
     if (found !== expected) {
-      if (!exhausted) {
-        allResolved = false;
+      if (!complete) {
+        if (isRelevant) relevantValuesResolved = false;
         continue;
       }
       if (found === 0) continue;
@@ -177,18 +226,11 @@ function validateValueConstraints(
     }
   }
 
-  return allResolved;
+  return relevantValuesResolved;
 }
 
 function totalCandidateBalance(candidates: readonly ResolvedCoinCandidate[]): bigint {
-  const total = candidates.reduce((sum, coin) => sum + coin.balance, 0n);
-  if (total > U64_MAX) {
-    throw new PrepareValidationError(
-      'PAYMENT_COIN_CONFLICT',
-      'Discovered settlement-token coin value exceeds the u64 balance range.',
-    );
-  }
-  return total;
+  return candidates.reduce((sum, coin) => sum + coin.balance, 0n);
 }
 
 function resolveCoinObjectFunding(
@@ -214,28 +256,32 @@ function resolveCoinObjectFunding(
   };
 }
 
+function coinLimitExceeded(): never {
+  throw new PrepareValidationError(
+    'PAYMENT_COIN_LIMIT_EXCEEDED',
+    'Settlement-token coin objects exceed the bounded read and no complete funding source was proven in the returned page.',
+  );
+}
+
 /**
  * Determine the exact source for the settlement-token swap input.
  *
- * All coin pages are read as one endpoint-consistent operation. Selection then
- * walks that immutable result in RPC order and stops at the first safely
- * resolved prefix whose value covers the request. Address-balance or mixed
- * funding is considered only after the coin result is exhausted.
+ * Coin discovery returns one bounded, endpoint-consistent result. Selection
+ * walks that immutable result in RPC order and stops at the first u64-safe
+ * subset that covers the request. Address-balance or mixed funding is
+ * considered only when the result proves the wallet scan is complete.
  */
 export async function resolvePaymentSource(
-  sui: SuiEndpointSnapshot,
-  owner: string,
-  coinType: string,
+  reader: PaymentSourceReader,
   requiredAmount: bigint,
   tokenSymbol: string,
   prefixTrace: PrefixValueTrace,
 ): Promise<SwapFundingResolution> {
   const required = normalizeRequiredAmount(requiredAmount, tokenSymbol);
   const discovered = new Map<string, bigint>();
-  const coins = await listAllSuiCoins(sui, { owner, coinType });
+  const coinRead = await reader.readCoins();
 
-  for (let index = 0; index < coins.length; index += 1) {
-    const coin = coins[index]!;
+  for (const coin of coinRead.coins) {
     const objectId = canonicalObjectId(coin.objectId, 'Coin object ID');
     if (discovered.has(objectId)) {
       throw new PrepareValidationError(
@@ -244,25 +290,32 @@ export async function resolvePaymentSource(
       );
     }
     discovered.set(objectId, parseRpcBalance(coin.balance, `Coin ${objectId} balance`));
-
-    const exhausted = index === coins.length - 1;
-    const constraintsResolved = validateValueConstraints(discovered, prefixTrace, exhausted);
-    const candidates = resolveCoinCandidates(discovered, prefixTrace);
-    const coinBalance = totalCandidateBalance(candidates);
-    if (constraintsResolved && candidates.length > 0 && coinBalance >= required) {
-      return {
-        source: 'coin_object',
-        ...resolveCoinObjectFunding(candidates),
-      };
-    }
   }
 
-  if (coins.length === 0) validateValueConstraints(discovered, prefixTrace, true);
-
+  const complete = coinRead.status === 'complete';
+  if (complete) validateValueConstraints(discovered, prefixTrace, true);
   const candidates = resolveCoinCandidates(discovered, prefixTrace);
-  const coinBalance = totalCandidateBalance(candidates);
-  const balanceResult = await getSuiBalance(sui, { owner, coinType });
-  const addressBalance = parseRpcBalance(balanceResult.addressBalance, 'Address balance');
+  const selected = selectSuiCoinSubset(candidates, required);
+  if (selected.sufficient) {
+    if (!complete) {
+      const relevantSnapshotIds = new Set(
+        selected.coins.flatMap((coin) => [...coin.snapshotCoinIds]),
+      );
+      if (!validateValueConstraints(discovered, prefixTrace, false, relevantSnapshotIds)) {
+        coinLimitExceeded();
+      }
+    }
+    return {
+      source: 'coin_object',
+      ...resolveCoinObjectFunding(selected.coins),
+    };
+  }
+
+  if (!complete) coinLimitExceeded();
+
+  const coinBalance = selected.totalBalance;
+  const nominalCoinBalance = totalCandidateBalance(candidates);
+  const addressBalance = await reader.readAddressBalance();
   const availableAddressBalance =
     addressBalance > prefixTrace.senderWithdrawalDebit
       ? addressBalance - prefixTrace.senderWithdrawalDebit
@@ -272,12 +325,19 @@ export async function resolvePaymentSource(
     return { source: 'address_balance', redeemAmount: required };
   }
 
-  if (candidates.length > 0 && coinBalance + availableAddressBalance >= required) {
+  if (selected.coins.length > 0 && coinBalance + availableAddressBalance >= required) {
     return {
       source: 'mixed_topup',
-      ...resolveCoinObjectFunding(candidates),
+      ...resolveCoinObjectFunding(selected.coins),
       redeemAmount: required - coinBalance,
     };
+  }
+
+  if (nominalCoinBalance + availableAddressBalance >= required) {
+    throw new PrepareValidationError(
+      'PAYMENT_COIN_CONFLICT',
+      `The bounded ordered ${tokenSymbol} coin selection could not prove a u64-safe funding subset.`,
+    );
   }
 
   if (discovered.size > 0 && candidates.length === 0 && availableAddressBalance === 0n) {

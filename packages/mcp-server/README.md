@@ -86,3 +86,9 @@ extended, or non-JSON remote error is a local `MCP_SERVER_ERROR`; its raw body
 and arbitrary fields are not copied into MCP tool output.
 
 The MCP server does not retry Host errors. Agent retry and backoff policy belongs to the caller. Capacity codes include `SPONSOR_CAPACITY_UNAVAILABLE`, `SPONSOR_REFILL_ACCOUNT_UNHEALTHY`, `PREPARE_OVERLOADED`, `NO_SPONSOR_SLOT`, and `LEASE_EXPIRED`.
+`PAYMENT_COIN_CONFLICT` preserves the Host's statement that the transaction's
+settlement-token payment could not be resolved safely. It is not proof of
+insufficient balance.
+`PAYMENT_COIN_LIMIT_EXCEEDED` preserves the Host's instruction to consolidate
+the wallet's settlement-token Coin objects before retrying. It is not an
+insufficient-balance result.

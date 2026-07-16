@@ -9,23 +9,12 @@ import {
   toBase64,
 } from '@mysten/sui/utils';
 import { canonicalizeSuiTypeTag } from './suiTypeTag.js';
+import { SUI_U64_MAX, isSuiU64 } from './suiU64.js';
 
 type RuntimeRecord = Record<string, unknown>;
 
-const U64_MAX = 18_446_744_073_709_551_615n;
 const DECIMAL_RE = /^(?:0|[1-9]\d*)$/;
 const SIGNED_DECIMAL_RE = /^(?:0|[1-9]\d*|-[1-9]\d*)$/;
-const RAW_EXECUTED_TRANSACTION_KEYS = [
-  'digest',
-  'transaction',
-  'signatures',
-  'effects',
-  'events',
-  'checkpoint',
-  'timestamp',
-  'balanceChanges',
-  'objects',
-] as const;
 
 export class SuiTransactionShapeError extends TypeError {
   override readonly name = 'SuiTransactionShapeError';
@@ -116,7 +105,7 @@ function typeTag(value: unknown, path: string): string {
   }
 }
 
-function u64(value: unknown, path: string, max = U64_MAX): string | number {
+function u64(value: unknown, path: string, max = SUI_U64_MAX): string | number {
   if (typeof value === 'number') {
     if (!Number.isSafeInteger(value) || value < 0 || BigInt(value) > max) {
       throw new SuiTransactionShapeError(path, 'expected a non-negative safe u64 number');
@@ -137,14 +126,6 @@ function nonNegativeInteger(value: unknown, path: string): number {
     throw new SuiTransactionShapeError(path, 'expected a non-negative safe integer');
   }
   return value as number;
-}
-
-function u32Integer(value: unknown, path: string): number {
-  const parsed = nonNegativeInteger(value, path);
-  if (parsed > 0xffff_ffff) {
-    throw new SuiTransactionShapeError(path, 'integer exceeds the current u32 range');
-  }
-  return parsed;
 }
 
 function boolean(value: unknown, path: string): boolean {
@@ -175,28 +156,10 @@ function array(value: unknown, path: string): unknown[] {
   return parseExactSuiArray(value, path);
 }
 
-/** @internal Validate the installed SDK's mandatory repeated transaction fields once. */
+/** @internal Read the provider transaction envelope without interpreting excluded fields. */
 export function parseRawSuiExecutedTransactionEnvelope(value: unknown, path: string) {
   const transaction = record(value, path);
-  exactKeys(transaction, path, RAW_EXECUTED_TRANSACTION_KEYS);
-  return {
-    transaction,
-    signatures: array(transaction.signatures, `${path}.signatures`),
-    balanceChanges: array(transaction.balanceChanges, `${path}.balanceChanges`),
-  } as const;
-}
-
-/** @internal Enforce that a mandatory repeated field omitted by the read mask is empty. */
-export function assertEmptyRawSuiRepeatedField(values: readonly unknown[], path: string): void {
-  if (values.length !== 0) {
-    throw new SuiTransactionShapeError(path, 'expected an empty unrequested repeated field');
-  }
-}
-
-function assertAbsentRawSuiField(value: RuntimeRecord, key: string, path: string): void {
-  if (value[key] !== undefined) {
-    throw new SuiTransactionShapeError(`${path}.${key}`, 'unexpected unrequested field');
-  }
+  return { transaction } as const;
 }
 
 function bytes(value: unknown, path: string): Uint8Array {
@@ -269,63 +232,7 @@ function protobufOneof<const Variants extends readonly string[]>(
       throw new SuiTransactionShapeError(path, `contains opposing ${variant} payload`);
     }
   }
-  exactKeys(root, path, ['oneofKind', ...(kind === undefined ? [] : [kind])]);
   return { root, kind, payload: kind === undefined ? undefined : root[kind] };
-}
-
-function validateRawProtoValue(value: unknown, path: string): void {
-  const root = record(value, path);
-  exactKeys(root, path, ['kind']);
-  const kind = protobufOneof(root.kind, `${path}.kind`, [
-    'nullValue',
-    'numberValue',
-    'stringValue',
-    'boolValue',
-    'structValue',
-    'listValue',
-  ]);
-  if (kind.kind === undefined) {
-    throw new SuiTransactionShapeError(`${path}.kind`, 'missing current Value variant');
-  }
-  switch (kind.kind) {
-    case 'nullValue':
-      if (kind.payload !== 0) {
-        throw new SuiTransactionShapeError(`${path}.kind.nullValue`, 'expected NULL_VALUE');
-      }
-      return;
-    case 'numberValue':
-      if (typeof kind.payload !== 'number' || !Number.isFinite(kind.payload)) {
-        throw new SuiTransactionShapeError(`${path}.kind.numberValue`, 'expected a finite number');
-      }
-      return;
-    case 'stringValue':
-      if (typeof kind.payload !== 'string') {
-        throw new SuiTransactionShapeError(`${path}.kind.stringValue`, 'expected a string');
-      }
-      return;
-    case 'boolValue':
-      boolean(kind.payload, `${path}.kind.boolValue`);
-      return;
-    case 'structValue': {
-      const struct = record(kind.payload, `${path}.kind.structValue`);
-      exactKeys(struct, `${path}.kind.structValue`, ['fields']);
-      const fields = record(struct.fields, `${path}.kind.structValue.fields`);
-      for (const [key, entry] of Object.entries(fields)) {
-        validateRawProtoValue(entry, `${path}.kind.structValue.fields.${key}`);
-      }
-      return;
-    }
-    case 'listValue': {
-      const list = record(kind.payload, `${path}.kind.listValue`);
-      exactKeys(list, `${path}.kind.listValue`, ['values']);
-      array(list.values, `${path}.kind.listValue.values`).forEach((entry, index) =>
-        validateRawProtoValue(entry, `${path}.kind.listValue.values[${index}]`),
-      );
-      return;
-    }
-    default:
-      return rejectUnhandledSuiVariant(kind.kind, `${path}.kind`);
-  }
 }
 
 const ARGUMENT_KINDS = ['GasCoin', 'Input', 'Result', 'NestedResult'] as const;
@@ -914,8 +821,8 @@ export type SuiTransactionWithEventsResult =
     });
 
 function rawBigInt(value: unknown, path: string): bigint {
-  if (typeof value !== 'bigint' || value < 0n) {
-    throw new SuiTransactionShapeError(path, 'expected an unsigned protobuf integer');
+  if (!isSuiU64(value)) {
+    throw new SuiTransactionShapeError(path, 'expected a current protobuf u64');
   }
   return value;
 }
@@ -952,89 +859,8 @@ function requireRawKind(
   }
 }
 
-type CurrentCommandArgumentErrorKind = Exclude<
-  GrpcTypes.CommandArgumentError_CommandArgumentErrorKind,
-  GrpcTypes.CommandArgumentError_CommandArgumentErrorKind.COMMAND_ARGUMENT_ERROR_KIND_UNKNOWN
->;
-
-const CURRENT_COMMAND_ARGUMENT_ERROR_KINDS = {
-  [GrpcTypes.CommandArgumentError_CommandArgumentErrorKind.TYPE_MISMATCH]: true,
-  [GrpcTypes.CommandArgumentError_CommandArgumentErrorKind.INVALID_BCS_BYTES]: true,
-  [GrpcTypes.CommandArgumentError_CommandArgumentErrorKind.INVALID_USAGE_OF_PURE_ARGUMENT]: true,
-  [GrpcTypes.CommandArgumentError_CommandArgumentErrorKind
-    .INVALID_ARGUMENT_TO_PRIVATE_ENTRY_FUNCTION]: true,
-  [GrpcTypes.CommandArgumentError_CommandArgumentErrorKind.INDEX_OUT_OF_BOUNDS]: true,
-  [GrpcTypes.CommandArgumentError_CommandArgumentErrorKind.SECONDARY_INDEX_OUT_OF_BOUNDS]: true,
-  [GrpcTypes.CommandArgumentError_CommandArgumentErrorKind.INVALID_RESULT_ARITY]: true,
-  [GrpcTypes.CommandArgumentError_CommandArgumentErrorKind.INVALID_GAS_COIN_USAGE]: true,
-  [GrpcTypes.CommandArgumentError_CommandArgumentErrorKind.INVALID_VALUE_USAGE]: true,
-  [GrpcTypes.CommandArgumentError_CommandArgumentErrorKind.INVALID_OBJECT_BY_VALUE]: true,
-  [GrpcTypes.CommandArgumentError_CommandArgumentErrorKind.INVALID_OBJECT_BY_MUT_REF]: true,
-  [GrpcTypes.CommandArgumentError_CommandArgumentErrorKind.CONSENSUS_OBJECT_OPERATION_NOT_ALLOWED]:
-    true,
-  [GrpcTypes.CommandArgumentError_CommandArgumentErrorKind.INVALID_ARGUMENT_ARITY]: true,
-  [GrpcTypes.CommandArgumentError_CommandArgumentErrorKind.INVALID_TRANSFER_OBJECT]: true,
-  [GrpcTypes.CommandArgumentError_CommandArgumentErrorKind
-    .INVALID_MAKE_MOVE_VEC_NON_OBJECT_ARGUMENT]: true,
-  [GrpcTypes.CommandArgumentError_CommandArgumentErrorKind.ARGUMENT_WITHOUT_VALUE]: true,
-  [GrpcTypes.CommandArgumentError_CommandArgumentErrorKind.CANNOT_MOVE_BORROWED_VALUE]: true,
-  [GrpcTypes.CommandArgumentError_CommandArgumentErrorKind.CANNOT_WRITE_TO_EXTENDED_REFERENCE]:
-    true,
-  [GrpcTypes.CommandArgumentError_CommandArgumentErrorKind.INVALID_REFERENCE_ARGUMENT]: true,
-} as const satisfies Record<CurrentCommandArgumentErrorKind, true>;
-
-const INDEXED_COMMAND_ARGUMENT_ERROR_KINDS: ReadonlySet<CurrentCommandArgumentErrorKind> = new Set([
-  GrpcTypes.CommandArgumentError_CommandArgumentErrorKind.INDEX_OUT_OF_BOUNDS,
-  GrpcTypes.CommandArgumentError_CommandArgumentErrorKind.SECONDARY_INDEX_OUT_OF_BOUNDS,
-  GrpcTypes.CommandArgumentError_CommandArgumentErrorKind.INVALID_RESULT_ARITY,
-]);
-
-type CurrentTypeArgumentErrorKind = Exclude<
-  GrpcTypes.TypeArgumentError_TypeArgumentErrorKind,
-  GrpcTypes.TypeArgumentError_TypeArgumentErrorKind.TYPE_ARGUMENT_ERROR_KIND_UNKNOWN
->;
-
-const CURRENT_TYPE_ARGUMENT_ERROR_KINDS = {
-  [GrpcTypes.TypeArgumentError_TypeArgumentErrorKind.TYPE_NOT_FOUND]: true,
-  [GrpcTypes.TypeArgumentError_TypeArgumentErrorKind.CONSTRAINT_NOT_SATISFIED]: true,
-} as const satisfies Record<CurrentTypeArgumentErrorKind, true>;
-
-type CurrentPackageUpgradeErrorKind = Exclude<
-  GrpcTypes.PackageUpgradeError_PackageUpgradeErrorKind,
-  GrpcTypes.PackageUpgradeError_PackageUpgradeErrorKind.PACKAGE_UPGRADE_ERROR_KIND_UNKNOWN
->;
-
-const CURRENT_PACKAGE_UPGRADE_ERROR_KINDS = {
-  [GrpcTypes.PackageUpgradeError_PackageUpgradeErrorKind.UNABLE_TO_FETCH_PACKAGE]: true,
-  [GrpcTypes.PackageUpgradeError_PackageUpgradeErrorKind.NOT_A_PACKAGE]: true,
-  [GrpcTypes.PackageUpgradeError_PackageUpgradeErrorKind.INCOMPATIBLE_UPGRADE]: true,
-  [GrpcTypes.PackageUpgradeError_PackageUpgradeErrorKind.DIGEST_DOES_NOT_MATCH]: true,
-  [GrpcTypes.PackageUpgradeError_PackageUpgradeErrorKind.UNKNOWN_UPGRADE_POLICY]: true,
-  [GrpcTypes.PackageUpgradeError_PackageUpgradeErrorKind.PACKAGE_ID_DOES_NOT_MATCH]: true,
-} as const satisfies Record<CurrentPackageUpgradeErrorKind, true>;
-
-function currentEnumValue<T extends number>(
-  value: unknown,
-  path: string,
-  members: object,
-  reason: string,
-): T {
-  const parsed = nonNegativeInteger(value, path);
-  if (!Object.prototype.hasOwnProperty.call(members, parsed)) {
-    throw new SuiTransactionShapeError(path, reason);
-  }
-  return parsed as T;
-}
-
 function parseRawExecutionError(value: unknown, path: string): SuiExecutionError {
   const error = record(value, path);
-  exactKeys(error, path, ['description', 'command', 'kind', 'errorDetails']);
-  // The installed protobuf marks this provider-controlled display text as
-  // optional. When present it is type-checked (empty is current-valid) and
-  // discarded; it never participates in Stelis error identity or messages.
-  if (error.description !== undefined && typeof error.description !== 'string') {
-    throw new SuiTransactionShapeError(`${path}.description`, 'expected a string');
-  }
   const detailOneof = protobufOneof(error.errorDetails, `${path}.errorDetails`, [
     'abort',
     'sizeError',
@@ -1078,20 +904,12 @@ function parseRawExecutionError(value: unknown, path: string): SuiExecutionError
       );
       kind = 'MoveAbort';
       const abort = record(details.abort, `${path}.errorDetails.abort`);
-      exactKeys(abort, `${path}.errorDetails.abort`, ['abortCode', 'location', 'cleverError']);
       const abortCode = rawBigInt(abort.abortCode, `${path}.errorDetails.abort.abortCode`);
       const location =
         abort.location === undefined
           ? undefined
           : record(abort.location, `${path}.errorDetails.abort.location`);
       if (location) {
-        exactKeys(location, `${path}.errorDetails.abort.location`, [
-          'package',
-          'module',
-          'function',
-          'instruction',
-          'functionName',
-        ]);
         if (location.package !== undefined)
           suiAddress(location.package, `${path}.errorDetails.abort.location.package`);
         if (location.module !== undefined)
@@ -1110,49 +928,8 @@ function parseRawExecutionError(value: unknown, path: string): SuiExecutionError
         abort.cleverError === undefined
           ? undefined
           : record(abort.cleverError, `${path}.errorDetails.abort.cleverError`);
-      if (clever) {
-        exactKeys(clever, `${path}.errorDetails.abort.cleverError`, [
-          'errorCode',
-          'lineNumber',
-          'constantName',
-          'constantType',
-          'value',
-        ]);
-      }
-      if (clever?.errorCode !== undefined) {
-        rawBigInt(clever.errorCode, `${path}.errorDetails.abort.cleverError.errorCode`);
-      }
-      if (clever) {
-        rawOptionalSafeInteger(
-          clever.lineNumber,
-          `${path}.errorDetails.abort.cleverError.lineNumber`,
-        );
-      }
       if (clever?.constantName !== undefined)
         string(clever.constantName, `${path}.errorDetails.abort.cleverError.constantName`);
-      if (clever?.constantType !== undefined)
-        string(clever.constantType, `${path}.errorDetails.abort.cleverError.constantType`);
-      const cleverValue = clever
-        ? protobufOneof(clever.value, `${path}.errorDetails.abort.cleverError.value`, [
-            'rendered',
-            'raw',
-          ])
-        : undefined;
-      if (cleverValue?.kind !== undefined) {
-        switch (cleverValue.kind) {
-          case 'rendered':
-            string(cleverValue.payload, `${path}.errorDetails.abort.cleverError.value.rendered`);
-            break;
-          case 'raw':
-            bytes(cleverValue.payload, `${path}.errorDetails.abort.cleverError.value.raw`);
-            break;
-          default:
-            rejectUnhandledSuiVariant(
-              cleverValue.kind,
-              `${path}.errorDetails.abort.cleverError.value`,
-            );
-        }
-      }
       moveAbort = {
         abortCode: abortCode.toString(),
         ...(location && typeof location.package === 'string'
@@ -1188,10 +965,6 @@ function parseRawExecutionError(value: unknown, path: string): SuiExecutionError
         `${path}.kind`,
       );
       kind = 'SizeError';
-      const detail = record(details.sizeError, `${path}.errorDetails.sizeError`);
-      exactKeys(detail, `${path}.errorDetails.sizeError`, ['size', 'maxSize']);
-      rawBigInt(detail.size, `${path}.errorDetails.sizeError.size`);
-      rawBigInt(detail.maxSize, `${path}.errorDetails.sizeError.maxSize`);
       break;
     }
     case 'commandArgumentError': {
@@ -1201,55 +974,6 @@ function parseRawExecutionError(value: unknown, path: string): SuiExecutionError
         `${path}.kind`,
       );
       kind = 'CommandArgumentError';
-      const detail = record(
-        details.commandArgumentError,
-        `${path}.errorDetails.commandArgumentError`,
-      );
-      exactKeys(detail, `${path}.errorDetails.commandArgumentError`, [
-        'argument',
-        'kind',
-        'indexError',
-      ]);
-      nonNegativeInteger(detail.argument, `${path}.errorDetails.commandArgumentError.argument`);
-      const argumentKind = currentEnumValue<CurrentCommandArgumentErrorKind>(
-        detail.kind,
-        `${path}.errorDetails.commandArgumentError.kind`,
-        CURRENT_COMMAND_ARGUMENT_ERROR_KINDS,
-        'unknown current command-argument kind',
-      );
-      if (INDEXED_COMMAND_ARGUMENT_ERROR_KINDS.has(argumentKind)) {
-        const indexError = record(
-          detail.indexError,
-          `${path}.errorDetails.commandArgumentError.indexError`,
-        );
-        exactKeys(indexError, `${path}.errorDetails.commandArgumentError.indexError`, [
-          'index',
-          'subresult',
-        ]);
-        nonNegativeInteger(
-          indexError.index,
-          `${path}.errorDetails.commandArgumentError.indexError.index`,
-        );
-        if (
-          argumentKind ===
-          GrpcTypes.CommandArgumentError_CommandArgumentErrorKind.SECONDARY_INDEX_OUT_OF_BOUNDS
-        ) {
-          nonNegativeInteger(
-            indexError.subresult,
-            `${path}.errorDetails.commandArgumentError.indexError.subresult`,
-          );
-        } else if (indexError.subresult !== undefined) {
-          nonNegativeInteger(
-            indexError.subresult,
-            `${path}.errorDetails.commandArgumentError.indexError.subresult`,
-          );
-        }
-      } else if (detail.indexError !== undefined) {
-        throw new SuiTransactionShapeError(
-          `${path}.errorDetails.commandArgumentError.indexError`,
-          'unexpected index error for this command-argument kind',
-        );
-      }
       break;
     }
     case 'typeArgumentError': {
@@ -1259,18 +983,6 @@ function parseRawExecutionError(value: unknown, path: string): SuiExecutionError
         `${path}.kind`,
       );
       kind = 'TypeArgumentError';
-      const detail = record(details.typeArgumentError, `${path}.errorDetails.typeArgumentError`);
-      exactKeys(detail, `${path}.errorDetails.typeArgumentError`, ['typeArgument', 'kind']);
-      nonNegativeInteger(
-        detail.typeArgument,
-        `${path}.errorDetails.typeArgumentError.typeArgument`,
-      );
-      currentEnumValue<CurrentTypeArgumentErrorKind>(
-        detail.kind,
-        `${path}.errorDetails.typeArgumentError.kind`,
-        CURRENT_TYPE_ARGUMENT_ERROR_KINDS,
-        'unknown current type-argument kind',
-      );
       break;
     }
     case 'packageUpgradeError': {
@@ -1280,35 +992,6 @@ function parseRawExecutionError(value: unknown, path: string): SuiExecutionError
         `${path}.kind`,
       );
       kind = 'PackageUpgradeError';
-      const detail = record(
-        details.packageUpgradeError,
-        `${path}.errorDetails.packageUpgradeError`,
-      );
-      exactKeys(detail, `${path}.errorDetails.packageUpgradeError`, [
-        'kind',
-        'packageId',
-        'digest',
-        'policy',
-        'ticketId',
-      ]);
-      currentEnumValue<CurrentPackageUpgradeErrorKind>(
-        detail.kind,
-        `${path}.errorDetails.packageUpgradeError.kind`,
-        CURRENT_PACKAGE_UPGRADE_ERROR_KINDS,
-        'unknown current package-upgrade kind',
-      );
-      if (detail.packageId !== undefined) {
-        suiAddress(detail.packageId, `${path}.errorDetails.packageUpgradeError.packageId`);
-      }
-      if (detail.ticketId !== undefined) {
-        suiAddress(detail.ticketId, `${path}.errorDetails.packageUpgradeError.ticketId`);
-      }
-      if (detail.digest !== undefined) {
-        digest(detail.digest, `${path}.errorDetails.packageUpgradeError.digest`);
-      }
-      if (detail.policy !== undefined) {
-        nonNegativeInteger(detail.policy, `${path}.errorDetails.packageUpgradeError.policy`);
-      }
       break;
     }
     case 'indexError': {
@@ -1318,12 +1001,6 @@ function parseRawExecutionError(value: unknown, path: string): SuiExecutionError
         `${path}.kind`,
       );
       kind = 'IndexError';
-      const detail = record(details.indexError, `${path}.errorDetails.indexError`);
-      exactKeys(detail, `${path}.errorDetails.indexError`, ['index', 'subresult']);
-      nonNegativeInteger(detail.index, `${path}.errorDetails.indexError.index`);
-      if (detail.subresult !== undefined) {
-        nonNegativeInteger(detail.subresult, `${path}.errorDetails.indexError.subresult`);
-      }
       break;
     }
     case 'coinDenyListError': {
@@ -1336,12 +1013,6 @@ function parseRawExecutionError(value: unknown, path: string): SuiExecutionError
         `${path}.kind`,
       );
       kind = 'CoinDenyListError';
-      const detail = record(details.coinDenyListError, `${path}.errorDetails.coinDenyListError`);
-      exactKeys(detail, `${path}.errorDetails.coinDenyListError`, ['address', 'coinType']);
-      string(detail.coinType, `${path}.errorDetails.coinDenyListError.coinType`);
-      if (detail.address !== undefined) {
-        suiAddress(detail.address, `${path}.errorDetails.coinDenyListError.address`);
-      }
       break;
     }
     case 'congestedObjects': {
@@ -1354,18 +1025,6 @@ function parseRawExecutionError(value: unknown, path: string): SuiExecutionError
         `${path}.kind`,
       );
       kind = 'CongestedObjects';
-      const detail = record(details.congestedObjects, `${path}.errorDetails.congestedObjects`);
-      exactKeys(detail, `${path}.errorDetails.congestedObjects`, ['objects']);
-      const objects = array(detail.objects, `${path}.errorDetails.congestedObjects.objects`);
-      if (objects.length === 0) {
-        throw new SuiTransactionShapeError(
-          `${path}.errorDetails.congestedObjects.objects`,
-          'expected at least one congested object',
-        );
-      }
-      objects.forEach((id, index) =>
-        suiAddress(id, `${path}.errorDetails.congestedObjects.objects[${index}]`),
-      );
       break;
     }
     case 'objectId':
@@ -1378,7 +1037,6 @@ function parseRawExecutionError(value: unknown, path: string): SuiExecutionError
         `${path}.kind`,
       );
       kind = 'ObjectIdError';
-      suiAddress(details.objectId, `${path}.errorDetails.objectId`);
       break;
     default:
       return rejectUnhandledSuiVariant(oneofKind, `${path}.errorDetails.oneofKind`);
@@ -1394,7 +1052,6 @@ function parseRawExecutionError(value: unknown, path: string): SuiExecutionError
 
 function parseRawStatus(value: unknown, path: string): SuiExecutionStatus {
   const status = record(value, path);
-  exactKeys(status, path, ['success', 'error']);
   if (status.success === true) {
     if (status.error !== undefined) {
       throw new SuiTransactionShapeError(path, 'successful status contains an error');
@@ -1418,41 +1075,6 @@ function parseRawEffects(
   path: string,
 ): SuiTransactionEffects {
   const effects = record(value, path);
-  exactKeys(effects, path, [
-    'bcs',
-    'digest',
-    'version',
-    'status',
-    'epoch',
-    'gasUsed',
-    'transactionDigest',
-    'gasObject',
-    'eventsDigest',
-    'dependencies',
-    'lamportVersion',
-    'changedObjects',
-    'unchangedConsensusObjects',
-    'auxiliaryDataDigest',
-    'unchangedLoadedRuntimeObjects',
-  ]);
-  for (const key of [
-    'bcs',
-    'digest',
-    'epoch',
-    'gasObject',
-    'lamportVersion',
-    'auxiliaryDataDigest',
-  ] as const) {
-    assertAbsentRawSuiField(effects, key, path);
-  }
-  for (const key of [
-    'dependencies',
-    'changedObjects',
-    'unchangedConsensusObjects',
-    'unchangedLoadedRuntimeObjects',
-  ] as const) {
-    assertEmptyRawSuiRepeatedField(array(effects[key], `${path}.${key}`), `${path}.${key}`);
-  }
   if (effects.version !== 2) {
     throw new SuiTransactionShapeError(`${path}.version`, 'expected current effects version 2');
   }
@@ -1462,12 +1084,6 @@ function parseRawEffects(
   }
   const status = parseRawStatus(effects.status, `${path}.status`);
   const gas = record(effects.gasUsed, `${path}.gasUsed`);
-  exactKeys(gas, `${path}.gasUsed`, [
-    'computationCost',
-    'storageCost',
-    'storageRebate',
-    'nonRefundableStorageFee',
-  ]);
   const gasUsed: SuiGasUsed = {
     computationCost: rawBigInt(gas.computationCost, `${path}.gasUsed.computationCost`).toString(),
     storageCost: rawBigInt(gas.storageCost, `${path}.gasUsed.storageCost`).toString(),
@@ -1497,31 +1113,13 @@ function parseRawEvents(
     throw new SuiTransactionShapeError(path, 'event envelope exists without an effects digest');
   }
   const events = record(value, path);
-  exactKeys(events, path, ['bcs', 'digest', 'events']);
-  assertAbsentRawSuiField(events, 'bcs', path);
   const envelopeDigest = digest(events.digest, `${path}.digest`);
   if (envelopeDigest !== eventsDigest) {
     throw new SuiTransactionShapeError(`${path}.digest`, 'does not match the effects event digest');
   }
   const parsed = array(events.events, `${path}.events`).map((eventValue, index): SuiEvent => {
     const event = record(eventValue, `${path}.events[${index}]`);
-    exactKeys(event, `${path}.events[${index}]`, [
-      'packageId',
-      'module',
-      'sender',
-      'eventType',
-      'contents',
-      'json',
-    ]);
-    assertAbsentRawSuiField(event, 'json', `${path}.events[${index}]`);
     const contents = record(event.contents, `${path}.events[${index}].contents`);
-    exactKeys(contents, `${path}.events[${index}].contents`, ['name', 'value']);
-    if (contents.name !== undefined && typeof contents.name !== 'string') {
-      throw new SuiTransactionShapeError(
-        `${path}.events[${index}].contents.name`,
-        'expected a string',
-      );
-    }
     const packageId = suiAddress(event.packageId, `${path}.events[${index}].packageId`);
     const module = string(event.module, `${path}.events[${index}].module`);
     const eventType = structTag(event.eventType, `${path}.events[${index}].eventType`);
@@ -1549,12 +1147,6 @@ function parseRawTransaction(
 ): SuiTransactionResult | SuiTransactionWithEventsResult {
   const envelope = parseRawSuiExecutedTransactionEnvelope(value, path);
   const transaction = envelope.transaction;
-  assertEmptyRawSuiRepeatedField(envelope.signatures, `${path}.signatures`);
-  assertEmptyRawSuiRepeatedField(envelope.balanceChanges, `${path}.balanceChanges`);
-  for (const key of ['transaction', 'checkpoint', 'timestamp', 'objects'] as const) {
-    assertAbsentRawSuiField(transaction, key, path);
-  }
-  if (!options.includeEvents) assertAbsentRawSuiField(transaction, 'events', path);
   const topDigest =
     transaction.digest === undefined ? undefined : digest(transaction.digest, `${path}.digest`);
   if (topDigest === undefined && !options.allowMissingTopLevelDigest) {
@@ -1599,27 +1191,9 @@ function parseRawMoveViewEnvelope(value: unknown) {
   const path = 'moveView.transaction';
   const envelope = parseRawSuiExecutedTransactionEnvelope(value, path);
   const transaction = envelope.transaction;
-  assertEmptyRawSuiRepeatedField(envelope.signatures, `${path}.signatures`);
-  assertEmptyRawSuiRepeatedField(envelope.balanceChanges, `${path}.balanceChanges`);
-  for (const key of ['digest', 'events', 'checkpoint', 'timestamp', 'objects'] as const) {
-    assertAbsentRawSuiField(transaction, key, path);
-  }
   const resolved = record(transaction.transaction, `${path}.transaction`);
-  exactKeys(resolved, `${path}.transaction`, [
-    'bcs',
-    'digest',
-    'version',
-    'kind',
-    'sender',
-    'gasPayment',
-    'expiration',
-  ]);
-  for (const key of ['version', 'kind', 'sender', 'gasPayment', 'expiration'] as const) {
-    assertAbsentRawSuiField(resolved, key, `${path}.transaction`);
-  }
   const resolvedTransactionDigest = digest(resolved.digest, `${path}.transaction.digest`);
   const bcs = record(resolved.bcs, `${path}.transaction.bcs`);
-  exactKeys(bcs, `${path}.transaction.bcs`, ['name', 'value']);
   if (bcs.name !== 'TransactionData') {
     throw new SuiTransactionShapeError(
       `${path}.transaction.bcs.name`,
@@ -1638,20 +1212,16 @@ function parseRawMoveViewEnvelope(value: unknown) {
  *
  * With checks disabled, current Sui gRPC gives the resolved TransactionData
  * its own digest while effects may carry a different simulation digest. The
- * caller binds `resolvedTransactionDigest` to `transactionBcs`; effects are
- * still parsed exactly, but do not author the resolved transaction identity.
+ * caller binds `resolvedTransactionDigest` to `transactionBcs`; only the
+ * returned execution status is read from effects.
  */
 export function parseRawSuiMoveViewEvidence(value: unknown) {
   const envelope = parseRawMoveViewEnvelope(value);
-  const effects = parseRawEffects(
-    envelope.transaction.effects,
-    undefined,
-    'moveView.transaction.effects',
-  );
+  const effects = record(envelope.transaction.effects, 'moveView.transaction.effects');
   return Object.freeze({
     transactionBcs: envelope.bcs,
     resolvedTransactionDigest: envelope.resolvedTransactionDigest,
-    status: effects.status,
+    status: parseRawStatus(effects.status, 'moveView.transaction.effects.status'),
   });
 }
 
@@ -1699,115 +1269,44 @@ export function parseRawSuiBalanceChangesTransaction(
   const path = 'balanceChanges.transaction';
   const envelope = parseRawSuiExecutedTransactionEnvelope(value, path);
   const transaction = envelope.transaction;
-  assertEmptyRawSuiRepeatedField(envelope.signatures, `${path}.signatures`);
   const transactionDigest = digest(transaction.digest, `${path}.digest`);
   if (transactionDigest !== expectedDigest) {
     throw new SuiTransactionShapeError(`${path}.digest`, 'does not match the request');
   }
-  for (const key of [
-    'transaction',
-    'effects',
-    'events',
-    'checkpoint',
-    'timestamp',
-    'objects',
-  ] as const) {
-    if (transaction[key] !== undefined) {
-      throw new SuiTransactionShapeError(`${path}.${key}`, 'unexpected unrequested field');
-    }
-  }
   const balanceChanges = Object.freeze(
-    envelope.balanceChanges.map((value, index): SuiBalanceChange => {
-      const itemPath = `${path}.balanceChanges[${index}]`;
-      const change = record(value, itemPath);
-      exactKeys(change, itemPath, ['address', 'coinType', 'amount']);
-      if (typeof change.amount !== 'string' || !SIGNED_DECIMAL_RE.test(change.amount)) {
-        throw new SuiTransactionShapeError(
-          `${itemPath}.amount`,
-          'expected a canonical signed integer',
-        );
-      }
-      return Object.freeze({
-        address: suiAddress(change.address, `${itemPath}.address`),
-        coinType: structTag(change.coinType, `${itemPath}.coinType`),
-        amount: change.amount,
-      });
-    }),
+    array(transaction.balanceChanges, `${path}.balanceChanges`).map(
+      (value, index): SuiBalanceChange => {
+        const itemPath = `${path}.balanceChanges[${index}]`;
+        const change = record(value, itemPath);
+        if (typeof change.amount !== 'string' || !SIGNED_DECIMAL_RE.test(change.amount)) {
+          throw new SuiTransactionShapeError(
+            `${itemPath}.amount`,
+            'expected a canonical signed integer',
+          );
+        }
+        return Object.freeze({
+          address: suiAddress(change.address, `${itemPath}.address`),
+          coinType: structTag(change.coinType, `${itemPath}.coinType`),
+          amount: change.amount,
+        });
+      },
+    ),
   );
   return Object.freeze({ digest: transactionDigest, balanceChanges });
 }
 
-/** @internal Parse exact raw Move-view command outputs. */
+/** @internal Parse only the Move-view command-output bytes returned to callers. */
 export function parseRawSuiCommandResults(
   value: unknown,
   path = 'simulation.commandOutputs',
 ): readonly SuiCommandResult[] {
   const results = array(value, path).map((resultValue, resultIndex): SuiCommandResult => {
     const result = record(resultValue, `${path}[${resultIndex}]`);
-    exactKeys(result, `${path}[${resultIndex}]`, ['returnValues', 'mutatedByRef']);
     const parseOutputs = (outputsValue: unknown, outputPath: string): readonly SuiCommandOutput[] =>
       Object.freeze(
         array(outputsValue, outputPath).map((outputValue, outputIndex) => {
           const output = record(outputValue, `${outputPath}[${outputIndex}]`);
-          exactKeys(output, `${outputPath}[${outputIndex}]`, ['argument', 'value', 'json']);
-          const outputItemPath = `${outputPath}[${outputIndex}]`;
-          if (output.argument !== undefined) {
-            const argument = record(output.argument, `${outputItemPath}.argument`);
-            exactKeys(argument, `${outputItemPath}.argument`, [
-              'kind',
-              'input',
-              'result',
-              'subresult',
-            ]);
-            switch (argument.kind) {
-              case GrpcTypes.Argument_ArgumentKind.GAS:
-                if (
-                  argument.input !== undefined ||
-                  argument.result !== undefined ||
-                  argument.subresult !== undefined
-                ) {
-                  throw new SuiTransactionShapeError(
-                    `${outputItemPath}.argument`,
-                    'Gas argument contains an index',
-                  );
-                }
-                break;
-              case GrpcTypes.Argument_ArgumentKind.INPUT:
-                u32Integer(argument.input, `${outputItemPath}.argument.input`);
-                if (argument.result !== undefined || argument.subresult !== undefined) {
-                  throw new SuiTransactionShapeError(
-                    `${outputItemPath}.argument`,
-                    'Input argument contains a result index',
-                  );
-                }
-                break;
-              case GrpcTypes.Argument_ArgumentKind.RESULT:
-                u32Integer(argument.result, `${outputItemPath}.argument.result`);
-                if (argument.subresult !== undefined) {
-                  u32Integer(argument.subresult, `${outputItemPath}.argument.subresult`);
-                }
-                if (argument.input !== undefined) {
-                  throw new SuiTransactionShapeError(
-                    `${outputItemPath}.argument`,
-                    'Result argument contains an input index',
-                  );
-                }
-                break;
-              default:
-                throw new SuiTransactionShapeError(
-                  `${outputItemPath}.argument.kind`,
-                  'unknown current command-output argument kind',
-                );
-            }
-          }
-          if (output.json !== undefined) {
-            validateRawProtoValue(output.json, `${outputItemPath}.json`);
-          }
           const bcs = record(output.value, `${outputPath}[${outputIndex}].value`);
-          exactKeys(bcs, `${outputPath}[${outputIndex}].value`, ['name', 'value']);
-          if (bcs.name !== undefined && typeof bcs.name !== 'string') {
-            throw new SuiTransactionShapeError(`${outputItemPath}.value.name`, 'expected a string');
-          }
           return Object.freeze({
             bcs: bytes(bcs.value, `${outputPath}[${outputIndex}].value.value`),
           });
@@ -1819,13 +1318,4 @@ export function parseRawSuiCommandResults(
     });
   });
   return Object.freeze(results);
-}
-
-/** @internal Require the mandatory command-output array when its read mask omitted outputs. */
-export function parseRawEmptySuiCommandResults(
-  value: unknown,
-  path = 'simulation.commandOutputs',
-): void {
-  const results = parseRawSuiCommandResults(value, path);
-  assertEmptyRawSuiRepeatedField(results, path);
 }

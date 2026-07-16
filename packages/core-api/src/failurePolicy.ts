@@ -332,6 +332,11 @@ export const FAILURE_TABLE: Readonly<Record<FailureCode, FailurePolicy>> = {
     classification: 'normal',
     abuseImpact: IP_ONLY,
   },
+  PAYMENT_COIN_LIMIT_EXCEEDED: {
+    classification: 'normal',
+    abuseImpact: IP_ONLY,
+    notes: 'Bounded settlement-token Coin discovery could not prove a safe funding source.',
+  },
   DRY_RUN_FAILED: {
     classification: 'normal',
     abuseImpact: COUNT_BOTH,

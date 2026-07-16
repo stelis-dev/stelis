@@ -3,14 +3,12 @@ import type { SuiClientTypes } from '@mysten/sui/client';
 import { GrpcTypes, type SuiGrpcClient } from '@mysten/sui/grpc';
 import {
   deriveDynamicFieldID,
-  fromBase64,
   isValidSuiAddress,
   isValidTransactionDigest,
   parseStructTag,
   normalizeStructTag,
   normalizeSuiAddress,
   SUI_ADDRESS_LENGTH,
-  toBase64,
 } from '@mysten/sui/utils';
 import {
   malformedSuiResponse,
@@ -21,6 +19,7 @@ import {
   type SuiOperationName,
 } from './suiOperation.js';
 import { assertExactSuiShapeKeys, parseExactSuiArray } from './suiTransactionShape.js';
+import { isSuiU64 } from './suiU64.js';
 
 const GRPC_NOT_FOUND = 5;
 const OBJECT_READ_MASK = [
@@ -47,23 +46,6 @@ const COIN_READ_MASK = [
   'object_id',
   'balance',
 ] as const;
-const RAW_OBJECT_KEYS = [
-  'bcs',
-  'objectId',
-  'version',
-  'digest',
-  'owner',
-  'objectType',
-  'hasPublicTransfer',
-  'contents',
-  'package',
-  'previousTransaction',
-  'storageRebate',
-  'json',
-  'balance',
-  'display',
-] as const;
-
 export interface SuiObject {
   readonly objectId: string;
   readonly version: string;
@@ -75,11 +57,11 @@ export interface SuiObject {
 export type SuiDynamicField = SuiClientTypes.DynamicField;
 export type SuiCoin = SuiClientTypes.Coin;
 
-export interface SuiCoinPage {
-  readonly objects: readonly SuiCoin[];
-  readonly hasNextPage: boolean;
-  readonly cursor: string | null;
-}
+export const MAX_SUI_COIN_OBJECTS_PER_OPERATION = 50;
+
+export type SuiCoinReadResult =
+  | { readonly status: 'complete'; readonly coins: readonly SuiCoin[] }
+  | { readonly status: 'limit_exceeded'; readonly coins: readonly SuiCoin[] };
 
 export interface SuiCoinMetadata {
   readonly decimals: number;
@@ -109,10 +91,9 @@ export interface SuiDynamicFieldOptions {
   readonly signal?: AbortSignal;
 }
 
-export interface SuiCoinPageOptions {
+export interface SuiCoinReadOptions {
   readonly owner: string;
   readonly coinType: string;
-  readonly limit?: number;
   readonly signal?: AbortSignal;
 }
 
@@ -179,26 +160,19 @@ function requireResponseCoinType(value: unknown, operation: SuiOperationName): s
 function validateRawOwner(value: unknown, operation: SuiOperationName): SuiClientTypes.ObjectOwner {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return fail(operation);
   const owner = value as Record<string, unknown>;
-  exactKeys(owner, ['kind', 'address', 'version'], operation);
   switch (owner.kind) {
     case GrpcTypes.Owner_OwnerKind.ADDRESS:
-      if (Object.prototype.hasOwnProperty.call(owner, 'version')) return fail(operation);
       return Object.freeze({
         $kind: 'AddressOwner',
         AddressOwner: requireResponseAddress(owner.address, operation),
       });
     case GrpcTypes.Owner_OwnerKind.OBJECT:
-      if (Object.prototype.hasOwnProperty.call(owner, 'version')) return fail(operation);
       return Object.freeze({
         $kind: 'ObjectOwner',
         ObjectOwner: requireResponseAddress(owner.address, operation),
       });
     case GrpcTypes.Owner_OwnerKind.SHARED:
-      if (
-        Object.prototype.hasOwnProperty.call(owner, 'address') ||
-        typeof owner.version !== 'bigint' ||
-        owner.version < 0n
-      ) {
+      if (!isSuiU64(owner.version)) {
         return fail(operation);
       }
       return Object.freeze({
@@ -206,15 +180,9 @@ function validateRawOwner(value: unknown, operation: SuiOperationName): SuiClien
         Shared: Object.freeze({ initialSharedVersion: owner.version.toString() }),
       });
     case GrpcTypes.Owner_OwnerKind.IMMUTABLE:
-      if (
-        Object.prototype.hasOwnProperty.call(owner, 'address') ||
-        Object.prototype.hasOwnProperty.call(owner, 'version')
-      ) {
-        return fail(operation);
-      }
       return Object.freeze({ $kind: 'Immutable', Immutable: true });
     case GrpcTypes.Owner_OwnerKind.CONSENSUS_ADDRESS:
-      if (typeof owner.version !== 'bigint' || owner.version < 0n) return fail(operation);
+      if (!isSuiU64(owner.version)) return fail(operation);
       return Object.freeze({
         $kind: 'ConsensusAddressOwner',
         ConsensusAddressOwner: Object.freeze({
@@ -252,14 +220,6 @@ function exactArray(value: unknown, operation: SuiOperationName): unknown[] {
   }
 }
 
-function rejectPresentFields(
-  value: Record<string, unknown>,
-  fields: readonly string[],
-  operation: SuiOperationName,
-): void {
-  if (fields.some((field) => value[field] !== undefined)) fail(operation);
-}
-
 function exactProtobufOneof(
   value: unknown,
   variants: readonly string[],
@@ -277,7 +237,6 @@ function exactProtobufOneof(
       return fail(operation);
     }
   }
-  exactKeys(union, ['oneofKind', kind], operation);
   return { kind, payload: union[kind] };
 }
 
@@ -346,26 +305,15 @@ function parseRawObjectResult(
   operation: 'get_object' | 'get_objects' | 'get_dynamic_field',
 ): GrpcTypes.Object {
   const wrapper = record(result, operation);
-  exactKeys(wrapper, ['result'], operation);
   const union = exactProtobufOneof(wrapper.result, ['object', 'error'], operation);
   if (union.kind === 'error') {
     const status = record(union.payload, operation);
-    exactKeys(status, ['code', 'message', 'details'], operation);
-    const details = exactArray(status.details, operation);
     if (
       !Number.isInteger(status.code) ||
       (status.code as number) < -0x8000_0000 ||
-      (status.code as number) > 0x7fff_ffff ||
-      typeof status.message !== 'string'
+      (status.code as number) > 0x7fff_ffff
     ) {
       return fail(operation);
-    }
-    for (const detailValue of details) {
-      const detail = record(detailValue, operation);
-      exactKeys(detail, ['typeUrl', 'value'], operation);
-      if (typeof detail.typeUrl !== 'string' || !(detail.value instanceof Uint8Array)) {
-        return fail(operation);
-      }
     }
     if (status.code === GRPC_NOT_FOUND) throw suiResourceNotFound(operation, expectedId);
     return fail(operation);
@@ -381,24 +329,9 @@ function validateObject(
   operation: 'get_object' | 'get_objects',
 ): SuiObject {
   const object = value as Record<string, unknown>;
-  exactKeys(object, RAW_OBJECT_KEYS, operation);
-  rejectPresentFields(
-    object,
-    [
-      'bcs',
-      'hasPublicTransfer',
-      'contents',
-      'package',
-      'previousTransaction',
-      'storageRebate',
-      'balance',
-      'display',
-    ],
-    operation,
-  );
   const objectId = requireResponseAddress(object.objectId, operation);
   if (objectId !== expectedId) return fail(operation);
-  if (typeof object.version !== 'bigint' || object.version < 0n) return fail(operation);
+  if (!isSuiU64(object.version)) return fail(operation);
   const digest = requireDigest(object.digest, operation);
   const owner = validateRawOwner(object.owner, operation);
   const rawType = requireString(object.objectType, operation);
@@ -427,8 +360,7 @@ async function readObjectsFromClient(
     },
     { timeout: timeoutMs, abort: signal },
   );
-  const responseRecord = record(response, objectIds.length === 1 ? 'get_object' : 'get_objects');
-  exactKeys(responseRecord, ['objects'], objectIds.length === 1 ? 'get_object' : 'get_objects');
+  record(response, objectIds.length === 1 ? 'get_object' : 'get_objects');
   const responseObjects = exactArray(
     response.objects,
     objectIds.length === 1 ? 'get_object' : 'get_objects',
@@ -507,8 +439,7 @@ function parseRawDynamicField(
   nameBcs: Uint8Array,
 ): SuiDynamicField {
   const operation = 'get_dynamic_field';
-  exactKeys(object as unknown as Record<string, unknown>, RAW_OBJECT_KEYS, operation);
-  if (typeof object.version !== 'bigint' || object.version < 0n) return fail(operation);
+  if (!isSuiU64(object.version)) return fail(operation);
   const digest = requireDigest(object.digest, operation);
   const previousTransaction = requireDigest(object.previousTransaction, operation);
   const rawType = requireString(object.objectType, operation);
@@ -541,12 +472,6 @@ function parseRawDynamicField(
     typeof rawValueType === 'string' ? rawValueType : normalizeStructTag(rawValueType);
   if (isDynamicObject && valueType !== normalizeStructTag('0x2::object::ID')) {
     return fail(operation);
-  }
-  if (object.contents !== undefined) {
-    exactKeys(object.contents as unknown as Record<string, unknown>, ['name', 'value'], operation);
-    if (object.contents.name !== undefined && typeof object.contents.name !== 'string') {
-      return fail(operation);
-    }
   }
   const contents = object.contents?.value;
   if (!(contents instanceof Uint8Array)) return fail(operation);
@@ -611,8 +536,7 @@ export function getSuiDynamicField(
         },
         { timeout: context.timeoutMs, abort: context.signal },
       );
-      const responseRecord = record(response, 'get_dynamic_field');
-      exactKeys(responseRecord, ['objects'], 'get_dynamic_field');
+      record(response, 'get_dynamic_field');
       const objects = exactArray(response.objects, 'get_dynamic_field');
       if (objects.length !== 1) return fail('get_dynamic_field');
       const object = parseRawObjectResult(objects[0], fieldId, 'get_dynamic_field');
@@ -625,23 +549,8 @@ function validateCoin(value: unknown, owner: string, expectedType: string): SuiC
   if (typeof value !== 'object' || value === null || Array.isArray(value))
     return fail('list_coins');
   const coin = value as Record<string, unknown>;
-  exactKeys(coin, RAW_OBJECT_KEYS, 'list_coins');
-  rejectPresentFields(
-    coin,
-    [
-      'bcs',
-      'hasPublicTransfer',
-      'contents',
-      'package',
-      'previousTransaction',
-      'storageRebate',
-      'json',
-      'display',
-    ],
-    'list_coins',
-  );
   const objectId = requireResponseAddress(coin.objectId, 'list_coins');
-  if (typeof coin.version !== 'bigint' || coin.version < 0n) return fail('list_coins');
+  if (!isSuiU64(coin.version)) return fail('list_coins');
   const digest = requireDigest(coin.digest, 'list_coins');
   const currentOwner = validateRawOwner(coin.owner, 'list_coins');
   if (
@@ -651,7 +560,7 @@ function validateCoin(value: unknown, owner: string, expectedType: string): SuiC
     return fail('list_coins');
   }
   const actualType = requireResponseCoinType(coin.objectType, 'list_coins');
-  if (actualType !== expectedType || typeof coin.balance !== 'bigint' || coin.balance < 0n) {
+  if (actualType !== expectedType || !isSuiU64(coin.balance)) {
     return fail('list_coins');
   }
   return Object.freeze({
@@ -667,94 +576,58 @@ function validateCoin(value: unknown, owner: string, expectedType: string): SuiC
 interface NormalizedCoinPageOptions {
   readonly owner: string;
   readonly coinType: string;
-  readonly limit: number;
 }
 
-function normalizeCoinPageOptions(options: SuiCoinPageOptions): NormalizedCoinPageOptions {
+function normalizeCoinReadOptions(options: SuiCoinReadOptions): NormalizedCoinPageOptions {
   const owner = requireAddress(options.owner);
   const coinType = requireCoinType(options.coinType);
-  const limit = options.limit ?? 50;
-  if (!Number.isInteger(limit) || limit < 1 || limit > 50) {
-    throw new TypeError('Sui coin page limit must be an integer from 1 through 50');
-  }
-  return { owner, coinType, limit };
+  return { owner, coinType };
 }
 
-async function readCoinPageFromClient(
+async function readBoundedCoinPageFromClient(
   client: SuiGrpcClient,
   options: NormalizedCoinPageOptions,
-  cursor: string | null,
   signal: AbortSignal,
   timeoutMs: number,
-): Promise<SuiCoinPage> {
+): Promise<SuiCoinReadResult> {
   const objectType = normalizeStructTag(`0x2::coin::Coin<${options.coinType}>`);
   const { response } = await client.stateService.listOwnedObjects(
     {
       owner: options.owner,
       objectType,
-      pageSize: options.limit,
-      pageToken: cursor === null ? undefined : fromBase64(cursor),
+      pageSize: MAX_SUI_COIN_OBJECTS_PER_OPERATION,
       readMask: { paths: [...COIN_READ_MASK] },
     },
     { timeout: timeoutMs, abort: signal },
   );
-  const responseRecord = record(response, 'list_coins');
-  exactKeys(responseRecord, ['objects', 'nextPageToken'], 'list_coins');
+  record(response, 'list_coins');
   const responseObjects = exactArray(response.objects, 'list_coins');
-  if (responseObjects.length > options.limit) return fail('list_coins');
-  let nextCursor = null as string | null;
+  if (responseObjects.length > MAX_SUI_COIN_OBJECTS_PER_OPERATION) return fail('list_coins');
+  let hasNextPage = false;
   if (response.nextPageToken !== undefined) {
     if (!(response.nextPageToken instanceof Uint8Array) || response.nextPageToken.length === 0) {
       return fail('list_coins');
     }
-    nextCursor = toBase64(response.nextPageToken);
+    hasNextPage = true;
   }
-  if (cursor !== null && nextCursor === cursor) return fail('list_coins');
   const objects = responseObjects.map((coin) => validateCoin(coin, options.owner, objectType));
   const ids = objects.map((coin) => normalizeSuiAddress(coin.objectId));
   if (new Set(ids).size !== ids.length) return fail('list_coins');
   return Object.freeze({
-    objects: Object.freeze(objects),
-    hasNextPage: nextCursor !== null,
-    cursor: nextCursor,
+    status: hasNextPage ? 'limit_exceeded' : 'complete',
+    coins: Object.freeze(objects),
   });
 }
 
-/** Consume all current coin pages with cursor and object-identity cycle detection. */
-export async function listAllSuiCoins(
+/** Read at most one endpoint-consistent page of current coin objects. */
+export function readBoundedSuiCoins(
   snapshot: SuiEndpointSnapshot,
-  options: SuiCoinPageOptions,
-): Promise<readonly SuiCoin[]> {
-  const normalized = normalizeCoinPageOptions(options);
-  return runSuiReadOperation(snapshot, 'list_coins', options.signal, async (client, context) => {
-    const objects: SuiCoin[] = [];
-    const seenCursors = new Set<string>();
-    const seenObjects = new Set<string>();
-    let cursor: string | null = null;
-    for (;;) {
-      context.assertActive();
-      const page = await readCoinPageFromClient(
-        client,
-        normalized,
-        cursor,
-        context.signal,
-        context.timeoutMs,
-      );
-      context.assertActive();
-      for (const coin of page.objects) {
-        const id = normalizeSuiAddress(coin.objectId);
-        if (seenObjects.has(id)) throw malformedSuiResponse('list_coins');
-        seenObjects.add(id);
-        objects.push(coin);
-      }
-      if (!page.hasNextPage) return Object.freeze(objects);
-      if (page.cursor === null || seenCursors.has(page.cursor)) {
-        throw malformedSuiResponse('list_coins');
-      }
-      seenCursors.add(page.cursor);
-      cursor = page.cursor;
-    }
-  });
+  options: SuiCoinReadOptions,
+): Promise<SuiCoinReadResult> {
+  const normalized = normalizeCoinReadOptions(options);
+  return runSuiReadOperation(snapshot, 'list_coins', options.signal, (client, context) =>
+    readBoundedCoinPageFromClient(client, normalized, context.signal, context.timeoutMs),
+  );
 }
 
 /** Read coin metadata without accepting SDK-synthesized zero/empty placeholders. */
@@ -772,12 +645,7 @@ export function getSuiCoinMetadata(
         { coinType },
         { timeout: context.timeoutMs, abort: context.signal },
       );
-      const responseRecord = record(response, 'get_coin_metadata');
-      exactKeys(
-        responseRecord,
-        ['coinType', 'metadata', 'treasury', 'regulatedMetadata'],
-        'get_coin_metadata',
-      );
+      record(response, 'get_coin_metadata');
       if (
         typeof response.coinType !== 'string' ||
         requireResponseCoinType(response.coinType, 'get_coin_metadata') !== coinType
@@ -785,94 +653,17 @@ export function getSuiCoinMetadata(
         return fail('get_coin_metadata');
       }
       if (!response.metadata) throw suiResourceNotFound('get_coin_metadata', coinType);
-      const metadata = response.metadata;
-      exactKeys(
-        metadata as unknown as Record<string, unknown>,
-        [
-          'id',
-          'decimals',
-          'name',
-          'symbol',
-          'description',
-          'iconUrl',
-          'metadataCapId',
-          'metadataCapState',
-        ],
-        'get_coin_metadata',
-      );
-      if (response.treasury !== undefined) {
-        exactKeys(
-          response.treasury as unknown as Record<string, unknown>,
-          ['id', 'totalSupply', 'supplyState'],
-          'get_coin_metadata',
-        );
-        if (
-          (response.treasury.id !== undefined &&
-            requireResponseAddress(response.treasury.id, 'get_coin_metadata').length === 0) ||
-          (response.treasury.totalSupply !== undefined &&
-            (typeof response.treasury.totalSupply !== 'bigint' ||
-              response.treasury.totalSupply < 0n)) ||
-          (response.treasury.supplyState !== undefined &&
-            ![0, 1, 2].includes(response.treasury.supplyState))
-        ) {
-          return fail('get_coin_metadata');
-        }
-      }
-      if (response.regulatedMetadata !== undefined) {
-        exactKeys(
-          response.regulatedMetadata as unknown as Record<string, unknown>,
-          [
-            'id',
-            'coinMetadataObject',
-            'denyCapObject',
-            'allowGlobalPause',
-            'variant',
-            'coinRegulatedState',
-          ],
-          'get_coin_metadata',
-        );
-        for (const id of [
-          response.regulatedMetadata.id,
-          response.regulatedMetadata.coinMetadataObject,
-          response.regulatedMetadata.denyCapObject,
-        ]) {
-          if (id !== undefined) requireResponseAddress(id, 'get_coin_metadata');
-        }
-        if (
-          (response.regulatedMetadata.allowGlobalPause !== undefined &&
-            typeof response.regulatedMetadata.allowGlobalPause !== 'boolean') ||
-          (response.regulatedMetadata.variant !== undefined &&
-            (!Number.isInteger(response.regulatedMetadata.variant) ||
-              response.regulatedMetadata.variant < 0 ||
-              response.regulatedMetadata.variant > 0xffff_ffff)) ||
-          (response.regulatedMetadata.coinRegulatedState !== undefined &&
-            ![0, 1, 2].includes(response.regulatedMetadata.coinRegulatedState))
-        ) {
-          return fail('get_coin_metadata');
-        }
-      }
-      for (const id of [metadata.id, metadata.metadataCapId]) {
-        if (id !== undefined) requireResponseAddress(id, 'get_coin_metadata');
-      }
-      for (const value of [metadata.name, metadata.description, metadata.iconUrl]) {
-        if (value !== undefined) requireString(value, 'get_coin_metadata', true);
-      }
-      if (
-        metadata.metadataCapState !== undefined &&
-        ![0, 1, 2, 3].includes(metadata.metadataCapState)
-      ) {
-        return fail('get_coin_metadata');
-      }
+      const metadata = record(response.metadata, 'get_coin_metadata');
       if (
         !Number.isInteger(metadata.decimals) ||
-        metadata.decimals! < 0 ||
-        metadata.decimals! > 255
+        (metadata.decimals as number) < 0 ||
+        (metadata.decimals as number) > 255
       ) {
         return fail('get_coin_metadata');
       }
       const symbol = requireString(metadata.symbol, 'get_coin_metadata');
       return Object.freeze({
-        decimals: metadata.decimals!,
+        decimals: metadata.decimals as number,
         symbol,
       });
     },
@@ -894,26 +685,15 @@ export function getSuiBalance(
       { owner, coinType },
       { timeout: context.timeoutMs, abort: context.signal },
     );
-    const responseRecord = record(response, 'get_balance');
-    exactKeys(responseRecord, ['balance'], 'get_balance');
+    record(response, 'get_balance');
     const balance = response.balance;
-    if (balance !== undefined) {
-      exactKeys(
-        balance as unknown as Record<string, unknown>,
-        ['coinType', 'balance', 'addressBalance', 'coinBalance'],
-        'get_balance',
-      );
-    }
     if (
       !balance ||
       typeof balance.coinType !== 'string' ||
       requireResponseCoinType(balance.coinType, 'get_balance') !== coinType ||
-      typeof balance.balance !== 'bigint' ||
-      typeof balance.coinBalance !== 'bigint' ||
-      typeof balance.addressBalance !== 'bigint' ||
-      balance.balance < 0n ||
-      balance.coinBalance < 0n ||
-      balance.addressBalance < 0n ||
+      !isSuiU64(balance.balance) ||
+      !isSuiU64(balance.coinBalance) ||
+      !isSuiU64(balance.addressBalance) ||
       balance.balance !== balance.coinBalance + balance.addressBalance
     ) {
       return fail('get_balance');
@@ -941,49 +721,7 @@ export function getSuiChainIdentifier(
         {},
         { timeout: context.timeoutMs, abort: context.signal },
       );
-      const responseRecord = record(response, 'get_chain_identifier');
-      exactKeys(
-        responseRecord,
-        [
-          'chainId',
-          'chain',
-          'epoch',
-          'checkpointHeight',
-          'timestamp',
-          'lowestAvailableCheckpoint',
-          'lowestAvailableCheckpointObjects',
-          'server',
-        ],
-        'get_chain_identifier',
-      );
-      if (response.timestamp !== undefined) {
-        exactKeys(
-          response.timestamp as unknown as Record<string, unknown>,
-          ['seconds', 'nanos'],
-          'get_chain_identifier',
-        );
-        if (
-          typeof response.timestamp.seconds !== 'bigint' ||
-          !Number.isInteger(response.timestamp.nanos) ||
-          response.timestamp.nanos < 0 ||
-          response.timestamp.nanos > 999_999_999
-        ) {
-          return fail('get_chain_identifier');
-        }
-      }
-      for (const value of [
-        response.epoch,
-        response.checkpointHeight,
-        response.lowestAvailableCheckpoint,
-        response.lowestAvailableCheckpointObjects,
-      ]) {
-        if (value !== undefined && (typeof value !== 'bigint' || value < 0n)) {
-          return fail('get_chain_identifier');
-        }
-      }
-      for (const value of [response.chain, response.server]) {
-        if (value !== undefined) requireString(value, 'get_chain_identifier', true);
-      }
+      record(response, 'get_chain_identifier');
       return Object.freeze({
         chainIdentifier: requireDigest(response.chainId, 'get_chain_identifier'),
       });

@@ -51,6 +51,13 @@ const TEST_SENDER = `0x${'11'.repeat(32)}`;
 const TEST_SPONSOR = `0x${'22'.repeat(32)}`;
 const TEST_BOUND_SPONSOR = `0x${'23'.repeat(32)}`;
 const TEST_FINAL_SPONSOR = `0x${'24'.repeat(32)}`;
+const mockPaymentSourceReader = Object.freeze({
+  readCoins: vi.fn(),
+  readAddressBalance: vi.fn(),
+});
+const mockCreatePaymentSourceReader = vi.fn(
+  (_sui: BuildContext['sui'], _owner: string, _coinType: string) => mockPaymentSourceReader,
+);
 const mockResolvePaymentSource = vi.fn().mockResolvedValue({
   source: 'coin_object',
   baseCoinId: MOCK_FUNDING_COIN,
@@ -227,6 +234,8 @@ const mockQueuedRpcStats: QuotedRpcStatsEntry[] = [];
 // ── Mock internal modules ───────────────────────────────────────────────────
 
 vi.mock('../src/prepare/coinSelection.js', () => ({
+  createPaymentSourceReader: (sui: BuildContext['sui'], owner: string, coinType: string) =>
+    mockCreatePaymentSourceReader(sui, owner, coinType),
   resolvePaymentSource: (...args: unknown[]) => mockResolvePaymentSource(...args),
 }));
 
@@ -427,6 +436,7 @@ function resetBuildMocks(): void {
   mockComputeExecutionCostClaim.mockReset();
   mockBatchGetHopMidPrices.mockReset();
   mockBatchGetHopMidPrices.mockResolvedValue([27_000_000_000n]);
+  mockCreatePaymentSourceReader.mockClear();
   mockResolvePaymentSource.mockReset();
   mockResolvePaymentSource.mockResolvedValue({
     source: 'coin_object',
@@ -617,6 +627,9 @@ describe('runGenericPrepareBuildPipeline — boundary conditions', () => {
     const result = await runGenericPrepareBuildPipeline(ctx, input);
 
     expect(mockResolvePaymentSource).not.toHaveBeenCalled();
+    expect(mockCreatePaymentSourceReader).toHaveBeenCalledOnce();
+    expect(mockPaymentSourceReader.readCoins).not.toHaveBeenCalled();
+    expect(mockPaymentSourceReader.readAddressBalance).not.toHaveBeenCalled();
     expect(mockSolveExecutableSwap).not.toHaveBeenCalled();
     expect(mockBuildSwapAndSettlePtb).not.toHaveBeenCalled();
     expect(mockBuildSettleWithCreditPtb).toHaveBeenCalledTimes(2);
@@ -960,6 +973,15 @@ describe('runGenericPrepareBuildPipeline — boundary conditions', () => {
     expect(pass2SwapCall[1].executionCostClaim).toBe(3_000_000n);
     expect(result.executionCostClaim).toBe(3_000_000n);
     expect(mockTraceUserPrefixValue).toHaveBeenCalledTimes(1);
+    expect(mockCreatePaymentSourceReader).toHaveBeenCalledOnce();
+    expect(mockCreatePaymentSourceReader).toHaveBeenCalledWith(
+      ctx.sui,
+      input.senderAddress,
+      input.settlementSwapPath.settlementTokenType,
+    );
+    expect(mockResolvePaymentSource).toHaveBeenCalledTimes(2);
+    expect(mockResolvePaymentSource.mock.calls[0]?.[0]).toBe(mockPaymentSourceReader);
+    expect(mockResolvePaymentSource.mock.calls[1]?.[0]).toBe(mockPaymentSourceReader);
   });
 
   // ── Credit-insufficient → swap fallback ─────────────────────────────────
@@ -1087,8 +1109,10 @@ describe('generic prepare build stages — slot-free / gas-bound boundary locks'
   it('measureSwapExecutionGap stays slot-free: quote solve only, no gas-owner, dry-run, or final build', async () => {
     const ctx = makeCtx();
     const input = makeInput();
-    const runContext =
-      __testingGenericPrepareBuildStages.createGenericPrepareBuildRunContext(input);
+    const runContext = __testingGenericPrepareBuildStages.createGenericPrepareBuildRunContext(
+      ctx,
+      input,
+    );
     const measuredCosts = {
       simGas: 2_000_000n,
       grossGas: 2_500_000n,
@@ -1119,8 +1143,10 @@ describe('generic prepare build stages — slot-free / gas-bound boundary locks'
   it('runMaxClaimGasProbe is gas-bound: applies lowered sponsor identity, gas budget, and dry-run', async () => {
     const ctx = makeCtx();
     const input = makeInput({ sponsorAddress: TEST_BOUND_SPONSOR });
-    const runContext =
-      __testingGenericPrepareBuildStages.createGenericPrepareBuildRunContext(input);
+    const runContext = __testingGenericPrepareBuildStages.createGenericPrepareBuildRunContext(
+      ctx,
+      input,
+    );
 
     const result = await __testingGenericPrepareBuildStages.runMaxClaimGasProbe(
       ctx,
@@ -1140,8 +1166,10 @@ describe('generic prepare build stages — slot-free / gas-bound boundary locks'
   it('buildFinalGenericPrepareResult is gas-bound: final assembly sets sponsor gas owner and safe-builds txBytes', async () => {
     const ctx = makeCtx();
     const input = makeInput({ sponsorAddress: TEST_FINAL_SPONSOR });
-    const runContext =
-      __testingGenericPrepareBuildStages.createGenericPrepareBuildRunContext(input);
+    const runContext = __testingGenericPrepareBuildStages.createGenericPrepareBuildRunContext(
+      ctx,
+      input,
+    );
     const finalCosts = {
       simGas: 2_000_000n,
       grossGas: 2_500_000n,

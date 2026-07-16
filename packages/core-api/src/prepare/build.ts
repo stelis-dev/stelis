@@ -47,7 +47,11 @@ import {
   SwapUnviableUnderPolicyError,
 } from '@stelis/core-relay/server';
 import type { QuoteRpcStats, QuoteCache } from '@stelis/core-relay/server';
-import { resolvePaymentSource } from './coinSelection.js';
+import {
+  createPaymentSourceReader,
+  resolvePaymentSource,
+  type PaymentSourceReader,
+} from './coinSelection.js';
 import { PrepareValidationError, type PrepareErrorMeta } from './replay.js';
 import {
   classifyDryRunFailure,
@@ -524,6 +528,7 @@ async function dryRunPreSwapCreditPathCosts(
     ctx,
     input,
     runContext.prefixTrace,
+    runContext.paymentSourceReader,
     {
       executionCostClaim: seedClaim,
       simGasReported: seedClaim,
@@ -674,6 +679,7 @@ async function buildFinalGenericPrepareResult(
     ctx,
     input,
     prefixTrace,
+    runContext.paymentSourceReader,
     {
       executionCostClaim,
       simGasReported: simGas,
@@ -837,6 +843,7 @@ interface GenericPrepareBuildRunContext {
   readonly rpcAcc: BuildRpcAccumulator;
   readonly quoteCache: QuoteCache;
   readonly prefixTrace: PrefixValueTrace;
+  readonly paymentSourceReader: PaymentSourceReader;
 }
 
 interface MaxClaimGasProbeResult {
@@ -852,6 +859,7 @@ interface SwapExecutionGapMeasurement {
 }
 
 function createGenericPrepareBuildRunContext(
+  ctx: BuildContext,
   input: GenericPrepareBuildRequest,
 ): GenericPrepareBuildRunContext {
   // Request-local quote cache shared across pass1 / pass1.5 / pass2 so that
@@ -863,6 +871,11 @@ function createGenericPrepareBuildRunContext(
     quoteCache: createRequestQuoteCache(),
     prefixTrace: materializePrefixValueTrace(
       Transaction.fromKind(fromBase64(input.userTxKindBytes)),
+      input.settlementSwapPath.settlementTokenType,
+    ),
+    paymentSourceReader: createPaymentSourceReader(
+      ctx.sui,
+      input.senderAddress,
       input.settlementSwapPath.settlementTokenType,
     ),
   };
@@ -903,6 +916,7 @@ async function runMaxClaimGasProbe(
     ctx,
     input,
     runContext.prefixTrace,
+    runContext.paymentSourceReader,
     {
       executionCostClaim: pass1Claim,
       simGasReported: pass1Claim,
@@ -1040,7 +1054,7 @@ export async function runGenericPrepareBuildPipeline(
   input: GenericPrepareBuildRequest,
 ): Promise<GenericPrepareBuildOutput> {
   logGenericPrepareBuildStart(input);
-  const runContext = createGenericPrepareBuildRunContext(input);
+  const runContext = createGenericPrepareBuildRunContext(ctx, input);
 
   // A credit_general request can be credit-coverable after measurement even
   // when it cannot cover maxClaimMist. Measure that candidate without first
@@ -1145,6 +1159,7 @@ async function runPreparePass(
   ctx: BuildContext,
   input: GenericPrepareBuildRequest,
   prefixTrace: PrefixValueTrace,
+  paymentSourceReader: PaymentSourceReader,
   audit: SettleAuditFields,
   prefetchedMidPrices?: bigint[],
   passLabel: PreparePassLabel = 'pass2',
@@ -1306,9 +1321,7 @@ async function runPreparePass(
   try {
     // ── Step 5: Funding resolution (chain query) ──────────────────────────
     const funding = await resolvePaymentSource(
-      ctx.sui,
-      input.senderAddress,
-      settlementSwapPath.settlementTokenType,
+      paymentSourceReader,
       swapAmountSmallest,
       settlementSwapPath.settlementTokenSymbol,
       prefixTrace,

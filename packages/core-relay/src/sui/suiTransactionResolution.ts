@@ -25,10 +25,8 @@ import {
   type SuiEndpointSnapshot,
 } from './suiOperation.js';
 import {
-  assertEmptyRawSuiRepeatedField,
   assertExactSuiShapeKeys,
   parseExactSuiArray,
-  parseRawEmptySuiCommandResults,
   parseRawSuiExecutedTransactionEnvelope,
   parseSuiArgument,
   parseSuiCallArg,
@@ -39,6 +37,7 @@ import {
   type SuiExecutionStatus,
 } from './suiTransactionShape.js';
 import { canonicalizeSuiTypeTag } from './suiTypeTag.js';
+import { SUI_U64_MAX, isSuiU64 } from './suiU64.js';
 
 export interface SuiTransactionBuildOptions {
   readonly transaction: Transaction;
@@ -140,7 +139,7 @@ function requireU64(value: unknown, allowZero: boolean): bigint {
     throw new SuiTransactionShapeError('resolvedTransaction', 'expected a canonical u64');
   }
   const parsed = BigInt(value);
-  if (parsed > 18_446_744_073_709_551_615n || (!allowZero && parsed === 0n)) {
+  if (parsed > SUI_U64_MAX || (!allowZero && parsed === 0n)) {
     throw new SuiTransactionShapeError('resolvedTransaction', 'u64 is outside its current range');
   }
   return parsed;
@@ -197,7 +196,7 @@ function rawDigest(value: unknown, path: string): string {
 }
 
 function rawU64(value: unknown, path: string, allowZero = true): bigint {
-  if (typeof value !== 'bigint' || value < 0n || (!allowZero && value === 0n)) {
+  if (!isSuiU64(value) || (!allowZero && value === 0n)) {
     throw new SuiTransactionShapeError(path, 'expected a current protobuf u64');
   }
   return value;
@@ -784,89 +783,17 @@ function validateRawResolutionResponse(
   requestedTransaction: unknown,
 ): RawResolutionEvidence {
   const response = rawRecord(value, 'resolution');
-  assertExactSuiShapeKeys(response, 'resolution', [
-    'transaction',
-    'commandOutputs',
-    'suggestedGasPrice',
-  ]);
-  parseRawEmptySuiCommandResults(response.commandOutputs, 'resolution.commandOutputs');
-  if (response.suggestedGasPrice !== undefined) {
-    rawU64(response.suggestedGasPrice, 'resolution.suggestedGasPrice');
-  }
   const envelope = parseRawSuiExecutedTransactionEnvelope(
     response.transaction,
     'resolution.transaction',
   );
   const executed = envelope.transaction;
-  assertEmptyRawSuiRepeatedField(envelope.signatures, 'resolution.transaction.signatures');
-  assertEmptyRawSuiRepeatedField(envelope.balanceChanges, 'resolution.transaction.balanceChanges');
-  for (const key of ['digest', 'events', 'checkpoint', 'timestamp', 'objects'] as const) {
-    if (executed[key] !== undefined) {
-      throw new SuiTransactionShapeError(
-        `resolution.transaction.${key}`,
-        'unexpected unrequested field',
-      );
-    }
-  }
   validateRawResolvedTransaction(executed.transaction, onlyTransactionKind);
   assertRawSuiResolutionIdentity(requestedTransaction, executed.transaction);
   const effects = rawRecord(executed.effects, 'resolution.transaction.effects');
-  assertExactSuiShapeKeys(effects, 'resolution.transaction.effects', [
-    'bcs',
-    'digest',
-    'version',
-    'status',
-    'epoch',
-    'gasUsed',
-    'transactionDigest',
-    'gasObject',
-    'eventsDigest',
-    'dependencies',
-    'lamportVersion',
-    'changedObjects',
-    'unchangedConsensusObjects',
-    'auxiliaryDataDigest',
-    'unchangedLoadedRuntimeObjects',
-  ]);
-  for (const key of [
-    'bcs',
-    'digest',
-    'version',
-    'epoch',
-    'gasUsed',
-    'gasObject',
-    'eventsDigest',
-    'lamportVersion',
-    'auxiliaryDataDigest',
-  ] as const) {
-    if (effects[key] !== undefined) {
-      throw new SuiTransactionShapeError(
-        `resolution.transaction.effects.${key}`,
-        'unexpected unrequested field',
-      );
-    }
-  }
-  for (const key of [
-    'dependencies',
-    'changedObjects',
-    'unchangedConsensusObjects',
-    'unchangedLoadedRuntimeObjects',
-  ] as const) {
-    assertEmptyRawSuiRepeatedField(
-      rawArray(effects[key], `resolution.transaction.effects.${key}`),
-      `resolution.transaction.effects.${key}`,
-    );
-  }
   const status = parseRawSuiResolutionStatus(effects.status);
   let transactionDigest: string | undefined;
-  if (onlyTransactionKind) {
-    if (effects.transactionDigest !== undefined) {
-      throw new SuiTransactionShapeError(
-        'resolution.transaction.effects.transactionDigest',
-        'unexpected unrequested field',
-      );
-    }
-  } else {
+  if (!onlyTransactionKind) {
     transactionDigest = rawDigest(
       effects.transactionDigest,
       'resolution.transaction.effects.transactionDigest',

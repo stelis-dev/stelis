@@ -69,6 +69,7 @@ export const RELAY_PREPARE_ERROR_CODES = [
   'INSUFFICIENT_SETTLE_INPUT',
   'SPREAD_EXCEEDED',
   'PAYMENT_COIN_CONFLICT',
+  'PAYMENT_COIN_LIMIT_EXCEEDED',
   'DRY_RUN_FAILED',
   'UNACCOUNTABLE_WITHDRAWAL',
   'MARKET_QUOTE_UNAVAILABLE',
@@ -524,6 +525,7 @@ export const HOST_ERROR_HTTP_STATUS = {
   INSUFFICIENT_SETTLE_INPUT: 422,
   SPREAD_EXCEEDED: 422,
   PAYMENT_COIN_CONFLICT: 422,
+  PAYMENT_COIN_LIMIT_EXCEEDED: 422,
   DRY_RUN_FAILED: 422,
   UNACCOUNTABLE_WITHDRAWAL: 422,
   MARKET_QUOTE_UNAVAILABLE: 422,
@@ -632,9 +634,17 @@ const HOST_ERROR_PUBLIC_MESSAGE_BY_STATUS = {
   503: 'Service temporarily unavailable',
 } as const satisfies Readonly<Record<HostErrorHttpStatus, string>>;
 
+const HOST_ERROR_PUBLIC_MESSAGE_BY_CODE: Readonly<Partial<Record<HostErrorCode, string>>> = {
+  PAYMENT_COIN_CONFLICT: 'Settlement-token payment could not be resolved safely',
+  PAYMENT_COIN_LIMIT_EXCEEDED: 'Consolidate settlement-token Coin objects and try again',
+};
+
 /** Single public-message authority for every current coded Host error. */
 export function hostErrorPublicMessage(code: HostErrorCode): string {
-  return HOST_ERROR_PUBLIC_MESSAGE_BY_STATUS[HOST_ERROR_HTTP_STATUS[code]];
+  return (
+    HOST_ERROR_PUBLIC_MESSAGE_BY_CODE[code] ??
+    HOST_ERROR_PUBLIC_MESSAGE_BY_STATUS[HOST_ERROR_HTTP_STATUS[code]]
+  );
 }
 
 export interface HostErrorMetaPolicy {

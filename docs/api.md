@@ -99,7 +99,7 @@ The user-supplied `User TransactionKind` must satisfy these rules:
 - A malformed same-token `FundsWithdrawal(Sender)` is rejected with `UNACCOUNTABLE_WITHDRAWAL`.
 - A bounded same-token `FundsWithdrawal(Sender)` is allowed and is subtracted from address-balance funding.
 
-Funding resolution considers both coin object provenance and `FundsWithdrawal(Sender)` address-balance accounting. The current funding source outcomes are `coin_object`, `address_balance`, and `mixed_topup`. The current funding failure codes are `INSUFFICIENT_BALANCE` and `PAYMENT_COIN_CONFLICT`.
+Funding resolution considers both Coin object provenance and `FundsWithdrawal(Sender)` address-balance accounting. The Host reads at most 50 settlement-token Coin objects for one prepare operation and never treats a partial read as wallet exhaustion. The current funding source outcomes are `coin_object`, `address_balance`, and `mixed_topup`. The current funding failure codes are `INSUFFICIENT_BALANCE`, `PAYMENT_COIN_CONFLICT`, and `PAYMENT_COIN_LIMIT_EXCEEDED`. `PAYMENT_COIN_CONFLICT` means the transaction's settlement-token payment could not be resolved safely; it is not proof of insufficient balance. `PAYMENT_COIN_LIMIT_EXCEEDED` is an HTTP 422 response that instructs the caller to consolidate settlement-token Coin objects and retry; it is also not an insufficient-balance result.
 
 The response includes transaction bytes for user signing and a `receiptId` for sponsor submission.
 The response cost fields include `executionCostClaim`, which is the gas-recovery claim embedded in the settlement arguments. It is not the full settlement payout; on-chain settlement pays `executionCostClaim + quotedHostFeeMist` to `settlementPayoutRecipient`.

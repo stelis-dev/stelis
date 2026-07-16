@@ -490,6 +490,10 @@ describe('getFailurePolicy — runtime policy consumption', () => {
   });
 
   it('returns the policy for normal rows without storage family (IP_ONLY)', () => {
+    expect(getFailurePolicy('PAYMENT_COIN_LIMIT_EXCEEDED')).toMatchObject({
+      classification: 'normal',
+      abuseImpact: { ip: 'count', subject: 'skip' },
+    });
     expect(getFailurePolicy('L2_POLICY_HASH_MISMATCH')).toMatchObject({
       classification: 'normal',
       abuseImpact: { ip: 'count', subject: 'skip' },

@@ -7,7 +7,8 @@ import type { SettlementSwapPathLiquidityStatus } from '@stelis/sdk';
 import { getSelectedSettlementSwapPath } from '../constants';
 import { SANDBOX_CARD_STYLE } from './cardStyles';
 import { parseDecimalToSmallestUnit, parsePercentToBps } from '../amount';
-import { createSuiEndpointSnapshot, listAllSuiCoins } from '@stelis/core-relay/browser';
+import { createSuiEndpointSnapshot, readBoundedSuiCoins } from '@stelis/core-relay/browser';
+import { selectTransferCoins } from '../transferCoinSelection';
 
 interface TransferFormProps {
   onTxSuccess?: () => void;
@@ -163,22 +164,19 @@ export function TransferForm({ onTxSuccess, settlementSwapPathIndex = 0 }: Trans
 
       addLog(`Preparing ${amount} ${SETTLEMENT_TOKEN_LABEL} transfer...`);
 
-      const tx = new Transaction();
-
-      const coinObjects = await listAllSuiCoins(createSuiEndpointSnapshot([client]), {
+      const coinRead = await readBoundedSuiCoins(createSuiEndpointSnapshot([client]), {
         owner: account.address,
         coinType: settlementTokenType,
       });
-      if (coinObjects.length === 0) throw new Error(`No ${SETTLEMENT_TOKEN_LABEL} found in wallet`);
+      const selectedCoins = selectTransferCoins(coinRead, transferMist);
 
-      // Merge all coins → split transfer amount.
-      // The Host traces command-ordered prefix coin value and address-balance
-      // withdrawals, so the client does not need to reserve an untouched coin.
-      const primaryCoin = tx.object(coinObjects[0].objectId);
-      if (coinObjects.length > 1) {
+      // Use the same bounded, u64-safe subset selection as the Host.
+      const tx = new Transaction();
+      const primaryCoin = tx.object(selectedCoins.baseCoinId);
+      if (selectedCoins.mergeCoinIds.length > 0) {
         tx.mergeCoins(
           primaryCoin,
-          coinObjects.slice(1).map((c) => tx.object(c.objectId)),
+          selectedCoins.mergeCoinIds.map((objectId) => tx.object(objectId)),
         );
       }
 

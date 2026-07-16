@@ -38,7 +38,14 @@ export {
 export { buildSuiTransaction } from './sui/suiTransactionResolution.js';
 export { suiExecutionErrorMessage } from './sui/suiTransactionShape.js';
 export type { SuiTransactionWithEventsResult } from './sui/suiTransactionShape.js';
-export { assertSuiNetwork, getSuiBalance, listAllSuiCoins } from './sui/suiStateGateways.js';
+export {
+  assertSuiNetwork,
+  getSuiBalance,
+  MAX_SUI_COIN_OBJECTS_PER_OPERATION,
+  readBoundedSuiCoins,
+} from './sui/suiStateGateways.js';
+export type { SuiCoinReadResult } from './sui/suiStateGateways.js';
+export { selectSuiCoinSubset } from './sui/suiCoinSelection.js';
 
 // ── Prepare authorization message (browser-safe) ────────────────────────────
 export { encodePrepareAuthorizationMessage } from './prepareAuthorization.js';

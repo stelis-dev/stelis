@@ -683,6 +683,8 @@ export class StelisSDK {
    * `StelisSponsoredError` codes:
    *
    * - `INSUFFICIENT_FUNDS` — insufficient balance or settle input too low.
+   * - `PAYMENT_COIN_CONFLICT` — settlement-token payment could not be resolved safely.
+   * - `PAYMENT_COIN_LIMIT_EXCEEDED` — consolidate settlement-token Coin objects and retry.
    * - `TRANSACTION_FAILED` — dry-run simulation failure.
    * - `EXECUTION_FAILED` — sponsor preflight / on-chain revert.
    *

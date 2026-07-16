@@ -53,6 +53,13 @@ Consume the shipped SDK as-is. Modifying the SDK, contracts, or Host/core source
 > Retry/backoff policy belongs on your side. Capacity codes include
 > `SPONSOR_CAPACITY_UNAVAILABLE`, `SPONSOR_REFILL_ACCOUNT_UNHEALTHY`,
 > `PREPARE_OVERLOADED`, `NO_SPONSOR_SLOT`, and `LEASE_EXPIRED`.
+> `PAYMENT_COIN_CONFLICT` means the Host could not reconcile the transaction's
+> settlement-token payment safely. The SDK preserves this code; it is not proof
+> of insufficient balance.
+> `PAYMENT_COIN_LIMIT_EXCEEDED` means the bounded prepare read could not prove
+> a safe settlement-token funding source. Consolidate the wallet's
+> settlement-token Coin objects and retry; do not treat it as
+> `INSUFFICIENT_FUNDS`.
 > Only the current closed metadata fields (`retryAfterMs`, `subcode`, `digest`,
 > `operationId`, `minSettleMist`, `requiredTotalIn`, `isEstimate`) are preserved.
 > Arbitrary remote fields and non-JSON body text are never copied into an error.

@@ -5,7 +5,8 @@
  *   1. Success path: pass-through from executeSponsored
  *   2. INSUFFICIENT_SETTLE_INPUT → INSUFFICIENT_FUNDS
  *   3. INSUFFICIENT_BALANCE → INSUFFICIENT_FUNDS
- *   3b. PAYMENT_COIN_CONFLICT → INSUFFICIENT_FUNDS (R-9)
+ *   3b. PAYMENT_COIN_CONFLICT remains exact
+ *   3c. PAYMENT_COIN_LIMIT_EXCEEDED remains exact with consolidation guidance
  *   4. SPONSOR_PREFLIGHT_FAILED + subcode INSUFFICIENT_SETTLE_INPUT → INSUFFICIENT_FUNDS
  *   5. SPONSOR_ONCHAIN_FAILED + subcode INSUFFICIENT_SETTLE_INPUT → INSUFFICIENT_FUNDS
  *   5b. SPONSOR_PREFLIGHT_FAILED + subcode INSUFFICIENT_FUNDS → INSUFFICIENT_FUNDS
@@ -221,11 +222,13 @@ describe('StelisSDK.executeSponsored', () => {
     }
   });
 
-  // ── 3b: PAYMENT_COIN_CONFLICT → INSUFFICIENT_FUNDS (R-9) ──────────────
-  it('normalizes PAYMENT_COIN_CONFLICT to INSUFFICIENT_FUNDS', async () => {
+  // ── 3b: PAYMENT_COIN_CONFLICT remains exact ───────────────────────────
+  it('preserves PAYMENT_COIN_CONFLICT instead of reporting insufficient funds', async () => {
     const { StelisApiException } = await import('../src/client.js');
+    const { hostErrorPublicMessage } = await import('@stelis/contracts');
+    const message = hostErrorPublicMessage('PAYMENT_COIN_CONFLICT');
     mockPrepare.mockRejectedValueOnce(
-      new StelisApiException('PAYMENT_COIN_CONFLICT', 'All coins consumed by user TX', 422),
+      new StelisApiException('PAYMENT_COIN_CONFLICT', message, 422),
     );
 
     try {
@@ -233,7 +236,33 @@ describe('StelisSDK.executeSponsored', () => {
       expect.unreachable('Should have thrown');
     } catch (err) {
       expect(err).toBeInstanceOf(StelisSponsoredError);
-      expect((err as StelisSponsoredError).code).toBe('INSUFFICIENT_FUNDS');
+      expect(err).toMatchObject({
+        code: 'PAYMENT_COIN_CONFLICT',
+        message,
+        cause: expect.objectContaining({ code: 'PAYMENT_COIN_CONFLICT' }),
+      });
+      expect((err as StelisSponsoredError).code).not.toBe('INSUFFICIENT_FUNDS');
+    }
+  });
+
+  it('preserves PAYMENT_COIN_LIMIT_EXCEEDED with Coin consolidation guidance', async () => {
+    const { StelisApiException } = await import('../src/client.js');
+    const { hostErrorPublicMessage } = await import('@stelis/contracts');
+    const message = hostErrorPublicMessage('PAYMENT_COIN_LIMIT_EXCEEDED');
+    mockPrepare.mockRejectedValueOnce(
+      new StelisApiException('PAYMENT_COIN_LIMIT_EXCEEDED', message, 422),
+    );
+
+    try {
+      await sdk.executeSponsored(new Transaction(), defaultOpts());
+      expect.unreachable('Should have thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(StelisSponsoredError);
+      expect(err).toMatchObject({
+        code: 'PAYMENT_COIN_LIMIT_EXCEEDED',
+        message,
+      });
+      expect((err as StelisSponsoredError).code).not.toBe('INSUFFICIENT_FUNDS');
     }
   });
 

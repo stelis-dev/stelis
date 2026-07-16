@@ -1,17 +1,8 @@
 import { bcs, TypeTagSerializer } from '@mysten/sui/bcs';
 import { GrpcTypes, type SuiGrpcClient } from '@mysten/sui/grpc';
-import {
-  deriveDynamicFieldID,
-  normalizeStructTag,
-  normalizeSuiAddress,
-  toBase64,
-} from '@mysten/sui/utils';
+import { deriveDynamicFieldID, normalizeStructTag, normalizeSuiAddress } from '@mysten/sui/utils';
 import { describe, expect, it, vi } from 'vitest';
-import {
-  createSuiEndpointSnapshot,
-  SUI_OPERATION_ATTEMPT_TIMEOUT_MS,
-  SuiOperationError,
-} from '../src/sui/suiOperation.js';
+import { createSuiEndpointSnapshot, SuiOperationError } from '../src/sui/suiOperation.js';
 import {
   getSuiBalance,
   getSuiCoinMetadata,
@@ -19,7 +10,8 @@ import {
   getSuiChainIdentifier,
   getSuiObject,
   getSuiObjects,
-  listAllSuiCoins,
+  MAX_SUI_COIN_OBJECTS_PER_OPERATION,
+  readBoundedSuiCoins,
 } from '../src/sui/suiStateGateways.js';
 
 const OWNER = `0x${'11'.repeat(32)}`;
@@ -29,7 +21,6 @@ const DIGEST = '69WiPg3DAQiwdxfncX6wYQ2siKwAe6L9BZthQea3JNMD';
 const COIN_TYPE = normalizeStructTag('0x2::sui::SUI');
 const COIN_OBJECT_TYPE = normalizeStructTag(`0x2::coin::Coin<${COIN_TYPE}>`);
 const NEXT_PAGE_TOKEN = new Uint8Array([1, 2, 3]);
-const NEXT_CURSOR = toBase64(NEXT_PAGE_TOKEN);
 
 function client(value: Record<string, unknown>): SuiGrpcClient {
   return { network: 'testnet', ...value } as unknown as SuiGrpcClient;
@@ -129,6 +120,32 @@ describe('current Sui state gateways', () => {
     );
   });
 
+  it.each([
+    {
+      boundary: 'object version',
+      object: { version: 1n << 64n },
+    },
+    {
+      boundary: 'shared-owner version',
+      object: {
+        owner: {
+          kind: GrpcTypes.Owner_OwnerKind.SHARED,
+          version: 1n << 64n,
+        },
+      },
+    },
+  ])('rejects a consumed $boundary outside the u64 range', async ({ object }) => {
+    const batchGetObjects = vi.fn(async () => ({
+      response: { objects: [rawObjectResult(object)] },
+    }));
+
+    await expect(
+      getSuiObject(createSuiEndpointSnapshot([client({ ledgerService: { batchGetObjects } })]), {
+        objectId: OBJECT_ID,
+      }),
+    ).rejects.toMatchObject({ kind: 'malformed_response' });
+  });
+
   it('accepts only a canonical StructTag or the exact package object type', async () => {
     const packageObject = vi.fn(async () => ({
       response: {
@@ -192,7 +209,7 @@ describe('current Sui state gateways', () => {
     });
   });
 
-  it('rejects malformed structured not-found details instead of trusting the status code alone', async () => {
+  it('uses the not-found status code without interpreting discarded provider details', async () => {
     const batchGetObjects = vi.fn(async () => ({
       response: {
         objects: [
@@ -210,7 +227,10 @@ describe('current Sui state gateways', () => {
       getSuiObject(createSuiEndpointSnapshot([client({ ledgerService: { batchGetObjects } })]), {
         objectId: OBJECT_ID,
       }),
-    ).rejects.toMatchObject({ kind: 'malformed_response' });
+    ).rejects.toMatchObject({
+      kind: 'not_found',
+      diagnostic: { resourceId: OBJECT_ID },
+    });
   });
 
   it('rejects a sparse raw object batch before position binding', async () => {
@@ -273,18 +293,6 @@ describe('current Sui state gateways', () => {
 
   it.each([
     {
-      boundary: 'batch response wrapper',
-      response: () => ({ objects: [rawObjectResult()], legacyObjects: [] }),
-    },
-    {
-      boundary: 'object result wrapper',
-      response: () => {
-        const result = rawObjectResult() as unknown as Record<string, unknown>;
-        result.legacyStatus = 0;
-        return { objects: [result] };
-      },
-    },
-    {
       boundary: 'protobuf Value wrapper',
       response: () => {
         const result = rawObjectResult({
@@ -317,6 +325,29 @@ describe('current Sui state gateways', () => {
         return { objects: [result] };
       },
     },
+  ])('rejects an unsupported key at the $boundary', async ({ response }) => {
+    const batchGetObjects = vi.fn(async () => ({ response: response() }));
+
+    await expect(
+      getSuiObject(createSuiEndpointSnapshot([client({ ledgerService: { batchGetObjects } })]), {
+        objectId: OBJECT_ID,
+      }),
+    ).rejects.toMatchObject({ kind: 'malformed_response' });
+  });
+
+  it.each([
+    {
+      boundary: 'batch response wrapper',
+      response: () => ({ objects: [rawObjectResult()], legacyObjects: [] }),
+    },
+    {
+      boundary: 'object result wrapper',
+      response: () => {
+        const result = rawObjectResult() as unknown as Record<string, unknown>;
+        result.legacyStatus = 0;
+        return { objects: [result] };
+      },
+    },
     {
       boundary: 'raw Owner structure',
       response: () => {
@@ -328,23 +359,22 @@ describe('current Sui state gateways', () => {
       },
     },
     {
-      boundary: 'opposing raw Owner field even when undefined',
+      boundary: 'discarded raw Owner field',
       response: () => {
         const result = rawObjectResult() as unknown as {
           result: { object: { owner: Record<string, unknown> } };
         };
-        result.result.object.owner.version = undefined;
+        result.result.object.owner.version = 'discarded';
         return { objects: [result] };
       },
     },
-  ])('rejects an unsupported key at the $boundary', async ({ response }) => {
+  ])('ignores an additive provider field at the $boundary', async ({ response }) => {
     const batchGetObjects = vi.fn(async () => ({ response: response() }));
-
     await expect(
       getSuiObject(createSuiEndpointSnapshot([client({ ledgerService: { batchGetObjects } })]), {
         objectId: OBJECT_ID,
       }),
-    ).rejects.toMatchObject({ kind: 'malformed_response' });
+    ).resolves.toMatchObject({ objectId: OBJECT_ID });
   });
 
   it('rejects the raw unknown owner discriminant and retries a current owner', async () => {
@@ -417,7 +447,7 @@ describe('current Sui state gateways', () => {
     );
   });
 
-  it('rejects a dynamic-field BCS envelope with a non-string name', async () => {
+  it('ignores the discarded dynamic-field display name', async () => {
     const nameBcs = bcs.U64.serialize(1).toBytes();
     const fieldId = normalizeSuiAddress(
       deriveDynamicFieldID(OWNER, TypeTagSerializer.parseFromStr('u64'), nameBcs),
@@ -447,7 +477,7 @@ describe('current Sui state gateways', () => {
         createSuiEndpointSnapshot([client({ ledgerService: { batchGetObjects } })]),
         { parentId: OWNER, name: { type: 'u64', bcs: nameBcs } },
       ),
-    ).rejects.toMatchObject({ kind: 'malformed_response' });
+    ).resolves.toMatchObject({ fieldId, valueType: 'address' });
   });
 
   it('rejects a dynamic-field object whose embedded name does not match the derived request', async () => {
@@ -514,7 +544,38 @@ describe('current Sui state gateways', () => {
     });
   });
 
-  it('rejects unsupported fields in metadata, balance, pagination, and chain wrappers', async () => {
+  it.each([
+    {
+      label: 'requested coin type',
+      response: {
+        coinType: '0x2::other::COIN',
+        metadata: { decimals: 9, symbol: 'SUI' },
+      },
+    },
+    {
+      label: 'decimals',
+      response: {
+        coinType: COIN_TYPE,
+        metadata: { decimals: 1.5, symbol: 'SUI' },
+      },
+    },
+    {
+      label: 'symbol',
+      response: {
+        coinType: COIN_TYPE,
+        metadata: { decimals: 9, symbol: 7 },
+      },
+    },
+  ])('rejects malformed consumed coin-metadata $label', async ({ response }) => {
+    const getCoinInfo = vi.fn(async () => ({ response }));
+    await expect(
+      getSuiCoinMetadata(createSuiEndpointSnapshot([client({ stateService: { getCoinInfo } })]), {
+        coinType: COIN_TYPE,
+      }),
+    ).rejects.toMatchObject({ kind: 'malformed_response' });
+  });
+
+  it('ignores additive provider fields that no returned value consumes', async () => {
     const metadata = vi.fn(async () => ({
       response: {
         coinType: COIN_TYPE,
@@ -526,7 +587,7 @@ describe('current Sui state gateways', () => {
         createSuiEndpointSnapshot([client({ stateService: { getCoinInfo: metadata } })]),
         { coinType: COIN_TYPE },
       ),
-    ).rejects.toMatchObject({ kind: 'malformed_response' });
+    ).resolves.toEqual({ decimals: 9, symbol: 'SUI' });
 
     const balance = vi.fn(async () => ({
       response: {
@@ -544,17 +605,20 @@ describe('current Sui state gateways', () => {
         createSuiEndpointSnapshot([client({ stateService: { getBalance: balance } })]),
         { owner: OWNER, coinType: COIN_TYPE },
       ),
-    ).rejects.toMatchObject({ kind: 'malformed_response' });
+    ).resolves.toMatchObject({ balance: '3', coinBalance: '2', addressBalance: '1' });
 
     const listOwnedObjects = vi.fn(async () => ({
       response: { objects: [], legacyPageToken: new Uint8Array([1]) },
     }));
     await expect(
-      listAllSuiCoins(createSuiEndpointSnapshot([client({ stateService: { listOwnedObjects } })]), {
-        owner: OWNER,
-        coinType: COIN_TYPE,
-      }),
-    ).rejects.toMatchObject({ kind: 'malformed_response' });
+      readBoundedSuiCoins(
+        createSuiEndpointSnapshot([client({ stateService: { listOwnedObjects } })]),
+        {
+          owner: OWNER,
+          coinType: COIN_TYPE,
+        },
+      ),
+    ).resolves.toEqual({ status: 'complete', coins: [] });
 
     const getServiceInfo = vi.fn(async () => ({
       response: { chainId: DIGEST, legacyChainId: DIGEST },
@@ -563,10 +627,10 @@ describe('current Sui state gateways', () => {
       getSuiChainIdentifier(
         createSuiEndpointSnapshot([client({ ledgerService: { getServiceInfo } })]),
       ),
-    ).rejects.toMatchObject({ kind: 'malformed_response' });
+    ).resolves.toEqual({ chainIdentifier: DIGEST });
   });
 
-  it('rejects malformed or unrequested fields that are valid members of current protobufs', async () => {
+  it('ignores malformed fields excluded by the request or returned contract', async () => {
     const objectWithBalance = vi.fn(async () => ({
       response: { objects: [rawObjectResult({ balance: 9n })] },
     }));
@@ -577,7 +641,7 @@ describe('current Sui state gateways', () => {
         ]),
         { objectId: OBJECT_ID },
       ),
-    ).rejects.toMatchObject({ kind: 'malformed_response' });
+    ).resolves.toMatchObject({ objectId: OBJECT_ID });
 
     const coinWithJson = vi.fn(async () => ({
       response: {
@@ -585,11 +649,11 @@ describe('current Sui state gateways', () => {
       },
     }));
     await expect(
-      listAllSuiCoins(
+      readBoundedSuiCoins(
         createSuiEndpointSnapshot([client({ stateService: { listOwnedObjects: coinWithJson } })]),
         { owner: OWNER, coinType: COIN_TYPE },
       ),
-    ).rejects.toMatchObject({ kind: 'malformed_response' });
+    ).resolves.toMatchObject({ status: 'complete', coins: [{ objectId: OBJECT_ID }] });
 
     const malformedTreasury = vi.fn(async () => ({
       response: {
@@ -603,7 +667,7 @@ describe('current Sui state gateways', () => {
         createSuiEndpointSnapshot([client({ stateService: { getCoinInfo: malformedTreasury } })]),
         { coinType: COIN_TYPE },
       ),
-    ).rejects.toMatchObject({ kind: 'malformed_response' });
+    ).resolves.toEqual({ decimals: 9, symbol: 'SUI' });
 
     const malformedServiceInfo = vi.fn(async () => ({
       response: {
@@ -618,7 +682,7 @@ describe('current Sui state gateways', () => {
           client({ ledgerService: { getServiceInfo: malformedServiceInfo } }),
         ]),
       ),
-    ).rejects.toMatchObject({ kind: 'malformed_response' });
+    ).resolves.toEqual({ chainIdentifier: DIGEST });
   });
 
   it('rejects incomplete balance evidence instead of manufacturing zero', async () => {
@@ -634,6 +698,54 @@ describe('current Sui state gateways', () => {
 
     await expect(promise).rejects.toBeInstanceOf(SuiOperationError);
     await expect(promise).rejects.toMatchObject({ kind: 'malformed_response' });
+  });
+
+  it('rejects a consumed balance total that disagrees with its components', async () => {
+    const getBalance = vi.fn(async () => ({
+      response: {
+        balance: {
+          coinType: COIN_TYPE,
+          balance: 4n,
+          coinBalance: 2n,
+          addressBalance: 1n,
+        },
+      },
+    }));
+    await expect(
+      getSuiBalance(createSuiEndpointSnapshot([client({ stateService: { getBalance } })]), {
+        owner: OWNER,
+        coinType: COIN_TYPE,
+      }),
+    ).rejects.toMatchObject({ kind: 'malformed_response' });
+  });
+
+  it('rejects consumed balance values outside the u64 range', async () => {
+    const getBalance = vi.fn(async () => ({
+      response: {
+        balance: {
+          coinType: COIN_TYPE,
+          balance: 1n << 64n,
+          coinBalance: (1n << 64n) - 1n,
+          addressBalance: 1n,
+        },
+      },
+    }));
+
+    await expect(
+      getSuiBalance(createSuiEndpointSnapshot([client({ stateService: { getBalance } })]), {
+        owner: OWNER,
+        coinType: COIN_TYPE,
+      }),
+    ).rejects.toMatchObject({ kind: 'malformed_response' });
+  });
+
+  it('rejects a malformed consumed chain identifier', async () => {
+    const getServiceInfo = vi.fn(async () => ({ response: { chainId: 'not-a-digest' } }));
+    await expect(
+      getSuiChainIdentifier(
+        createSuiEndpointSnapshot([client({ ledgerService: { getServiceInfo } })]),
+      ),
+    ).rejects.toMatchObject({ kind: 'malformed_response' });
   });
 
   it('defaults balance coin type only when omitted and rejects explicit invalid values', async () => {
@@ -664,131 +776,84 @@ describe('current Sui state gateways', () => {
     );
   });
 
-  it('restarts exact raw coin pagination on one endpoint and forwards the requested page limit', async () => {
+  it('reads one fixed-size endpoint-consistent page and reports a non-empty next token', async () => {
     const firstId = `0x${'44'.repeat(32)}`;
-    const secondId = `0x${'55'.repeat(32)}`;
-    const firstEndpoint = vi
-      .fn()
-      .mockResolvedValueOnce({
-        response: { objects: [rawCoin(firstId, 1n)], nextPageToken: NEXT_PAGE_TOKEN },
-      })
-      .mockResolvedValueOnce({ response: { objects: [{ malformed: true }] } });
-    const secondEndpoint = vi
-      .fn()
-      .mockResolvedValueOnce({
-        response: { objects: [rawCoin(firstId, 1n)], nextPageToken: NEXT_PAGE_TOKEN },
-      })
-      .mockResolvedValueOnce({ response: { objects: [rawCoin(secondId, 2n)] } });
-
-    const result = await listAllSuiCoins(
-      createSuiEndpointSnapshot([
-        client({ stateService: { listOwnedObjects: firstEndpoint } }),
-        client({ stateService: { listOwnedObjects: secondEndpoint } }),
-      ]),
-      { owner: OWNER, coinType: COIN_TYPE, limit: 17 },
-    );
-
-    expect(result.map(({ objectId }) => objectId)).toEqual([firstId, secondId]);
-    expect(firstEndpoint.mock.calls.map(([request]) => request.pageToken)).toEqual([
-      undefined,
-      NEXT_PAGE_TOKEN,
-    ]);
-    expect(secondEndpoint.mock.calls.map(([request]) => request.pageToken)).toEqual([
-      undefined,
-      NEXT_PAGE_TOKEN,
-    ]);
-    for (const [request, callOptions] of secondEndpoint.mock.calls) {
-      expect(request).toMatchObject({
-        owner: OWNER,
-        objectType: COIN_OBJECT_TYPE,
-        pageSize: 17,
-        readMask: { paths: ['owner', 'object_type', 'digest', 'version', 'object_id', 'balance'] },
-      });
-      expect(callOptions).toEqual(
-        expect.objectContaining({ timeout: expect.any(Number), abort: expect.any(AbortSignal) }),
-      );
-    }
-  });
-
-  it('does not start another coin page after caller cancellation', async () => {
-    const controller = new AbortController();
-    const firstPage = Promise.resolve({
-      response: {
-        objects: [rawCoin(`0x${'44'.repeat(32)}`, 1n)],
-        nextPageToken: NEXT_PAGE_TOKEN,
-      },
-    });
-    firstPage.then(() => controller.abort());
-    const listOwnedObjects = vi.fn(() => firstPage);
+    const listOwnedObjects = vi.fn(async () => ({
+      response: { objects: [rawCoin(firstId, 1n)], nextPageToken: NEXT_PAGE_TOKEN },
+    }));
 
     await expect(
-      listAllSuiCoins(createSuiEndpointSnapshot([client({ stateService: { listOwnedObjects } })]), {
+      readBoundedSuiCoins(
+        createSuiEndpointSnapshot([client({ stateService: { listOwnedObjects } })]),
+        { owner: OWNER, coinType: COIN_TYPE },
+      ),
+    ).resolves.toEqual({
+      status: 'limit_exceeded',
+      coins: [expect.objectContaining({ objectId: firstId, balance: '1' })],
+    });
+    expect(listOwnedObjects).toHaveBeenCalledTimes(1);
+    expect(listOwnedObjects).toHaveBeenCalledWith(
+      {
         owner: OWNER,
-        coinType: COIN_TYPE,
-        signal: controller.signal,
-      }),
-    ).rejects.toMatchObject({ kind: 'aborted' });
+        objectType: COIN_OBJECT_TYPE,
+        pageSize: MAX_SUI_COIN_OBJECTS_PER_OPERATION,
+        pageToken: undefined,
+        readMask: { paths: ['owner', 'object_type', 'digest', 'version', 'object_id', 'balance'] },
+      },
+      expect.objectContaining({ timeout: expect.any(Number), abort: expect.any(AbortSignal) }),
+    );
+  });
+
+  it.each([
+    ['short', [rawCoin(`0x${'55'.repeat(32)}`, 2n)]],
+    ['empty', []],
+  ])('reports a %s page with a next token as limit_exceeded', async (_label, objects) => {
+    const listOwnedObjects = vi.fn(async () => ({
+      response: { objects, nextPageToken: NEXT_PAGE_TOKEN },
+    }));
+    await expect(
+      readBoundedSuiCoins(
+        createSuiEndpointSnapshot([client({ stateService: { listOwnedObjects } })]),
+        { owner: OWNER, coinType: COIN_TYPE },
+      ),
+    ).resolves.toMatchObject({ status: 'limit_exceeded' });
     expect(listOwnedObjects).toHaveBeenCalledTimes(1);
   });
 
-  it('enforces the monotonic attempt deadline between immediately resolved coin pages', async () => {
-    let nowMs = 0;
-    let call = 0;
-    const now = vi.spyOn(performance, 'now').mockImplementation(() => nowMs);
-    const listOwnedObjects = vi.fn(async () => {
-      call += 1;
-      nowMs += SUI_OPERATION_ATTEMPT_TIMEOUT_MS / 2 + 1;
-      return {
-        response: {
-          objects: [rawCoin(`0x${call.toString(16).padStart(64, '0')}`, 1n)],
-          nextPageToken: new Uint8Array([call]),
-        },
-      };
-    });
-
-    try {
-      await expect(
-        listAllSuiCoins(
-          createSuiEndpointSnapshot([client({ stateService: { listOwnedObjects } })]),
-          { owner: OWNER, coinType: COIN_TYPE },
-        ),
-      ).rejects.toMatchObject({ kind: 'deadline_exceeded' });
-      expect(listOwnedObjects).toHaveBeenCalledTimes(2);
-    } finally {
-      now.mockRestore();
-    }
-  });
-
-  it('uses the current 50-object default and rejects pages larger than the requested limit', async () => {
-    const defaultPage = vi.fn(async () => ({ response: { objects: [] } }));
+  it('reports exhaustion only when the one page has no next token', async () => {
+    const listOwnedObjects = vi.fn(async () => ({ response: { objects: [] } }));
     await expect(
-      listAllSuiCoins(
-        createSuiEndpointSnapshot([client({ stateService: { listOwnedObjects: defaultPage } })]),
+      readBoundedSuiCoins(
+        createSuiEndpointSnapshot([client({ stateService: { listOwnedObjects } })]),
         { owner: OWNER, coinType: COIN_TYPE },
       ),
-    ).resolves.toEqual([]);
-    expect(defaultPage).toHaveBeenCalledWith(
-      expect.objectContaining({ pageSize: 50 }),
-      expect.objectContaining({ timeout: expect.any(Number), abort: expect.any(AbortSignal) }),
-    );
+    ).resolves.toEqual({ status: 'complete', coins: [] });
+  });
 
-    const oversized = vi.fn(async () => ({
-      response: {
-        objects: [rawCoin(`0x${'44'.repeat(32)}`, 1n), rawCoin(`0x${'55'.repeat(32)}`, 2n)],
-      },
+  it('rejects a present empty next-page token instead of treating it as exhaustion', async () => {
+    const listOwnedObjects = vi.fn(async () => ({
+      response: { objects: [], nextPageToken: new Uint8Array() },
     }));
+
     await expect(
-      listAllSuiCoins(
-        createSuiEndpointSnapshot([client({ stateService: { listOwnedObjects: oversized } })]),
-        { owner: OWNER, coinType: COIN_TYPE, limit: 1 },
+      readBoundedSuiCoins(
+        createSuiEndpointSnapshot([client({ stateService: { listOwnedObjects } })]),
+        { owner: OWNER, coinType: COIN_TYPE },
       ),
     ).rejects.toMatchObject({ kind: 'malformed_response' });
+  });
+
+  it('rejects a page larger than the fixed operation bound', async () => {
+    const objects = Array.from({ length: MAX_SUI_COIN_OBJECTS_PER_OPERATION + 1 }, (_, index) =>
+      rawCoin(`0x${(index + 1).toString(16).padStart(64, '0')}`, 1n),
+    );
+    const listOwnedObjects = vi.fn(async () => ({ response: { objects } }));
     await expect(
-      listAllSuiCoins(
-        createSuiEndpointSnapshot([client({ stateService: { listOwnedObjects: oversized } })]),
-        { owner: OWNER, coinType: COIN_TYPE, limit: 51 },
+      readBoundedSuiCoins(
+        createSuiEndpointSnapshot([client({ stateService: { listOwnedObjects } })]),
+        { owner: OWNER, coinType: COIN_TYPE },
       ),
-    ).rejects.toBeInstanceOf(TypeError);
+    ).rejects.toMatchObject({ kind: 'malformed_response' });
   });
 
   it('rejects coins whose raw type or owner does not match the requested identity', async () => {
@@ -808,7 +873,7 @@ describe('current Sui state gateways', () => {
     }));
 
     await expect(
-      listAllSuiCoins(
+      readBoundedSuiCoins(
         createSuiEndpointSnapshot([
           client({ stateService: { listOwnedObjects: wrongType } }),
           client({ stateService: { listOwnedObjects: wrongOwner } }),
@@ -820,28 +885,26 @@ describe('current Sui state gateways', () => {
     expect(wrongOwner).toHaveBeenCalledTimes(1);
   });
 
-  it('fails closed when a later raw coin page repeats an earlier cursor', async () => {
-    const cursorA = new Uint8Array([4]);
-    const cursorB = new Uint8Array([5]);
-    const listOwnedObjects = vi
-      .fn()
-      .mockResolvedValueOnce({
-        response: { objects: [rawCoin(`0x${'66'.repeat(32)}`, 1n)], nextPageToken: cursorA },
-      })
-      .mockResolvedValueOnce({
-        response: { objects: [rawCoin(`0x${'77'.repeat(32)}`, 1n)], nextPageToken: cursorB },
-      })
-      .mockResolvedValueOnce({
-        response: { objects: [rawCoin(`0x${'88'.repeat(32)}`, 1n)], nextPageToken: cursorA },
-      });
-
+  it('rejects a returned Coin balance outside the u64 range', async () => {
+    const listOwnedObjects = vi.fn(async () => ({
+      response: { objects: [rawCoin(OBJECT_ID, 1n << 64n)] },
+    }));
     await expect(
-      listAllSuiCoins(createSuiEndpointSnapshot([client({ stateService: { listOwnedObjects } })]), {
-        owner: OWNER,
-        coinType: COIN_TYPE,
-      }),
+      readBoundedSuiCoins(
+        createSuiEndpointSnapshot([client({ stateService: { listOwnedObjects } })]),
+        { owner: OWNER, coinType: COIN_TYPE },
+      ),
     ).rejects.toMatchObject({ kind: 'malformed_response' });
-    expect(listOwnedObjects).toHaveBeenCalledTimes(3);
-    expect(toBase64(cursorA)).not.toBe(NEXT_CURSOR);
+  });
+
+  it('rejects duplicate object identity inside the bounded page', async () => {
+    const coin = rawCoin(`0x${'66'.repeat(32)}`, 1n);
+    const listOwnedObjects = vi.fn(async () => ({ response: { objects: [coin, coin] } }));
+    await expect(
+      readBoundedSuiCoins(
+        createSuiEndpointSnapshot([client({ stateService: { listOwnedObjects } })]),
+        { owner: OWNER, coinType: COIN_TYPE },
+      ),
+    ).rejects.toMatchObject({ kind: 'malformed_response' });
   });
 });
