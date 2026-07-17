@@ -18,7 +18,10 @@ const DIGEST = '69WiPg3DAQiwdxfncX6wYQ2siKwAe6L9BZthQea3JNMD';
 function executedTransaction(
   value: Parameters<typeof GrpcTypes.ExecutedTransaction.create>[0],
 ): GrpcTypes.ExecutedTransaction {
-  return GrpcTypes.ExecutedTransaction.create(value);
+  return GrpcTypes.ExecutedTransaction.create({
+    transaction: { digest: DIGEST },
+    ...value,
+  });
 }
 
 describe('exact current Sui transaction shape', () => {
@@ -545,5 +548,45 @@ describe('exact current Sui transaction shape', () => {
     expect(
       parseRawSuiCommandResults([{ returnValues: [], mutatedByRef: [], providerDetail: [] }]),
     ).toEqual([{ returnValues: [], mutatedReferences: [] }]);
+  });
+
+  it('binds simulation identity only to the nested TransactionData digest', () => {
+    const simulation = executedTransaction({
+      digest: 'not-a-consumed-digest',
+      effects: {
+        transactionDigest: 'not-a-consumed-digest',
+        status: { success: true },
+        gasUsed: {
+          computationCost: 1n,
+          storageCost: 2n,
+          storageRebate: 0n,
+          nonRefundableStorageFee: 0n,
+        },
+      },
+    });
+
+    expect(parseRawSuiSimulationTransaction(simulation, DIGEST)).toEqual({
+      outcome: 'success',
+      effects: {
+        gasUsed: {
+          computationCost: '1',
+          storageCost: '2',
+          storageRebate: '0',
+          nonRefundableStorageFee: '0',
+        },
+      },
+    });
+
+    const missing = structuredClone(simulation);
+    delete missing.transaction;
+    expect(() => parseRawSuiSimulationTransaction(missing, DIGEST)).toThrow(
+      'simulation.transaction.transaction: expected an object',
+    );
+
+    const different = structuredClone(simulation);
+    different.transaction!.digest = 'CesHefDJFsgXEipkQmK6zbmWvicG5YLtAKqwZBYN4J6';
+    expect(() => parseRawSuiSimulationTransaction(different, DIGEST)).toThrow(
+      'simulation.transaction.transaction.digest: does not match the request',
+    );
   });
 });

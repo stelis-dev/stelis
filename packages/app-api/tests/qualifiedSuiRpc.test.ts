@@ -31,6 +31,20 @@ vi.mock('@stelis/core-relay', () => ({
     mocks.snapshotClients.set(snapshot, ordered);
     return snapshot;
   },
+  createChainBoundSuiEndpointSnapshot: (
+    endpoints: readonly SuiGrpcClient[],
+    chainIdentifier: string,
+  ) => {
+    if (endpoints.length === 0) throw new TypeError('at least one endpoint');
+    expect(chainIdentifier).toBe(SUI_CHAIN_IDENTIFIERS.testnet);
+    const ordered = Object.freeze([...endpoints]);
+    const snapshot = Object.freeze({
+      endpointCount: ordered.length,
+      network: ordered[0]!.network,
+    });
+    mocks.snapshotClients.set(snapshot, ordered);
+    return snapshot;
+  },
   getSuiChainIdentifier: mocks.getSuiChainIdentifier,
 }));
 

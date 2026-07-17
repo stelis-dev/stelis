@@ -7,7 +7,7 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
-import type { SuiEndpointSnapshot } from '@stelis/core-relay';
+import type { ChainBoundSuiEndpointSnapshot } from '@stelis/core-relay';
 import { createHostContext, SponsorPool, type HostContext } from '../src/context.js';
 import type { HostChainState } from '../src/hostChainState.js';
 import { MemoryPrepareStore } from '../src/store/memoryPrepareStore.js';
@@ -33,7 +33,7 @@ const DEEPBOOK_PACKAGE_ID = `0x${'04'.repeat(32)}`;
 const VAULTS_TABLE_ID = `0x${'05'.repeat(32)}`;
 const TEST_HMAC_SECRET = 'context-test-hmac-secret-000000000000';
 
-function makeSuiSnapshot(): SuiEndpointSnapshot {
+function makeSuiSnapshot(): ChainBoundSuiEndpointSnapshot {
   return suiEndpointSnapshotFixture();
 }
 
@@ -71,7 +71,7 @@ function configObject(configVersion: bigint) {
 
 function makeContext(
   options: {
-    readonly sui?: SuiEndpointSnapshot;
+    readonly sui?: ChainBoundSuiEndpointSnapshot;
     readonly initialChainState?: HostChainState;
     readonly configCacheTtlMs?: number;
   } = {},

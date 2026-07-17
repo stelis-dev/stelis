@@ -107,10 +107,11 @@ are authoritative.
 
 The store entry carries no settle-value copies. Every settle-execution
 field (executionCostClaim, fee components, profile, policyHash, quoteTimestampMs)
-is read at sponsor time from `parseSettleArgs(txBytes)` exclusively;
-`consume()` proves byte-equality between the submitted bytes and the
-/prepare commit, so the parsed values are authoritative without any
-store mirror. Persisting copies invite drift bugs without adding
+is read at sponsor time from `parseSettleArgs(txBytes)` exclusively.
+`consume()` verifies the submitted bytes' SHA-256 against the hash stored by
+/prepare. Under SHA-256 collision resistance, this binds the submitted byte
+sequence to the prepared transaction, so the parsed values are authoritative
+without a store mirror. Persisting copies invites drift bugs without adding
 authority and is therefore disallowed.
 
 After consume() succeeds the submitted bytes have matched the stored prepare

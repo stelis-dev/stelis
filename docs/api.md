@@ -150,7 +150,7 @@ Minimal JSON body:
 
 The route validates the prepared record, checks the transaction again, adds the sponsor signature, and submits.
 
-The submitted `txBytes` must match the prepared record bound to `receiptId`. The route verifies the user's transaction signature, checks that `tx.sender` matches the sender proven at prepare time, consumes the prepared record once, and then re-parses settlement fields from the stored-hash-verified transaction bytes.
+The submitted `txBytes` SHA-256 must match the prepared hash bound to `receiptId`. The route verifies the user's transaction signature, checks that `tx.sender` matches the sender proven at prepare time, consumes the prepared record once, and then re-parses settlement fields from the stored-hash-verified transaction bytes.
 The submitted `txBytes` is the final Host-built transaction. It must contain exactly one allowed settlement call and at most `MAX_FINAL_COMMANDS = 16` commands. This final transaction validation is separate from the user-supplied `User TransactionKind` validation performed during `POST /relay/prepare`.
 The `executionCostClaim` returned by this route is the transaction-derived gas-recovery claim from the settlement arguments.
 

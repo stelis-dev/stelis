@@ -13,7 +13,7 @@
  *   - Use window expiry
  */
 import { describe, test, expect, vi } from 'vitest';
-import type { AdminPromotionCreateRequest } from '@stelis/contracts';
+import { SUI_CHAIN_IDENTIFIERS, type AdminPromotionCreateRequest } from '@stelis/contracts';
 import { canonicalizePromotionTarget } from '../src/studio/promotionTargetPolicy.js';
 import {
   handlePromotionPrepare,
@@ -27,27 +27,49 @@ import { MemoryPrepareInflight } from '../src/store/memoryPrepareInflight.js';
 import { PrepareOverloadError, PrepareStudioUserQuotaError } from '../src/store/prepareErrors.js';
 import { SponsorPool } from '../src/context.js';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
-import { Transaction } from '@mysten/sui/transactions';
+import { Transaction, TransactionDataBuilder } from '@mysten/sui/transactions';
 import { bcs } from '@mysten/sui/bcs';
-import { toBase64 } from '@mysten/sui/utils';
-import type { SuiEndpointSnapshot } from '@stelis/core-relay';
+import { fromBase64, normalizeSuiAddress, toBase64 } from '@mysten/sui/utils';
+import { createHash } from 'node:crypto';
+import type { ChainBoundSuiEndpointSnapshot, SuiSimulationResult } from '@stelis/core-relay';
+import type {
+  AddressBalanceGasTransaction,
+  buildAddressBalanceGasTransaction,
+} from '@stelis/core-relay/server';
 import type { VerifiedDeveloperIdentity } from '../src/studio/developerJwtVerifier.js';
 import {
-  bindSuiResultToTransactionBytes,
+  addressBalanceGasTransactionBytesFixture,
   suiEndpointSnapshotFixture,
   suiSimulationSuccess,
-  TEST_SUI_TRANSACTION_DIGEST,
 } from './helpers/suiGatewayResultFixtures.js';
 
-const { buildSuiTransactionMock, simulateSuiTransactionMock } = vi.hoisted(() => ({
-  buildSuiTransactionMock: vi.fn(),
-  simulateSuiTransactionMock: vi.fn(),
+type BuildAddressBalanceGasTransactionOptions = Parameters<
+  typeof buildAddressBalanceGasTransaction
+>[1];
+
+const {
+  addressBalanceGasTransactionContents,
+  buildAddressBalanceGasTransactionMock,
+  getAddressBalanceGasTransactionBytesMock,
+  getAddressBalanceGasTransactionTxBytesHashMock,
+  simulateAddressBalanceGasTransactionMock,
+} = vi.hoisted(() => ({
+  addressBalanceGasTransactionContents: new WeakMap<
+    object,
+    { readonly bytes: Uint8Array; readonly txBytesHash: string }
+  >(),
+  buildAddressBalanceGasTransactionMock: vi.fn(),
+  getAddressBalanceGasTransactionBytesMock: vi.fn(),
+  getAddressBalanceGasTransactionTxBytesHashMock: vi.fn(),
+  simulateAddressBalanceGasTransactionMock: vi.fn(),
 }));
 
-vi.mock('@stelis/core-relay', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@stelis/core-relay')>()),
-  buildSuiTransaction: buildSuiTransactionMock,
-  simulateSuiTransaction: simulateSuiTransactionMock,
+vi.mock('@stelis/core-relay/server', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@stelis/core-relay/server')>()),
+  buildAddressBalanceGasTransaction: buildAddressBalanceGasTransactionMock,
+  getAddressBalanceGasTransactionBytes: getAddressBalanceGasTransactionBytesMock,
+  getAddressBalanceGasTransactionTxBytesHash: getAddressBalanceGasTransactionTxBytesHashMock,
+  simulateAddressBalanceGasTransaction: simulateAddressBalanceGasTransactionMock,
 }));
 
 // ─────────────────────────────────────────────
@@ -108,33 +130,65 @@ async function buildCommandCountTxKindBytes(commandCount: number): Promise<strin
   return toBase64(kindBytes);
 }
 
-simulateSuiTransactionMock.mockImplementation(
-  async (_snapshot: SuiEndpointSnapshot, input: { transaction: Uint8Array }) =>
-    bindSuiResultToTransactionBytes(
-      suiSimulationSuccess(TEST_SUI_TRANSACTION_DIGEST, SIMULATION_GAS_USED),
-      input.transaction,
-    ),
-);
-
-buildSuiTransactionMock.mockImplementation(
+buildAddressBalanceGasTransactionMock.mockImplementation(
   async (
-    _snapshot: SuiEndpointSnapshot,
-    input: { readonly transaction: Transaction; readonly onlyTransactionKind?: boolean },
+    _snapshot: ChainBoundSuiEndpointSnapshot,
+    options: BuildAddressBalanceGasTransactionOptions,
   ) => {
-    const transaction = Transaction.from(input.transaction);
-    transaction.setGasPrice(1_000);
-    transaction.setGasPayment([
-      {
-        objectId: `0x${'99'.repeat(32)}`,
-        version: '1',
-        digest: '11111111111111111111111111111111',
-      },
-    ]);
-    return transaction.build({ onlyTransactionKind: input.onlyTransactionKind });
+    const source = options.transaction.getData();
+    expect(source.sender).not.toBeNull();
+    expect(source.gasData.owner).toBeNull();
+    expect(source.gasData.price).toBeNull();
+    expect(source.gasData.budget).toBeNull();
+    expect(source.gasData.payment).toBeNull();
+    expect(source.expiration).toBeNull();
+
+    const bytes = await addressBalanceGasTransactionBytesFixture({
+      transaction: options.transaction,
+      sponsorAddress: options.sponsorAddress,
+      gasBudget: options.gasBudget,
+      gasPrice: 1_000n,
+      chainIdentifier: SUI_CHAIN_IDENTIFIERS.testnet,
+    });
+    const token = Object.freeze({}) as AddressBalanceGasTransaction;
+    addressBalanceGasTransactionContents.set(token, {
+      bytes: bytes.slice(),
+      txBytesHash: createHash('sha256').update(bytes).digest('hex'),
+    });
+    return token;
   },
 );
 
-function createMockSui(): SuiEndpointSnapshot {
+simulateAddressBalanceGasTransactionMock.mockImplementation(
+  async (transaction: AddressBalanceGasTransaction): Promise<SuiSimulationResult> => {
+    if (!addressBalanceGasTransactionContents.has(transaction)) {
+      throw new TypeError('Unknown address-balance gas transaction test token');
+    }
+    return suiSimulationSuccess(SIMULATION_GAS_USED);
+  },
+);
+
+getAddressBalanceGasTransactionBytesMock.mockImplementation(
+  (transaction: AddressBalanceGasTransaction): Uint8Array => {
+    const contents = addressBalanceGasTransactionContents.get(transaction);
+    if (!contents) {
+      throw new TypeError('Unknown address-balance gas transaction test token');
+    }
+    return contents.bytes.slice();
+  },
+);
+
+getAddressBalanceGasTransactionTxBytesHashMock.mockImplementation(
+  (transaction: AddressBalanceGasTransaction): string => {
+    const contents = addressBalanceGasTransactionContents.get(transaction);
+    if (!contents) {
+      throw new TypeError('Unknown address-balance gas transaction test token');
+    }
+    return contents.txBytesHash;
+  },
+);
+
+function createMockSui(): ChainBoundSuiEndpointSnapshot {
   return suiEndpointSnapshotFixture();
 }
 
@@ -665,6 +719,23 @@ describe('handlePromotionPrepare', () => {
     expect(result.txBytes).toBeDefined();
     expect(result.receiptId).toBeDefined();
     expect(result.estimatedGasMist).toBeDefined();
+    const transaction = TransactionDataBuilder.fromBytes(fromBase64(result.txBytes)).snapshot();
+    expect(transaction.sender).toBe(normalizeSuiAddress(USER_ADDR));
+    expect(transaction.gasData.owner).toBe(normalizeSuiAddress(SPONSOR_KP.toSuiAddress()));
+    expect(BigInt(transaction.gasData.budget!)).toBe(BigInt(result.estimatedGasMist));
+    expect(BigInt(transaction.gasData.price!)).toBe(1_000n);
+    expect(transaction.gasData.payment).toEqual([]);
+    expect(transaction.expiration).toEqual({
+      $kind: 'ValidDuring',
+      ValidDuring: {
+        minEpoch: '1',
+        maxEpoch: '2',
+        minTimestamp: null,
+        maxTimestamp: null,
+        chain: SUI_CHAIN_IDENTIFIERS.testnet,
+        nonce: 0,
+      },
+    });
     expect(releaseFn).toHaveBeenCalledTimes(1);
   });
 

@@ -5,9 +5,31 @@
  * success trace observes both policy hooks and the host ports that acquire,
  * commit, store, and release resources.
  */
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { toHex } from '@mysten/sui/utils';
+import type { AddressBalanceGasTransaction } from '@stelis/core-relay/server';
+
+const { testGasTransactions } = vi.hoisted(() => ({
+  testGasTransactions: new WeakMap<object, { bytes: Uint8Array; txBytesHash: string }>(),
+}));
+
+vi.mock('@stelis/core-relay/server', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@stelis/core-relay/server')>();
+  return {
+    ...original,
+    getAddressBalanceGasTransactionBytes: (transaction: object) => {
+      const contents = testGasTransactions.get(transaction);
+      if (!contents) throw new TypeError('unknown test gas transaction');
+      return contents.bytes.slice();
+    },
+    getAddressBalanceGasTransactionTxBytesHash: (transaction: object) => {
+      const contents = testGasTransactions.get(transaction);
+      if (!contents) throw new TypeError('unknown test gas transaction');
+      return contents.txBytesHash;
+    },
+  };
+});
 import {
   runPrepareStateMachine,
   RunnerHostMisconfiguredError,
@@ -33,9 +55,15 @@ const TEST_SENDER = `0x${'be'.repeat(32)}`;
 const TEST_PROMO = '00000000-0000-4000-8000-000000000208';
 const TEST_USER = 'unit-8-user';
 const TEST_CLIENT_IP = '127.0.0.1';
+const TEST_TX_BYTES = new Uint8Array([0xaa, 0xbb, 0xcc, 0xdd]);
+const TEST_TX_BYTES_HASH = 'a'.repeat(64);
+const TEST_GAS_TRANSACTION = Object.freeze({}) as AddressBalanceGasTransaction;
+testGasTransactions.set(TEST_GAS_TRANSACTION, {
+  bytes: TEST_TX_BYTES,
+  txBytesHash: TEST_TX_BYTES_HASH,
+});
 const TEST_BUILD_RESULT: GasBoundBuildResult = {
-  txBytes: new Uint8Array([0xaa, 0xbb, 0xcc, 0xdd]),
-  txBytesHash: 'a'.repeat(64),
+  addressBalanceGasTransaction: TEST_GAS_TRANSACTION,
   measuredGasMist: 1_400_000n,
 };
 
@@ -421,7 +449,7 @@ describe('runPrepareStateMachine commit boundary', () => {
     });
     await expect(host.prepareStore.peek(response.receiptId)).resolves.toMatchObject({
       receiptId: response.receiptId,
-      txBytesHash: TEST_BUILD_RESULT.txBytesHash,
+      txBytesHash: TEST_TX_BYTES_HASH,
     });
     expect(host.inflight.inflight).toBe(0);
   });

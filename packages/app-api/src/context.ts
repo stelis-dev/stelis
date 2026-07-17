@@ -32,7 +32,7 @@ import {
   type AbuseBlockStore,
 } from '@stelis/core-api';
 import type { SingleHopSettlementSwapPath, SuiRpcFleetStatus } from '@stelis/contracts';
-import type { SuiEndpointSnapshot } from '@stelis/core-relay';
+import type { ChainBoundSuiEndpointSnapshot } from '@stelis/core-relay';
 import { createSponsorOperationsRefillWorker } from './sponsor-operations/refillWorker.js';
 import { createRedisSponsorOperationsState } from './sponsor-operations/redisState.js';
 import { createSponsorRefillAccountSpendState } from './sponsor-operations/accountSpendState.js';
@@ -147,7 +147,7 @@ export interface ContextRuntimeInput {
     readonly vaultRegistryId: string;
   };
   readonly deepbookPackageId: string;
-  readonly sui: SuiEndpointSnapshot;
+  readonly sui: ChainBoundSuiEndpointSnapshot;
   readonly rpcFleet: Readonly<SuiRpcFleetStatus>;
   readonly initialHostChainState: HostChainState;
   readonly settlementSwapPaths: readonly SingleHopSettlementSwapPath[];

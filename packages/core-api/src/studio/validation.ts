@@ -15,8 +15,8 @@
  * by callers so padding cannot hide a manipulation-policy violation.
  *
  * Prepare-only companion guard (distinct from S1): sponsor-withdrawal forbidden.
- * Sponsor preconsume relies on the stored-hash-verified contract for this check and
- * therefore does not call the sponsor-withdrawal guard directly.
+ * Sponsor preconsume relies on the later prepared-entry hash consume gate for
+ * this check and therefore does not call the sponsor-withdrawal guard directly.
  *
  * S1 and S2 consume `PtbCommand[]` produced by `convertSdkCommands()` at the
  * prepare/sponsor boundary. This module does not touch raw Sui SDK command
@@ -59,7 +59,7 @@ export type PromotionCommandCountFailure = {
  *
  * Prepare-only `FundsWithdrawal(Sponsor)` check is a separate guard (see
  * `validatePromotionSponsorWithdrawal` below). Sponsor preconsume relies on
- * the stored-hash-verified contract for that check and must not invoke it.
+ * the later prepared-entry hash consume gate for that check and must not invoke it.
  *
  * @returns null on success, failure discriminated union on violation.
  */
@@ -98,10 +98,10 @@ export type SponsorWithdrawalFailure = { code: 'SPONSOR_WITHDRAWAL_FORBIDDEN' };
 /**
  * Prepare-only companion guard: reject `FundsWithdrawal(Sponsor)` inputs.
  *
- * Sponsor preconsume does not call this helper because the stored-hash-verified
- * consume() contract already proves the submitted bytes match the prepare
- * commit, so any sponsor-withdrawal at sponsor time would be server-side
- * drift rather than user abuse (handled by the sponsor drift path).
+ * Sponsor preconsume does not call this helper because signing cannot occur
+ * until the later atomic consume proves the submitted bytes match the prepare
+ * commit. A sponsor-withdrawal in hash-matched bytes is therefore server-side
+ * drift rather than user abuse and is handled by the sponsor drift path.
  */
 export function validatePromotionSponsorWithdrawal(
   fullTx: Transaction,

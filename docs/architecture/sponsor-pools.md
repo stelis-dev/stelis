@@ -26,7 +26,7 @@ Stelis observes the Sponsor Refill Account through total SUI balance reads for h
 
 Sponsor slot SUI is gas inventory for sponsored transactions. Stelis sets the sponsor slot as `gasOwner` and sets the gas budget. Stelis does not keep a sponsor-slot gas coin inventory, track sponsor-slot gas coin count, run a merge worker, or select sponsor-slot gas coin objects directly in production.
 
-Sui SDK transaction build resolves gas payment for sponsor-slot transactions. For sponsor-slot transactions that do not reference `GasCoin`, the current Sui SDK resolver uses address-balance gas payment when the sponsor slot address balance covers the gas budget. The resolver selects valid SUI coin objects when address balance alone does not cover the gas budget. Sui execution applies gas payment rules, including gas smashing when multiple gas coin objects are selected.
+The Host's server-only gas builder resolves sponsor-slot transactions through a boot-qualified Sui RPC endpoint. Before resolution it sets the sponsor slot as gas owner and sets the exact gas budget and that endpoint's reference gas price, while leaving gas payment and expiration unset. It accepts the returned transaction only when the gas payment list is empty and the endpoint returned the expected address-balance `ValidDuring` expiration. If the resolver selects any SUI coin object, prepare fails before signing. The sponsor slot address balance must therefore cover the exact gas budget.
 
 Sponsor slot SUI is only for sponsored transaction gas. It is not used for user settlement-token funding, settlement swap payment funding, or host fee settlement. User-supplied transactions cannot use sponsor SUI through `GasCoin` or `FundsWithdrawal(Sponsor)`.
 
@@ -40,7 +40,7 @@ External SUI deposits into the Sponsor Refill Account are outside Stelis transac
 
 Sponsor slot refill moves SUI from the Sponsor Refill Account to a sponsor slot. The refill worker computes `max(0, sponsorBalanceRefillTargetMist - currentSponsorSlotBalanceMist)`, splits that amount from `tx.gas`, and transfers the resulting SUI coin object to the sponsor slot.
 
-Sponsored execution uses the leased sponsor slot as `gasOwner`. The Sui SDK resolves the gas payment during transaction build, and Sui execution deducts gas from the selected gas payment.
+Sponsored execution uses the leased sponsor slot as `gasOwner` and pays gas from that slot's address balance. The Host rejects resolved transaction bytes that contain a SUI coin-object gas payment before returning a prepare response.
 
 Admin withdrawal uses the Sponsor Refill Account signer and transfers one exact positive u64 MIST amount. Admin withdrawal is protected by admin session validation, a network-bound signed single-use withdrawal nonce, admin-operation rate limiting, operation logging, simulation, and the same account-scoped spend flow used by refill. If that withdrawal's HTTP outcome is pending, app-admin retains its exact network, nonce, signature, and amount for the browser session and retries it instead of signing a new request. A request rejected because another account spend was recovered is not classified or retried as its own pending withdrawal.
 

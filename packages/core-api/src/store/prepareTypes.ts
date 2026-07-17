@@ -116,8 +116,8 @@ export type PreparedTxDraft = GenericPreparedTxDraft | PromotionPreparedTxDraft;
  * Coordination-only at `/relay/sponsor`. Every execution-critical settle
  * value (executionCostClaim, fee components, profile, policyHash,
  * quoteTimestampMs) is derived from the submitted `txBytes` via
- * `parseSettleArgs(...)` at sponsor time; `txBytesHash` consume() proves
- * byte-equality with the /prepare commit. The store therefore carries
+ * `parseSettleArgs(...)` at sponsor time; `consume()` verifies the submitted
+ * bytes' SHA-256 against `txBytesHash` from the /prepare commit. The store therefore carries
  * only the coordination fields the sponsor lifecycle needs (slot
  * identity, hash binding, receipt identity, IP/execution-path observability echo,
  * monotonic nonce compaction key, optional orderId echo for L2

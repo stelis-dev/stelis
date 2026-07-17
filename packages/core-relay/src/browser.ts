@@ -37,7 +37,10 @@ export {
 } from './sui/suiTransactionGateways.js';
 export { buildSuiTransaction } from './sui/suiTransactionResolution.js';
 export { suiExecutionErrorMessage } from './sui/suiTransactionShape.js';
-export type { SuiTransactionWithEventsResult } from './sui/suiTransactionShape.js';
+export type {
+  SuiSimulationResult,
+  SuiTransactionWithEventsResult,
+} from './sui/suiTransactionShape.js';
 export {
   assertSuiNetwork,
   getSuiBalance,

@@ -10,7 +10,7 @@ import type { SuiNetwork, SponsorSlotLeaseSummary } from '@stelis/contracts';
 import type {
   OnchainConfig,
   AllowedSettlementSwapPath,
-  SuiEndpointSnapshot,
+  ChainBoundSuiEndpointSnapshot,
 } from '@stelis/core-relay';
 
 import type { PrepareStoreAdapter } from './store/prepareTypes.js';
@@ -125,7 +125,7 @@ export interface SponsorPoolAdapter {
    * Promote a leased slot from the reserved stage to the committed stage.
    *
    * Must be called after the prepare runner has built the final
-   * PTB and computed `buildResult.txBytesHash`, and just before
+   * PTB and computed its `txBytesHash`, and just before
    * `prepareStore.store()`. CAS semantics: the current lease proof must
    * equal the reserved proof for `(receiptId, sponsorAddress)`. Any other state
    * (missing key, different receiptId, already committed, TTL expired)
@@ -408,7 +408,7 @@ export interface HostRuntimeConfig {
   /** Target network */
   network: SuiNetwork;
   /** Immutable endpoint set that passed the Host boot reads. */
-  sui: SuiEndpointSnapshot;
+  sui: ChainBoundSuiEndpointSnapshot;
   /** Deployed package ID */
   packageId: string;
   /** Config shared object ID */
@@ -491,7 +491,7 @@ export interface HostRuntimeConfig {
 
 export interface HostContext {
   network: SuiNetwork;
-  sui: SuiEndpointSnapshot;
+  sui: ChainBoundSuiEndpointSnapshot;
   /**
    * Sponsor pool — checkout a slot before signing, checkin after TX completes.
    * Pool size = max concurrent sponsored TXs.

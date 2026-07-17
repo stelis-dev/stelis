@@ -6,7 +6,7 @@
  *
  * Cross-request binding under test:
  *   1. handlePrepare / handlePromotionPrepare persists `txBytesHash` =
- *      sha256(buildResult.txBytes) into a real `MemoryPrepareStore`.
+ *      the prepare runner's validated bytes and hash into a real `MemoryPrepareStore`.
  *   2. The user (Actor 2) signs the `txBytes` returned by /prepare.
  *   3. handleSponsor / handlePromotionSponsor consumes the same receiptId
  *      against the SAME store; `consumeEntry()` recomputes
@@ -33,9 +33,22 @@ import { Transaction, TransactionDataBuilder } from '@mysten/sui/transactions';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { bcs } from '@mysten/sui/bcs';
 import { toBase64, toBase58 } from '@mysten/sui/utils';
-import { GAS_VARIANCE_FIXED_MIST, type SuiEndpointSnapshot } from '@stelis/core-relay';
-import { SETTLE_WITH_CREDIT_FUNCTION, SLIPPAGE_CAP_BPS } from '@stelis/contracts';
+import type { ChainBoundSuiEndpointSnapshot } from '@stelis/core-relay';
+import { GAS_VARIANCE_FIXED_MIST } from '@stelis/core-relay';
+import {
+  SETTLE_WITH_CREDIT_FUNCTION,
+  SLIPPAGE_CAP_BPS,
+  SUI_CHAIN_IDENTIFIERS,
+} from '@stelis/contracts';
+import type {
+  AddressBalanceGasTransaction,
+  buildAddressBalanceGasTransaction,
+} from '@stelis/core-relay/server';
 import { canonicalizePromotionTarget } from '../src/studio/promotionTargetPolicy.js';
+
+type BuildAddressBalanceGasTransactionOptions = Parameters<
+  typeof buildAddressBalanceGasTransaction
+>[1];
 
 // ─────────────────────────────────────────────
 // Module mocks (vi.hoisted ensures availability in factories)
@@ -44,15 +57,30 @@ import { canonicalizePromotionTarget } from '../src/studio/promotionTargetPolicy
 const {
   mockQueryUserCredit,
   mockPrepareBuildPipeline,
-  mockBuildSuiTransaction,
-  mockSimulateSuiTransaction,
+  mockSponsorPreflightSimulation,
   mockExecuteSuiTransaction,
+  addressBalanceGasTransactionContents,
+  mockBuildAddressBalanceGasTransaction,
+  mockGetAddressBalanceGasTransactionBytes,
+  mockGetAddressBalanceGasTransactionTxBytesHash,
+  mockSimulateAddressBalanceGasTransaction,
 } = vi.hoisted(() => ({
   mockQueryUserCredit: vi.fn(),
   mockPrepareBuildPipeline: vi.fn(),
-  mockBuildSuiTransaction: vi.fn(),
-  mockSimulateSuiTransaction: vi.fn(),
+  mockSponsorPreflightSimulation: vi.fn(),
   mockExecuteSuiTransaction: vi.fn(),
+  addressBalanceGasTransactionContents: new WeakMap<
+    object,
+    {
+      readonly bytes: Uint8Array;
+      readonly txBytesHash: string;
+      readonly snapshot: ChainBoundSuiEndpointSnapshot;
+    }
+  >(),
+  mockBuildAddressBalanceGasTransaction: vi.fn(),
+  mockGetAddressBalanceGasTransactionBytes: vi.fn(),
+  mockGetAddressBalanceGasTransactionTxBytesHash: vi.fn(),
+  mockSimulateAddressBalanceGasTransaction: vi.fn(),
 }));
 
 vi.mock('@stelis/core-relay', async (importOriginal) => {
@@ -60,9 +88,19 @@ vi.mock('@stelis/core-relay', async (importOriginal) => {
   return {
     ...original,
     queryUserCredit: mockQueryUserCredit,
-    buildSuiTransaction: mockBuildSuiTransaction,
-    simulateSuiTransaction: mockSimulateSuiTransaction,
+    simulateSuiTransaction: mockSponsorPreflightSimulation,
     executeSuiTransaction: mockExecuteSuiTransaction,
+  };
+});
+
+vi.mock('@stelis/core-relay/server', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@stelis/core-relay/server')>();
+  return {
+    ...original,
+    buildAddressBalanceGasTransaction: mockBuildAddressBalanceGasTransaction,
+    getAddressBalanceGasTransactionBytes: mockGetAddressBalanceGasTransactionBytes,
+    getAddressBalanceGasTransactionTxBytesHash: mockGetAddressBalanceGasTransactionTxBytesHash,
+    simulateAddressBalanceGasTransaction: mockSimulateAddressBalanceGasTransaction,
   };
 });
 
@@ -106,6 +144,7 @@ import { MemoryPromotionExecutionLedger } from '../src/studio/executionLedgerMem
 import type { VerifiedDeveloperIdentity } from '../src/studio/developerJwtVerifier.js';
 import { withPrepareAuthorization } from './prepareAuthTestHelpers.js';
 import {
+  addressBalanceGasTransactionBytesFixture,
   bindSuiResultToTransactionBytes,
   suiEndpointSnapshotFixture,
   suiExecutionSuccess,
@@ -116,47 +155,84 @@ import {
 
 const gatewayGasUsed = new WeakMap<object, TestGasUsed>();
 
-function gasUsedFor(snapshot: SuiEndpointSnapshot): TestGasUsed {
+function gasUsedFor(snapshot: ChainBoundSuiEndpointSnapshot): TestGasUsed {
   const gasUsed = gatewayGasUsed.get(snapshot);
   if (!gasUsed) throw new Error('Missing gateway gas fixture');
   return gasUsed;
 }
 
-mockSimulateSuiTransaction.mockImplementation(
-  async (snapshot: SuiEndpointSnapshot, input: { transaction: Uint8Array }) =>
-    bindSuiResultToTransactionBytes(
-      suiSimulationSuccess(TEST_SUI_TRANSACTION_DIGEST, gasUsedFor(snapshot)),
-      input.transaction,
-    ),
-);
-
 mockExecuteSuiTransaction.mockImplementation(
-  async (snapshot: SuiEndpointSnapshot, input: { transaction: Uint8Array }) =>
+  async (snapshot: ChainBoundSuiEndpointSnapshot, input: { transaction: Uint8Array }) =>
     bindSuiResultToTransactionBytes(
       suiExecutionSuccess(TEST_SUI_TRANSACTION_DIGEST, gasUsedFor(snapshot)),
       input.transaction,
     ),
 );
 
-mockBuildSuiTransaction.mockImplementation(
+mockSponsorPreflightSimulation.mockImplementation(
+  async (snapshot: ChainBoundSuiEndpointSnapshot, _input: { transaction: Uint8Array }) =>
+    suiSimulationSuccess(gasUsedFor(snapshot)),
+);
+
+function registerAddressBalanceGasTransaction(
+  bytes: Uint8Array,
+  snapshot: ChainBoundSuiEndpointSnapshot,
+): AddressBalanceGasTransaction {
+  const token = Object.freeze({}) as AddressBalanceGasTransaction;
+  addressBalanceGasTransactionContents.set(token, {
+    bytes: bytes.slice(),
+    txBytesHash: createHash('sha256').update(bytes).digest('hex'),
+    snapshot,
+  });
+  return token;
+}
+
+function requireAddressBalanceGasTransaction(transaction: AddressBalanceGasTransaction) {
+  const contents = addressBalanceGasTransactionContents.get(transaction);
+  if (!contents) throw new TypeError('Unknown address-balance gas transaction test token');
+  return contents;
+}
+
+mockBuildAddressBalanceGasTransaction.mockImplementation(
   async (
-    _snapshot: SuiEndpointSnapshot,
-    input: { readonly transaction: Transaction; readonly onlyTransactionKind?: boolean },
+    snapshot: ChainBoundSuiEndpointSnapshot,
+    options: BuildAddressBalanceGasTransactionOptions,
   ) => {
-    const transaction = Transaction.from(input.transaction);
-    transaction.setGasPrice(1_000);
-    transaction.setGasPayment([
-      {
-        objectId: `0x${'99'.repeat(32)}`,
-        version: '1',
-        digest: '11111111111111111111111111111111',
-      },
-    ]);
-    return transaction.build({ onlyTransactionKind: input.onlyTransactionKind });
+    const source = options.transaction.getData();
+    expect(source.sender).not.toBeNull();
+    expect(source.gasData.owner).toBeNull();
+    expect(source.gasData.price).toBeNull();
+    expect(source.gasData.budget).toBeNull();
+    expect(source.gasData.payment).toBeNull();
+    expect(source.expiration).toBeNull();
+
+    const bytes = await addressBalanceGasTransactionBytesFixture({
+      transaction: options.transaction,
+      sponsorAddress: options.sponsorAddress,
+      gasBudget: options.gasBudget,
+      gasPrice: 1_000n,
+      chainIdentifier: SUI_CHAIN_IDENTIFIERS.testnet,
+    });
+    return registerAddressBalanceGasTransaction(bytes, snapshot);
   },
 );
 
-function gatewaySnapshot(gasUsed: TestGasUsed): SuiEndpointSnapshot {
+mockSimulateAddressBalanceGasTransaction.mockImplementation(
+  async (transaction: AddressBalanceGasTransaction) =>
+    suiSimulationSuccess(gasUsedFor(requireAddressBalanceGasTransaction(transaction).snapshot)),
+);
+
+mockGetAddressBalanceGasTransactionBytes.mockImplementation(
+  (transaction: AddressBalanceGasTransaction) =>
+    requireAddressBalanceGasTransaction(transaction).bytes.slice(),
+);
+
+mockGetAddressBalanceGasTransactionTxBytesHash.mockImplementation(
+  (transaction: AddressBalanceGasTransaction) =>
+    requireAddressBalanceGasTransaction(transaction).txBytesHash,
+);
+
+function gatewaySnapshot(gasUsed: TestGasUsed): ChainBoundSuiEndpointSnapshot {
   const snapshot = suiEndpointSnapshotFixture();
   gatewayGasUsed.set(snapshot, gasUsed);
   return snapshot;
@@ -196,18 +272,16 @@ const GENERIC_MOCK_CONFIG = {
 const GENERIC_QUOTED_HOST_FEE = GENERIC_MOCK_CONFIG.maxHostFeeMist;
 
 /**
- * Build a real, BCS-valid credit-only settlement transaction with sender +
- * gas-owner pre-set. The caller picks the policyHash variant +
- * gas-payment digest filler so the same builder produces both the
- * "prepared" tx and a deterministically-different "tampered" tx.
+ * Build a real, BCS-valid credit-only settlement transaction that pays gas
+ * from the sponsor address balance. The caller picks the policyHash variant
+ * and validity nonce so the same builder produces both the "prepared" tx and
+ * a deterministically-different "tampered" tx.
  */
 async function buildCreditTx(opts: {
   policyHashHex: string;
-  /** Single byte fill for the 32-byte gas-payment digest — switching this
-   * flips the BCS bytes so two builds with the same sender / sponsor /
-   * settle args still produce different `txBytes` (and therefore different
-   * sha256 hashes). */
-  gasPaymentDigestFill: number;
+  /** Changing the u32 validity nonce changes the BCS bytes while preserving
+   * the sender, sponsor, gas source, and settlement arguments. */
+  validityNonce: number;
   /** Optional override for `nonce` settle arg — used to vary the tampered
    * variant against the prepared one if needed. */
   nonce?: bigint;
@@ -218,15 +292,19 @@ async function buildCreditTx(opts: {
   tx.setGasOwner(SPONSOR_ADDR);
   tx.setGasBudget(5_000_000n);
   tx.setGasPrice(1000);
-  const digestBytes = new Uint8Array(32);
-  digestBytes.fill(opts.gasPaymentDigestFill);
-  tx.setGasPayment([
-    {
-      objectId: '0x' + '01'.repeat(32),
-      version: '1',
-      digest: toBase58(digestBytes),
+  tx.setGasPayment([]);
+  tx.setExpiration({
+    ValidDuring: {
+      minEpoch: '1',
+      maxEpoch: '2',
+      minTimestamp: null,
+      maxTimestamp: null,
+      chain: SUI_CHAIN_IDENTIFIERS.testnet,
+      nonce: opts.validityNonce,
     },
-  ]);
+  });
+
+  const digestBytes = new Uint8Array(32).fill(0x01);
 
   const objRef = (id: string) =>
     tx.objectRef({ objectId: id, version: '1', digest: toBase58(digestBytes) });
@@ -278,7 +356,7 @@ async function makeEmptyUserTxKindBytes(): Promise<string> {
   return toBase64(kindBytes);
 }
 
-function genericMockSui(): SuiEndpointSnapshot {
+function genericMockSui(): ChainBoundSuiEndpointSnapshot {
   const gasUsed = {
     computationCost: '3000000',
     storageCost: '2000000',
@@ -395,27 +473,15 @@ async function drivePrepare(harness: GenericHarness): Promise<{
   const quoteTimestampMs = Date.now();
   const built = await buildCreditTx({
     policyHashHex,
-    gasPaymentDigestFill: 0x01,
+    validityNonce: 1,
     quoteTimestampMs,
   });
 
-  mockPrepareBuildPipeline.mockResolvedValueOnce({
-    txBytes: built.txBytes,
-    txBytesHash: built.txBytesHash,
-    executionCostClaim: 5_250_000n,
-    simGas: 5_000_000n,
-    gasVarianceFixedMist: GAS_VARIANCE_FIXED_MIST,
-    slippageBufferMist: 0n,
-    grossGas: 5_000_000n,
-    profile: 'credit_general' as const,
-    paymentInputSource: 'none_credit_only' as const,
-    swapAmountSmallest: 0n,
-  });
-
-  // Sticky mock — the sponsor side also re-extracts args from the same
-  // stored-hash-verified bytes via `revalidateGenericSponsorPolicy`. Both requests
-  // must observe the identical canonical settle args.
-  vi.mocked(extractSettleArgsFromBuiltTx).mockReturnValue({
+  const addressBalanceGasTransaction = registerAddressBalanceGasTransaction(
+    built.txBytes,
+    harness.ctx.sui,
+  );
+  const settleArgs = {
     configObjectId: GENERIC_MOCK_CONFIG.configId,
     registryObjectId: GENERIC_MOCK_CONFIG.vaultRegistryId,
     settlementPayoutRecipient: GENERIC_MOCK_CONFIG.settlementPayoutRecipientAddress,
@@ -432,11 +498,30 @@ async function drivePrepare(harness: GenericHarness): Promise<{
     slippageBufferMist: 0n,
     quoteTimestampMs: BigInt(quoteTimestampMs),
     paymentInputTrace: {
-      settleVariantClass: 'credit',
-      source: 'none_credit_only',
-      paymentCoinRefKind: 'none',
+      settleVariantClass: 'credit' as const,
+      source: 'none_credit_only' as const,
+      paymentCoinRefKind: 'none' as const,
     },
+  };
+
+  mockPrepareBuildPipeline.mockResolvedValueOnce({
+    addressBalanceGasTransaction,
+    l1Validation: { ok: true },
+    settleArgs,
+    executionCostClaim: 5_250_000n,
+    simGas: 5_000_000n,
+    gasVarianceFixedMist: GAS_VARIANCE_FIXED_MIST,
+    slippageBufferMist: 0n,
+    grossGas: 5_000_000n,
+    profile: 'credit_general' as const,
+    paymentInputSource: 'none_credit_only' as const,
+    swapAmountSmallest: 0n,
   });
+
+  // Sticky mock — the sponsor side also re-extracts args from the same
+  // stored-hash-verified bytes via `revalidateGenericSponsorPolicy`. Both requests
+  // must observe the identical canonical settle args.
+  vi.mocked(extractSettleArgsFromBuiltTx).mockReturnValue(settleArgs);
 
   const response = await handlePrepare(
     harness.ctx,
@@ -499,8 +584,8 @@ describe('generic two-actor golden flow (handlePrepare → user sign → handleS
     const { response, txBytesHash: hashA } = await drivePrepare(harness);
 
     // Build a second valid signed tx with the SAME sender / gas-owner
-    // identity but different bytes — flipping the gas-payment digest
-    // filler is enough to change the BCS encoding.
+    // identity but different bytes — changing the validity nonce changes
+    // the BCS encoding without changing the address-balance gas source.
     const policyHashHex = computePolicyHash({
       maxClaimMist: GENERIC_MOCK_CONFIG.maxClaimMist,
       maxHostFeeMist: GENERIC_MOCK_CONFIG.maxHostFeeMist,
@@ -511,7 +596,7 @@ describe('generic two-actor golden flow (handlePrepare → user sign → handleS
     });
     const tampered = await buildCreditTx({
       policyHashHex,
-      gasPaymentDigestFill: 0x02,
+      validityNonce: 2,
       quoteTimestampMs: Date.now() + 1,
     });
     expect(tampered.txBytesHash).not.toBe(hashA);
@@ -598,7 +683,7 @@ const STUDIO_GLOBAL_ALLOWED_TARGETS = new Set([canonicalizePromotionTarget(STUDI
  * construction, simulation, and execution are mocked at their current shared
  * gateway boundaries.
  */
-function studioMockSui(): SuiEndpointSnapshot {
+function studioMockSui(): ChainBoundSuiEndpointSnapshot {
   const gasUsed = {
     computationCost: '1000000',
     storageCost: '500000',
@@ -700,8 +785,8 @@ async function makeAllowedStudioTxKindBytes(): Promise<string> {
 /**
  * Build a tampered Studio TX for sponsor processing. The user's
  * verified identity (sender + JWT userId) and the sponsor's gas-owner
- * remain unchanged; only the bytes differ. We forge a gas budget +
- * gas-payment digest that the prepare path would never have produced.
+ * remain unchanged; only the bytes differ. We forge a gas budget and
+ * validity nonce that the prepare path would never have produced.
  */
 async function buildStudioTamperedTx(): Promise<{
   txBytes: Uint8Array;
@@ -713,15 +798,17 @@ async function buildStudioTamperedTx(): Promise<{
   tx.setGasOwner(SPONSOR_ADDR);
   tx.setGasBudget(7_500_000n); // distinct from the prepare-set budget
   tx.setGasPrice(1000);
-  const digestBytes = new Uint8Array(32);
-  digestBytes.fill(0x42);
-  tx.setGasPayment([
-    {
-      objectId: '0x' + '0'.repeat(64),
-      version: '1',
-      digest: toBase58(digestBytes),
+  tx.setGasPayment([]);
+  tx.setExpiration({
+    ValidDuring: {
+      minEpoch: '1',
+      maxEpoch: '2',
+      minTimestamp: null,
+      maxTimestamp: null,
+      chain: SUI_CHAIN_IDENTIFIERS.testnet,
+      nonce: 42,
     },
-  ]);
+  });
   const txBytes = await tx.build();
   const txBytesHash = createHash('sha256').update(txBytes).digest('hex');
   return { txBytes, txBytesHash };
@@ -796,8 +883,8 @@ describe('Studio two-actor golden flow (handlePromotionPrepare → user sign →
     expect(err).toBeInstanceOf(PromotionSponsorError);
     expect((err as PromotionSponsorError).code).toBe('TAMPERING_DETECTED');
 
-    // Stored-hash-verified consume() hash_mismatch is destructive — the entry is
-    // gone and the ledger reservation has been released.
+    // The consume-time stored-hash mismatch is destructive — the entry is gone
+    // and the ledger reservation has been released.
     expect(await h.prepareStore.peek(prepareResult.receiptId)).toBeNull();
     const ent = await h.executionLedger.getEntitlement(h.promoId, STUDIO_USER_ID);
     expect(ent!.activeReservationReceiptId).toBeNull();

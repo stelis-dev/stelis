@@ -23,6 +23,7 @@ import {
   rejectUnhandledSuiVariant,
   SuiTransactionShapeError,
   type SuiMoveViewResult,
+  type SuiSimulationResult,
   type SuiTransactionBalanceChangesResult,
   type SuiTransactionResult,
   type SuiTransactionWithEventsResult,
@@ -61,12 +62,9 @@ const EXECUTED_EFFECTS_READ_MASK = [
 ] as const;
 
 const SIMULATION_EFFECTS_READ_MASK = [
-  'transaction.digest',
-  'transaction.effects.version',
+  'transaction.transaction.digest',
   'transaction.effects.status',
   'transaction.effects.gas_used',
-  'transaction.effects.transaction_digest',
-  'transaction.effects.events_digest',
 ] as const;
 
 const MOVE_VIEW_READ_MASK = [
@@ -193,7 +191,7 @@ function parseOrMalformed<T>(
 export function simulateSuiTransaction(
   snapshot: SuiEndpointSnapshot,
   options: SuiTransactionBytesOptions,
-): Promise<SuiTransactionResult> {
+): Promise<SuiSimulationResult> {
   const transaction = requireTransactionBytes(options.transaction);
   const expectedDigest = requestDigest(transaction);
   return runSuiReadOperation(

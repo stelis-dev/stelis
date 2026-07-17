@@ -1,5 +1,6 @@
 import { RpcError } from '@protobuf-ts/runtime-rpc';
 import type { SuiGrpcClient } from '@mysten/sui/grpc';
+import { isValidTransactionDigest } from '@mysten/sui/utils';
 import type { SuiExecutionError } from './suiTransactionShape.js';
 
 /** Fixed timeout for one current Sui RPC attempt. */
@@ -77,7 +78,15 @@ export interface SuiEndpointSnapshot {
   readonly network: string;
 }
 
+declare const CHAIN_BOUND_SNAPSHOT: unique symbol;
+
+/** Endpoint snapshot whose exact chain identifier was verified before creation. */
+export interface ChainBoundSuiEndpointSnapshot extends SuiEndpointSnapshot {
+  readonly [CHAIN_BOUND_SNAPSHOT]: true;
+}
+
 const SNAPSHOT_ENDPOINTS = new WeakMap<SuiEndpointSnapshot, readonly SuiGrpcClient[]>();
+const SNAPSHOT_CHAIN_IDENTIFIERS = new WeakMap<SuiEndpointSnapshot, string>();
 
 function snapshotEndpoints(snapshot: SuiEndpointSnapshot): readonly SuiGrpcClient[] {
   const endpoints = SNAPSHOT_ENDPOINTS.get(snapshot);
@@ -91,6 +100,38 @@ function snapshotEndpoints(snapshot: SuiEndpointSnapshot): readonly SuiGrpcClien
 export function createSuiEndpointSnapshot(
   endpoints: readonly SuiGrpcClient[],
 ): SuiEndpointSnapshot {
+  return createEndpointSnapshot(endpoints);
+}
+
+/**
+ * Freeze endpoints after their exact chain identifier has been independently
+ * verified. Server-side transaction builders use this boundary instead of
+ * deriving a chain identifier from the SDK network label.
+ */
+export function createChainBoundSuiEndpointSnapshot(
+  endpoints: readonly SuiGrpcClient[],
+  chainIdentifier: string,
+): ChainBoundSuiEndpointSnapshot {
+  if (!isValidTransactionDigest(chainIdentifier)) {
+    throw new TypeError('Sui endpoint snapshot chain identifier is invalid');
+  }
+  const snapshot = createEndpointSnapshot(endpoints) as ChainBoundSuiEndpointSnapshot;
+  SNAPSHOT_CHAIN_IDENTIFIERS.set(snapshot, chainIdentifier);
+  return snapshot;
+}
+
+/** @internal Read the exact chain identifier bound by endpoint qualification. */
+export function getSuiEndpointSnapshotChainIdentifier(
+  snapshot: ChainBoundSuiEndpointSnapshot,
+): string {
+  const chainIdentifier = SNAPSHOT_CHAIN_IDENTIFIERS.get(snapshot);
+  if (!chainIdentifier) {
+    throw new TypeError('Sui endpoint snapshot has no verified chain identifier');
+  }
+  return chainIdentifier;
+}
+
+function createEndpointSnapshot(endpoints: readonly SuiGrpcClient[]): SuiEndpointSnapshot {
   if (!Array.isArray(endpoints) || endpoints.length === 0) {
     throw new TypeError('Sui endpoint snapshot requires at least one endpoint');
   }

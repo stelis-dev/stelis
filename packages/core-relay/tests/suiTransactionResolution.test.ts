@@ -1,4 +1,5 @@
 import { RpcError } from '@protobuf-ts/runtime-rpc';
+import { createHash } from 'node:crypto';
 import { GrpcTypes, type SuiGrpcClient } from '@mysten/sui/grpc';
 import { Transaction, TransactionDataBuilder } from '@mysten/sui/transactions';
 import { describe, expect, it, vi } from 'vitest';
@@ -9,10 +10,18 @@ import { describe, expect, it, vi } from 'vitest';
 import { grpcTransactionToTransactionData, transactionDataToGrpcTransaction } from '../../../node_modules/@mysten/sui/dist/client/transaction-resolver.mjs';
 import {
   createSuiEndpointSnapshot,
+  createChainBoundSuiEndpointSnapshot,
   getSuiRejectedExecutionError,
   SUI_OPERATION_ATTEMPT_TIMEOUT_MS,
   SuiOperationError,
 } from '../src/sui/suiOperation.js';
+import {
+  buildAddressBalanceGasTransaction,
+  getAddressBalanceGasTransactionBytes,
+  getAddressBalanceGasTransactionTxBytesHash,
+  simulateAddressBalanceGasTransaction,
+  type AddressBalanceGasTransaction,
+} from '../src/sui/suiAddressBalanceGas.js';
 import {
   assertRawSuiResolutionIdentity,
   buildSuiTransaction,
@@ -22,6 +31,8 @@ const OBJECT_ID = `0x${'11'.repeat(32)}`;
 const PACKAGE_ID = `0x${'22'.repeat(32)}`;
 const SENDER = `0x${'33'.repeat(32)}`;
 const DIGEST = 'CesHefDJFsgXEipkQmK6zbmWvicG5YLtAKqwZBYN4J6';
+const SPONSOR = `0x${'44'.repeat(32)}`;
+const GAS_BUDGET = 5_000_000n;
 
 type RawSimulate = (
   request: GrpcTypes.SimulateTransactionRequest,
@@ -75,6 +86,40 @@ function currentResolution(
     });
     mutateResponse?.(response);
     return { response };
+  };
+}
+
+function currentAddressBalanceResolution(
+  mutate?: (resolved: GrpcTypes.Transaction) => void,
+): RawSimulate {
+  return currentResolution((resolved) => {
+    resolved.expiration = {
+      kind: GrpcTypes.TransactionExpiration_TransactionExpirationKind.VALID_DURING,
+      minEpoch: 7n,
+      epoch: 8n,
+      chain: DIGEST,
+      nonce: 0,
+    };
+    mutate?.(resolved);
+  });
+}
+
+function addressBalanceEndpoint(simulateTransaction: RawSimulate, referenceGasPrice: bigint) {
+  const getEpoch = vi.fn(
+    async (
+      _request: { readonly readMask?: { readonly paths?: readonly string[] } },
+      _options?: { readonly timeout?: number; readonly abort?: AbortSignal },
+    ) => ({
+      response: { epoch: { referenceGasPrice } },
+    }),
+  );
+  return {
+    client: {
+      network: 'testnet',
+      ledgerService: { getEpoch },
+      transactionExecutionService: { simulateTransaction },
+    } as unknown as SuiGrpcClient,
+    getEpoch,
   };
 }
 
@@ -141,6 +186,32 @@ describe('exact current Sui transaction resolution', () => {
     expect(() => assertRawSuiResolutionIdentity(request, request)).toThrow(
       'expected a Sui address',
     );
+  });
+
+  it('compares provider-normalized command addresses and type tags by transaction meaning', () => {
+    const tx = new Transaction();
+    const coin = tx.moveCall({
+      target: '0x2::coin::zero',
+      typeArguments: ['0x2::sui::SUI'],
+    });
+    tx.transferObjects([coin], SENDER);
+    tx.setSender(SENDER);
+    const request = transactionDataToGrpcTransaction(tx.getData());
+    const uppercaseOwner = `0x${'AB'.repeat(32)}`;
+    const lowercaseOwner = `0x${'ab'.repeat(32)}`;
+    const uppercaseObject = `0x${'CD'.repeat(32)}`;
+    const lowercaseObject = `0x${'cd'.repeat(32)}`;
+    request.gasPayment ??= { objects: [] };
+    request.gasPayment.owner = uppercaseOwner;
+    request.gasPayment.objects = [{ objectId: uppercaseObject, version: 1n, digest: DIGEST }];
+    const resolved = structuredClone(request);
+    const normalizedSystemAddress = `0x${'0'.repeat(63)}2`;
+    firstMoveCall(resolved).package = normalizedSystemAddress;
+    firstMoveCall(resolved).typeArguments = [`${normalizedSystemAddress}::sui::SUI`];
+    resolved.gasPayment!.owner = lowercaseOwner;
+    resolved.gasPayment!.objects[0]!.objectId = lowercaseObject;
+
+    expect(() => assertRawSuiResolutionIdentity(request, resolved)).not.toThrow();
   });
 
   it('injects the actual attempt boundary and retries a transport failure in endpoint order', async () => {
@@ -706,5 +777,290 @@ describe('exact current Sui transaction resolution', () => {
       }),
     ).toThrow('onlyTransactionKind must be a boolean');
     expect(simulate).not.toHaveBeenCalled();
+  });
+});
+
+describe('address-balance gas transaction authority', () => {
+  function snapshot(client: SuiGrpcClient) {
+    return createChainBoundSuiEndpointSnapshot([client], DIGEST);
+  }
+
+  function transactionWithoutSender(): Transaction {
+    const tx = new Transaction();
+    tx.moveCall({
+      target: `${PACKAGE_ID}::example::read`,
+      arguments: [tx.object(OBJECT_ID)],
+    });
+    return tx;
+  }
+
+  it.each([
+    ['missing sender', () => transactionWithoutSender()],
+    [
+      'gas owner',
+      () => {
+        const tx = transaction();
+        tx.setGasOwner(SPONSOR);
+        return tx;
+      },
+    ],
+    [
+      'gas price',
+      () => {
+        const tx = transaction();
+        tx.setGasPrice(1_000n);
+        return tx;
+      },
+    ],
+    [
+      'gas budget',
+      () => {
+        const tx = transaction();
+        tx.setGasBudget(GAS_BUDGET);
+        return tx;
+      },
+    ],
+    [
+      'gas payment',
+      () => {
+        const tx = transaction();
+        tx.setGasPayment([]);
+        return tx;
+      },
+    ],
+    [
+      'expiration',
+      () => {
+        const tx = transaction();
+        tx.setExpiration({ Epoch: 8 });
+        return tx;
+      },
+    ],
+  ])('rejects a source with preset %s before either RPC', async (_name, makeTransaction) => {
+    const simulate = vi.fn<RawSimulate>(currentAddressBalanceResolution());
+    const endpoint = addressBalanceEndpoint(simulate, 1_000n);
+
+    await expect(
+      buildAddressBalanceGasTransaction(snapshot(endpoint.client), {
+        transaction: makeTransaction(),
+        sponsorAddress: SPONSOR,
+        gasBudget: GAS_BUDGET,
+      }),
+    ).rejects.toThrow('requires a sender and no preset gas or expiration fields');
+    expect(endpoint.getEpoch).not.toHaveBeenCalled();
+    expect(simulate).not.toHaveBeenCalled();
+  });
+
+  it('builds one exact address-balance envelope without mutating the source transaction', async () => {
+    const simulate = vi.fn<RawSimulate>(currentAddressBalanceResolution());
+    const endpoint = addressBalanceEndpoint(simulate, 1_234n);
+    const source = transaction();
+
+    const sealed = await buildAddressBalanceGasTransaction(snapshot(endpoint.client), {
+      transaction: source,
+      sponsorAddress: SPONSOR,
+      gasBudget: GAS_BUDGET,
+    });
+
+    expect(endpoint.getEpoch).toHaveBeenCalledTimes(1);
+    expect(endpoint.getEpoch.mock.calls[0]?.[0]).toEqual({
+      readMask: { paths: ['reference_gas_price'] },
+    });
+    expect(simulate).toHaveBeenCalledTimes(1);
+    const resolutionRequest = simulate.mock.calls[0]![0];
+    expect(resolutionRequest.doGasSelection).toBe(true);
+    expect(resolutionRequest.transaction?.gasPayment).toMatchObject({
+      owner: SPONSOR,
+      price: 1_234n,
+      budget: GAS_BUDGET,
+    });
+    expect(resolutionRequest.transaction?.gasPayment?.objects).toEqual([]);
+
+    const bytes = getAddressBalanceGasTransactionBytes(sealed);
+    const data = TransactionDataBuilder.fromBytes(bytes).snapshot();
+    expect(data.gasData.owner).toBe(SPONSOR);
+    expect(BigInt(data.gasData.price!)).toBe(1_234n);
+    expect(BigInt(data.gasData.budget!)).toBe(GAS_BUDGET);
+    expect(data.gasData.payment).toEqual([]);
+    expect(data.expiration?.$kind).toBe('ValidDuring');
+    if (data.expiration?.$kind !== 'ValidDuring') throw new Error('expected ValidDuring');
+    expect(BigInt(data.expiration.ValidDuring.minEpoch!)).toBe(7n);
+    expect(BigInt(data.expiration.ValidDuring.maxEpoch!)).toBe(8n);
+    expect(data.expiration.ValidDuring.chain).toBe(DIGEST);
+    expect(data.expiration.ValidDuring.nonce).toBe(0);
+    expect(data.expiration.ValidDuring.minTimestamp).toBeNull();
+    expect(data.expiration.ValidDuring.maxTimestamp).toBeNull();
+
+    expect(source.getData().gasData).toMatchObject({
+      owner: null,
+      price: null,
+      budget: null,
+      payment: null,
+    });
+    expect(source.getData().expiration).toBeNull();
+    expect(getAddressBalanceGasTransactionTxBytesHash(sealed)).toBe(
+      createHash('sha256').update(bytes).digest('hex'),
+    );
+    const firstByte = bytes[0]!;
+    bytes[0] ^= 0xff;
+    expect(getAddressBalanceGasTransactionBytes(sealed)[0]).toBe(firstByte);
+
+    const forged = Object.freeze({}) as AddressBalanceGasTransaction;
+    expect(() => getAddressBalanceGasTransactionBytes(forged)).toThrow(
+      'not created by its builder',
+    );
+    expect(() => getAddressBalanceGasTransactionTxBytesHash(forged)).toThrow(
+      'not created by its builder',
+    );
+    expect(() => simulateAddressBalanceGasTransaction(forged)).toThrow(
+      'not created by its builder',
+    );
+  });
+
+  it('rejects Coin fallback and repeats price plus resolution on the next endpoint', async () => {
+    const firstSimulate = vi.fn<RawSimulate>(
+      currentAddressBalanceResolution((resolved) => {
+        resolved.gasPayment!.objects = [{ objectId: OBJECT_ID, version: 1n, digest: DIGEST }];
+      }),
+    );
+    const secondSimulate = vi.fn<RawSimulate>(currentAddressBalanceResolution());
+    const first = addressBalanceEndpoint(firstSimulate, 1_000n);
+    const second = addressBalanceEndpoint(secondSimulate, 2_000n);
+
+    const sealed = await buildAddressBalanceGasTransaction(
+      createChainBoundSuiEndpointSnapshot([first.client, second.client], DIGEST),
+      {
+        transaction: transaction(),
+        sponsorAddress: SPONSOR,
+        gasBudget: GAS_BUDGET,
+      },
+    );
+
+    expect(first.getEpoch).toHaveBeenCalledTimes(1);
+    expect(firstSimulate).toHaveBeenCalledTimes(1);
+    expect(second.getEpoch).toHaveBeenCalledTimes(1);
+    expect(secondSimulate).toHaveBeenCalledTimes(1);
+    const data = TransactionDataBuilder.fromBytes(
+      getAddressBalanceGasTransactionBytes(sealed),
+    ).snapshot();
+    expect(data.gasData.payment).toEqual([]);
+    expect(BigInt(data.gasData.price!)).toBe(2_000n);
+  });
+
+  it.each([
+    [
+      'wrong gas owner',
+      (resolved: GrpcTypes.Transaction) => {
+        resolved.gasPayment!.owner = SENDER;
+      },
+    ],
+    [
+      'wrong gas price',
+      (resolved: GrpcTypes.Transaction) => {
+        resolved.gasPayment!.price = 2_000n;
+      },
+    ],
+    [
+      'wrong gas budget',
+      (resolved: GrpcTypes.Transaction) => {
+        resolved.gasPayment!.budget = GAS_BUDGET + 1n;
+      },
+    ],
+    [
+      'missing expiration',
+      (resolved: GrpcTypes.Transaction) => {
+        resolved.expiration = undefined;
+      },
+    ],
+    [
+      'wrong expiration kind',
+      (resolved: GrpcTypes.Transaction) => {
+        resolved.expiration = {
+          kind: GrpcTypes.TransactionExpiration_TransactionExpirationKind.EPOCH,
+          epoch: 8n,
+        };
+      },
+    ],
+    [
+      'wrong chain',
+      (resolved: GrpcTypes.Transaction) => {
+        resolved.expiration!.chain = TransactionDataBuilder.getDigestFromBytes(
+          new Uint8Array([1, 2, 3]),
+        );
+      },
+    ],
+    [
+      'non-unit epoch span',
+      (resolved: GrpcTypes.Transaction) => {
+        resolved.expiration!.epoch = 9n;
+      },
+    ],
+    [
+      'timestamp bounds',
+      (resolved: GrpcTypes.Transaction) => {
+        resolved.expiration!.minTimestamp = { seconds: 1n, nanos: 0 };
+        resolved.expiration!.maxTimestamp = { seconds: 2n, nanos: 0 };
+      },
+    ],
+  ])('rejects a returned transaction with %s', async (_name, mutate) => {
+    const simulate = vi.fn<RawSimulate>(currentAddressBalanceResolution(mutate));
+    const endpoint = addressBalanceEndpoint(simulate, 1_000n);
+
+    await expect(
+      buildAddressBalanceGasTransaction(snapshot(endpoint.client), {
+        transaction: transaction(),
+        sponsorAddress: SPONSOR,
+        gasBudget: GAS_BUDGET,
+      }),
+    ).rejects.toMatchObject({ kind: 'malformed_response' });
+  });
+
+  it('simulates only through the sealed value and its originating endpoint snapshot', async () => {
+    const resolve = currentAddressBalanceResolution();
+    const simulate = vi.fn<RawSimulate>(async (request, options) => {
+      const bcs = request.transaction?.bcs?.value;
+      if (!bcs) return resolve(request, options);
+      const digest = TransactionDataBuilder.getDigestFromBytes(bcs);
+      expect(request.readMask?.paths).toEqual([
+        'transaction.transaction.digest',
+        'transaction.effects.status',
+        'transaction.effects.gas_used',
+      ]);
+      return {
+        response: GrpcTypes.SimulateTransactionResponse.create({
+          transaction: {
+            transaction: { digest },
+            effects: {
+              status: { success: true },
+              gasUsed: {
+                computationCost: 3n,
+                storageCost: 2n,
+                storageRebate: 1n,
+                nonRefundableStorageFee: 0n,
+              },
+            },
+          },
+        }),
+      };
+    });
+    const endpoint = addressBalanceEndpoint(simulate, 1_000n);
+    const sealed = await buildAddressBalanceGasTransaction(snapshot(endpoint.client), {
+      transaction: transaction(),
+      sponsorAddress: SPONSOR,
+      gasBudget: GAS_BUDGET,
+    });
+
+    await expect(simulateAddressBalanceGasTransaction(sealed)).resolves.toEqual({
+      outcome: 'success',
+      effects: {
+        gasUsed: {
+          computationCost: '3',
+          storageCost: '2',
+          storageRebate: '1',
+          nonRefundableStorageFee: '0',
+        },
+      },
+    });
+    expect(simulate).toHaveBeenCalledTimes(2);
   });
 });

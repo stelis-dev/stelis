@@ -11,20 +11,22 @@
  * Internal module. Not re-exported from the package main barrel.
  */
 
-import { createHash } from 'node:crypto';
 import { Transaction } from '@mysten/sui/transactions';
 import {
-  buildSuiTransaction,
   computeExecutionCostClaim,
   convertSdkCommands,
   GAS_VARIANCE_FIXED_MIST,
   MAX_FINAL_COMMANDS,
-  simulateSuiTransaction,
   suiExecutionErrorMessage,
 } from '@stelis/core-relay';
-import type { OnchainConfig, SuiEndpointSnapshot, SuiTransactionResult } from '@stelis/core-relay';
+import type { OnchainConfig, SuiSimulationResult } from '@stelis/core-relay';
+import type { ChainBoundSuiEndpointSnapshot } from '@stelis/core-relay';
+import { simulateAddressBalanceGasTransaction } from '@stelis/core-relay/server';
 import { PrepareValidationError, deserializeUserTxKind } from '../../prepare/replay.js';
-import { classifySponsorFailureSubcode } from '../../prepare/prepareErrors.js';
+import {
+  classifySponsorFailureSubcode,
+  safeBuildAddressBalanceGasTransaction,
+} from '../../prepare/prepareErrors.js';
 import type {
   PromotionPrepareErrorCode,
   PromotionSponsorErrorCode,
@@ -110,7 +112,7 @@ import type { PrepareDraftPolicyFields, PrepareResponseProjectionInput } from '.
 // -------------------------------------------------------------
 
 export interface StudioPolicyContext {
-  readonly sui: SuiEndpointSnapshot;
+  readonly sui: ChainBoundSuiEndpointSnapshot;
   readonly packageId?: string;
   readonly deepbookPackageId?: string;
   readonly promotionStore: PromotionStoreAdapter;
@@ -583,14 +585,14 @@ async function runStudioGasBoundBuild(
   const sponsorSlot = input.reservationHandles.sponsorSlot;
 
   userTx.setSender(prepare.params.senderAddress);
-  userTx.setGasOwner(sponsorSlot.sponsorAddress);
-  userTx.setGasBudget(config.maxClaimMist);
-  const dryRunBytes = await buildSuiTransaction(options.context.sui, {
-    transaction: userTx,
-  });
-  const simResult = await simulateSuiTransaction(options.context.sui, {
-    transaction: dryRunBytes,
-  });
+  const dryRunTransaction = await safeBuildAddressBalanceGasTransaction(
+    userTx,
+    options.context.sui,
+    sponsorSlot.sponsorAddress,
+    config.maxClaimMist,
+    config.packageId,
+  );
+  const simResult = await simulateAddressBalanceGasTransaction(dryRunTransaction);
   const simGasUsed = readDryRunGasUsed(simResult, prepare.errors);
   const { simGas } = computeExecutionCostClaim(simGasUsed);
   const reserveAmount: Mist = mist(simGas + GAS_VARIANCE_FIXED_MIST);
@@ -602,14 +604,15 @@ async function runStudioGasBoundBuild(
     );
   }
 
-  userTx.setGasBudget(reserveAmount);
-  const finalTxBytes = await buildSuiTransaction(options.context.sui, {
-    transaction: userTx,
-  });
-  const txBytesHash = createHash('sha256').update(finalTxBytes).digest('hex');
+  const addressBalanceGasTransaction = await safeBuildAddressBalanceGasTransaction(
+    userTx,
+    options.context.sui,
+    sponsorSlot.sponsorAddress,
+    reserveAmount,
+    config.packageId,
+  );
   state.buildResult = {
-    txBytes: finalTxBytes,
-    txBytesHash,
+    addressBalanceGasTransaction,
     measuredGasMist: reserveAmount,
   };
   logPrepareStage('gas_bound_build_done', {
@@ -1264,7 +1267,7 @@ function promotionPrepareErrorForEligibility(
 }
 
 function readDryRunGasUsed(
-  simResult: SuiTransactionResult,
+  simResult: SuiSimulationResult,
   errors: StudioPrepareErrorFactory,
 ): GasUsedFields {
   if (simResult.outcome === 'failure') {

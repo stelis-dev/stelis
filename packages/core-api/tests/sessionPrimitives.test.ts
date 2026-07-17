@@ -44,7 +44,7 @@ function sponsorPool(): SponsorPoolAdapter {
 describe('current Sui gateway results at the sponsor-session boundary', () => {
   test('preflight consumes one validated success result', async () => {
     simulateSuiTransactionMock.mockResolvedValueOnce(
-      suiSimulationSuccess(EXPECTED_DIGEST, {
+      suiSimulationSuccess({
         computationCost: '3',
         storageCost: '2',
         storageRebate: '1',
@@ -71,7 +71,7 @@ describe('current Sui gateway results at the sponsor-session boundary', () => {
       abortCode: '101',
       constantName: 'EClaimTooHigh',
     });
-    simulateSuiTransactionMock.mockResolvedValueOnce(suiSimulationFailure(EXPECTED_DIGEST, error));
+    simulateSuiTransactionMock.mockResolvedValueOnce(suiSimulationFailure(error));
 
     await expect(runPreflight(SUI, TX_BYTES)).resolves.toEqual({
       success: false,
@@ -107,6 +107,11 @@ describe('current Sui gateway results at the sponsor-session boundary', () => {
       success: true,
       executionStage: 'on_chain',
       digest: EXPECTED_DIGEST,
+    });
+    expect(pool.sign).toHaveBeenCalledWith('0x1', 'receipt', TX_BYTES);
+    expect(executeSuiTransactionMock).toHaveBeenCalledWith(SUI, {
+      transaction: TX_BYTES,
+      signatures: ['user-signature', 'sponsor-signature'],
     });
   });
 });

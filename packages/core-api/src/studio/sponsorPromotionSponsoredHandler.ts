@@ -2,7 +2,7 @@
  * sponsorPromotionSponsoredHandler — public Studio sponsor adapter over the
  * SponsoredExecution sponsor runner.
  */
-import type { SuiEndpointSnapshot } from '@stelis/core-relay';
+import type { ChainBoundSuiEndpointSnapshot } from '@stelis/core-relay';
 import type { SponsorResultCallback } from '../handlers/sponsorResult.js';
 import type { GasUsedFields } from '../session/sessionTypes.js';
 import {
@@ -37,7 +37,7 @@ import { runSponsorStateMachine } from '../session/sponsoredExecution/sponsorRun
 /** Dependencies injected by the host (app-api context). */
 export interface PromotionSponsorContext {
   /** Qualified Sui endpoint snapshot for preflight simulation + TX submission. */
-  sui: SuiEndpointSnapshot;
+  sui: ChainBoundSuiEndpointSnapshot;
   /**
    * Trusted Stelis package ID for the active network.
    *

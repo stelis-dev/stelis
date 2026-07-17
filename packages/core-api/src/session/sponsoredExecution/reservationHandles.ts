@@ -25,6 +25,8 @@
  * factory key or impl classes.
  */
 
+import type { AddressBalanceGasTransaction } from '@stelis/core-relay/server';
+
 // ─────────────────────────────────────────────
 // Brand machinery
 // ─────────────────────────────────────────────
@@ -506,11 +508,8 @@ function requireHandleLive(handle: { isLive(): boolean; reservationKind: string 
 
 /**
  * Result returned by the `GasBoundBuild` policy hook. The runner consumes:
- *   - `txBytes` — the user-signable raw bytes returned to the caller
- *     and committed to the prepared store as part of the entry.
- *   - `txBytesHash` — sha256 hex used for the sponsor-pool lease commit
- *     (`SponsorSlotReservation.commitToTxBytesHash`) and stored on the
- *     prepared entry for later `consume()` byte-equality verification.
+ *   - `addressBalanceGasTransaction` — opaque validated transaction. Only the
+ *     runner obtains its user-signable bytes and `txBytesHash`.
  *   - `measuredGasMist` — forwarded to `RouteReservationAfterBuild` so
  *     the Studio runner can reserve the matching ledger amount. Generic
  *     policies that do not reserve ledger may set this to `0n` (the
@@ -518,11 +517,10 @@ function requireHandleLive(handle: { isLive(): boolean; reservationKind: string 
  *
  * The hook owns the route-specific build call
  * (`runGenericPrepareBuildPipeline` for generic,
- * `buildSuiTransaction` for Studio); the runner stays
+ * `safeBuildAddressBalanceGasTransaction` for PromotionSponsored); the runner stays
  * route-agnostic and only consumes the typed result.
  */
 export interface GasBoundBuildResult {
-  readonly txBytes: Uint8Array;
-  readonly txBytesHash: string;
+  readonly addressBalanceGasTransaction: AddressBalanceGasTransaction;
   readonly measuredGasMist: bigint;
 }

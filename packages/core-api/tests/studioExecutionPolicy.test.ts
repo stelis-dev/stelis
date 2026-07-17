@@ -5,7 +5,7 @@
  * These tests exercise the hook bodies and adapter helpers directly,
  * keeping the existing Studio route behavior as the target.
  */
-import { describe, test, expect, vi } from 'vitest';
+import { beforeEach, describe, test, expect, vi } from 'vitest';
 import { Transaction } from '@mysten/sui/transactions';
 import { toBase58, toBase64 } from '@mysten/sui/utils';
 import {
@@ -36,10 +36,10 @@ import type { PreparedTxEntry, PromotionPreparedTxEntry } from '../src/store/pre
 import type { PromotionExecutionLedger } from '../src/studio/executionLedger.js';
 import type { Entitlement, Promotion } from '../src/studio/domain.js';
 import type { SponsorPoolAdapter } from '../src/context.js';
-import type { OnchainConfig, SuiEndpointSnapshot, SuiExecutionError } from '@stelis/core-relay';
+import type { OnchainConfig, SuiExecutionError } from '@stelis/core-relay';
+import type { AddressBalanceGasTransaction } from '@stelis/core-relay/server';
 import { canonicalizePromotionTarget } from '../src/studio/promotionTargetPolicy.js';
 import {
-  bindSuiResultToTransactionBytes,
   congestedSuiExecutionError,
   suiSimulationFailure,
   suiSimulationSuccess,
@@ -48,13 +48,23 @@ import {
   suiEndpointSnapshotFixture,
 } from './helpers/suiGatewayResultFixtures.js';
 
-const { simulateSuiTransactionMock } = vi.hoisted(() => ({
-  simulateSuiTransactionMock: vi.fn(),
+const addressBalanceGasMocks = vi.hoisted(() => ({
+  build: vi.fn(),
+  simulate: vi.fn(),
+  builds: new Map<
+    object,
+    {
+      readonly transaction: unknown;
+      readonly sponsorAddress: string;
+      readonly gasBudget: bigint;
+    }
+  >(),
 }));
 
-vi.mock('@stelis/core-relay', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@stelis/core-relay')>()),
-  simulateSuiTransaction: simulateSuiTransactionMock,
+vi.mock('@stelis/core-relay/server', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@stelis/core-relay/server')>()),
+  buildAddressBalanceGasTransaction: addressBalanceGasMocks.build,
+  simulateAddressBalanceGasTransaction: addressBalanceGasMocks.simulate,
 }));
 
 const SUI = suiEndpointSnapshotFixture();
@@ -78,6 +88,32 @@ const MOVE_FAILURE: SuiExecutionError = {
 };
 const CONGESTION_FAILURE = congestedSuiExecutionError();
 const ALLOWED_TARGET = `0x${'88'.repeat(32)}::example::act`;
+
+beforeEach(() => {
+  addressBalanceGasMocks.builds.clear();
+  addressBalanceGasMocks.build.mockReset().mockImplementation(async (_snapshot, options) => {
+    const transaction = Object.freeze({}) as AddressBalanceGasTransaction;
+    addressBalanceGasMocks.builds.set(transaction, {
+      transaction: options.transaction,
+      sponsorAddress: options.sponsorAddress,
+      gasBudget: options.gasBudget,
+    });
+    return transaction;
+  });
+  addressBalanceGasMocks.simulate.mockReset();
+});
+
+function requireAddressBalanceGasBuild(transaction: AddressBalanceGasTransaction): {
+  readonly transaction: unknown;
+  readonly sponsorAddress: string;
+  readonly gasBudget: bigint;
+} {
+  const build = addressBalanceGasMocks.builds.get(transaction);
+  if (!build) {
+    throw new TypeError('Test received an address-balance gas transaction outside the builder');
+  }
+  return build;
+}
 
 class TestStudioError extends Error {
   constructor(
@@ -327,16 +363,6 @@ async function buildTxKindBytes(): Promise<string> {
 function makeBuildReadyTransaction(): Transaction {
   const tx = new Transaction();
   tx.moveCall({ target: ALLOWED_TARGET as `${string}::${string}::${string}` });
-  tx.setGasPrice(1);
-  const digestBytes = new Uint8Array(32);
-  digestBytes.fill(2);
-  tx.setGasPayment([
-    {
-      objectId: `0x${'55'.repeat(32)}`,
-      version: '1',
-      digest: toBase58(digestBytes),
-    },
-  ]);
   return tx;
 }
 
@@ -391,12 +417,11 @@ describe('studio prepare hooks', () => {
   test('GasBoundBuild returns measured gas and policy exposes only route-owned draft fields', async () => {
     const txKindBytes = await buildTxKindBytes();
     const kindTx = makeBuildReadyTransaction();
-    simulateSuiTransactionMock.mockImplementationOnce(
-      async (_snapshot: SuiEndpointSnapshot, input: { transaction: Uint8Array }) =>
-        bindSuiResultToTransactionBytes(
-          suiSimulationSuccess(TEST_SUI_TRANSACTION_DIGEST, GAS_USED),
-          input.transaction,
-        ),
+    addressBalanceGasMocks.simulate.mockImplementationOnce(
+      async (transaction: AddressBalanceGasTransaction) => {
+        requireAddressBalanceGasBuild(transaction);
+        return suiSimulationSuccess(GAS_USED);
+      },
     );
     const ctx = makeContext({
       getConfig: vi.fn(async () => ({ maxClaimMist: 10_000_000n }) as OnchainConfig),
@@ -437,7 +462,26 @@ describe('studio prepare hooks', () => {
       gasInput,
     );
 
-    expect(kindTx.getData().gasData.owner).toBe(SPONSOR);
+    const buildCalls = [...addressBalanceGasMocks.builds.entries()];
+    expect(buildCalls).toHaveLength(2);
+    expect(buildCalls[0]?.[1]).toEqual({
+      transaction: kindTx,
+      sponsorAddress: SPONSOR,
+      gasBudget: 10_000_000n,
+    });
+    expect(addressBalanceGasMocks.simulate).toHaveBeenCalledWith(buildCalls[0]?.[0]);
+    expect(buildCalls[1]?.[1]).toEqual({
+      transaction: kindTx,
+      sponsorAddress: SPONSOR,
+      gasBudget: 101_300n,
+    });
+    expect(buildResult.addressBalanceGasTransaction).toBe(buildCalls[1]?.[0]);
+    expect(kindTx.getData().gasData).toEqual({
+      budget: null,
+      owner: null,
+      payment: null,
+      price: null,
+    });
     expect(buildResult.measuredGasMist).toBe(101_300n);
     const draftFields = buildStudioPreparedDraftFields(options, state);
     expect(draftFields).toEqual({
@@ -449,16 +493,11 @@ describe('studio prepare hooks', () => {
   test('GasBoundBuild rejects a validated simulation failure with the specific boundary error', async () => {
     const txKindBytes = await buildTxKindBytes();
     const kindTx = makeBuildReadyTransaction();
-    simulateSuiTransactionMock.mockImplementationOnce(
-      async (_snapshot: SuiEndpointSnapshot, input: { transaction: Uint8Array }) =>
-        bindSuiResultToTransactionBytes(
-          suiSimulationFailure(
-            TEST_SUI_TRANSACTION_DIGEST,
-            unclassifiedSuiExecutionError(),
-            GAS_USED,
-          ),
-          input.transaction,
-        ),
+    addressBalanceGasMocks.simulate.mockImplementationOnce(
+      async (transaction: AddressBalanceGasTransaction) => {
+        requireAddressBalanceGasBuild(transaction);
+        return suiSimulationFailure(unclassifiedSuiExecutionError(), GAS_USED);
+      },
     );
     const ctx = makeContext({
       getConfig: vi.fn(async () => ({ maxClaimMist: 10_000_000n }) as OnchainConfig),

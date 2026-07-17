@@ -15,7 +15,7 @@ import { Transaction } from '@mysten/sui/transactions';
 import {
   SuiOperationError,
   type SuiExecutionError,
-  type SuiTransactionResult,
+  type SuiSimulationResult,
 } from '@stelis/core-relay';
 import {
   DEEPBOOK_IDS,
@@ -34,7 +34,13 @@ import { bps } from '../src/internal/brand.js';
 
 // Keep the installed SDK's Transaction implementation authoritative. Only the
 // exact Sui operation boundary is controlled by this orchestration test.
-const mockBuild = vi.fn().mockResolvedValue(new Uint8Array([1, 2, 3]));
+const mockGasTransactionSnapshots = new WeakMap<object, BuildContext['sui']>();
+const mockBuildImplementation = async (snapshot: BuildContext['sui'], _options: unknown) => {
+  const transaction = Object.freeze({});
+  mockGasTransactionSnapshots.set(transaction, snapshot);
+  return transaction;
+};
+const mockBuild = vi.fn(mockBuildImplementation);
 const mockRejectedBuildErrors = new WeakMap<SuiOperationError, SuiExecutionError>();
 const mockSetSender = vi.spyOn(Transaction.prototype, 'setSender');
 const mockSetGasOwner = vi.spyOn(Transaction.prototype, 'setGasOwner');
@@ -127,8 +133,6 @@ vi.mock('@stelis/core-relay', async (importOriginal) => {
     PrefixValueTraceError: class PrefixValueTraceError extends Error {},
     traceUserPrefixValue: (...args: unknown[]) => mockTraceUserPrefixValue(...args),
     extractObjectIdFromInput: () => null,
-    buildSuiTransaction: (...args: unknown[]) => mockBuild(...args),
-    simulateSuiTransaction: (...args: unknown[]) => mockSimulateSuiTransaction(...args),
   };
 });
 
@@ -174,6 +178,10 @@ vi.mock('@stelis/core-relay/server', async (importOriginal) => {
     ...original,
     getSuiRejectedExecutionError: (error: unknown) =>
       error instanceof SuiOperationError ? mockRejectedBuildErrors.get(error) : undefined,
+    buildAddressBalanceGasTransaction: (snapshot: BuildContext['sui'], options: unknown) =>
+      mockBuild(snapshot, options),
+    simulateAddressBalanceGasTransaction: (...args: unknown[]) =>
+      mockSimulateSuiTransaction(...args),
     extractSettlePaymentInputContract: () => ({ paymentInputTrace: {} }),
     validatePaymentInputIntegrity: (...args: unknown[]) =>
       mockValidatePaymentInputIntegrity(...args),
@@ -247,11 +255,9 @@ import {
 } from '../src/prepare/build.js';
 import { PrepareValidationError } from '../src/prepare/replay.js';
 import {
-  bindSuiResultToTransactionBytes,
   moveAbortSuiExecutionError,
   suiSimulationFailure,
   suiSimulationSuccess,
-  TEST_SUI_TRANSACTION_DIGEST,
   unclassifiedSuiExecutionError,
 } from './helpers/suiGatewayResultFixtures.js';
 
@@ -272,7 +278,7 @@ const FOREIGN_PACKAGE_ID = `0x${'cc'.repeat(32)}`;
 
 function makeCtx(overrides: Partial<BuildContext> = {}): BuildContext {
   const sui = testSuiSnapshot(
-    suiSimulationSuccess(TEST_SUI_TRANSACTION_DIGEST, {
+    suiSimulationSuccess({
       computationCost: '2000000',
       storageCost: '500000',
       storageRebate: '400000',
@@ -280,6 +286,8 @@ function makeCtx(overrides: Partial<BuildContext> = {}): BuildContext {
   );
   return {
     sui,
+    network: 'testnet',
+    allowedSettlementSwapPaths: [],
     // Stelis abort fixtures use this active package ID. DeepBook abort tests
     // use the generated runtime identity, not deepbookPackageId below.
     packageId: STELIS_PACKAGE_ID,
@@ -296,16 +304,16 @@ function makeCtx(overrides: Partial<BuildContext> = {}): BuildContext {
   };
 }
 
-const simulationResultBySnapshot = new WeakMap<object, SuiTransactionResult>();
+const simulationResultBySnapshot = new WeakMap<object, SuiSimulationResult>();
 
-function testSuiSnapshot(result: SuiTransactionResult): BuildContext['sui'] {
+function testSuiSnapshot(result: SuiSimulationResult): BuildContext['sui'] {
   const snapshot = Object.freeze({}) as BuildContext['sui'];
   simulationResultBySnapshot.set(snapshot, result);
   return snapshot;
 }
 
 function simulationFailure(error: SuiExecutionError): BuildContext['sui'] {
-  return testSuiSnapshot(suiSimulationFailure(TEST_SUI_TRANSACTION_DIGEST, error));
+  return testSuiSnapshot(suiSimulationFailure(error));
 }
 
 interface TestMoveAbort {
@@ -425,14 +433,16 @@ function resetBuildMocks(): void {
   vi.clearAllMocks();
   mockSimulateSuiTransaction.mockReset();
   mockSimulateSuiTransaction.mockImplementation(
-    async (snapshot: BuildContext['sui'], options: { transaction: Uint8Array }) => {
+    async (transaction: object) => {
+      const snapshot = mockGasTransactionSnapshots.get(transaction);
+      if (!snapshot) throw new Error('test gas transaction has no originating Sui snapshot');
       const result = simulationResultBySnapshot.get(snapshot);
       if (!result) throw new Error('test Sui snapshot has no gateway result');
-      return bindSuiResultToTransactionBytes(result, options.transaction);
+      return result;
     },
   );
   mockBuild.mockReset();
-  mockBuild.mockResolvedValue(new Uint8Array([1, 2, 3]));
+  mockBuild.mockImplementation(mockBuildImplementation);
   mockComputeExecutionCostClaim.mockReset();
   mockBatchGetHopMidPrices.mockReset();
   mockBatchGetHopMidPrices.mockResolvedValue([27_000_000_000n]);
@@ -1058,7 +1068,10 @@ describe('runGenericPrepareBuildPipeline — boundary conditions', () => {
 
     await runGenericPrepareBuildPipeline(ctx, input);
     // gasBudget = grossGas(4.5M) × 1.1 = 4,950,000 < 5M → gasBudget = 4,950,000
-    expect(mockSetGasBudget).toHaveBeenCalledWith(4_950_000n);
+    expect(mockSetGasBudget).not.toHaveBeenCalled();
+    expect(mockBuild.mock.calls.at(-1)?.[1]).toEqual(
+      expect.objectContaining({ gasBudget: 4_950_000n }),
+    );
   });
 
   it('gasBudget capped to maxClaimMist when grossGas × margin exceeds it', async () => {
@@ -1078,7 +1091,10 @@ describe('runGenericPrepareBuildPipeline — boundary conditions', () => {
     });
 
     await runGenericPrepareBuildPipeline(ctx, input);
-    expect(mockSetGasBudget).toHaveBeenCalledWith(3_000_000n);
+    expect(mockSetGasBudget).not.toHaveBeenCalled();
+    expect(mockBuild.mock.calls.at(-1)?.[1]).toEqual(
+      expect.objectContaining({ gasBudget: 3_000_000n }),
+    );
   });
 });
 
@@ -1155,15 +1171,22 @@ describe('generic prepare build stages — slot-free / gas-bound boundary locks'
     );
 
     expect(mockSetSender).toHaveBeenCalledWith(input.senderAddress);
-    expect(mockSetGasOwner).toHaveBeenCalledWith(TEST_BOUND_SPONSOR);
-    expect(mockSetGasBudget).toHaveBeenCalledWith(ctx.maxClaimMist);
+    expect(mockSetGasOwner).not.toHaveBeenCalled();
+    expect(mockSetGasBudget).not.toHaveBeenCalled();
     expect(mockBuild).toHaveBeenCalledTimes(1);
+    expect(mockBuild).toHaveBeenCalledWith(
+      ctx.sui,
+      expect.objectContaining({
+        sponsorAddress: TEST_BOUND_SPONSOR,
+        gasBudget: ctx.maxClaimMist,
+      }),
+    );
     expect(mockSimulateSuiTransaction).toHaveBeenCalledTimes(1);
     expect(result.baseCosts.executionCostClaim).toBe(3_000_000n);
     expect(result.pass1MidPrices).toEqual([27_000_000_000n]);
   });
 
-  it('buildFinalGenericPrepareResult is gas-bound: final assembly sets sponsor gas owner and safe-builds txBytes', async () => {
+  it('buildFinalGenericPrepareResult delegates the final gas envelope to the address-balance builder', async () => {
     const ctx = makeCtx();
     const input = makeInput({ sponsorAddress: TEST_FINAL_SPONSOR });
     const runContext = __testingGenericPrepareBuildStages.createGenericPrepareBuildRunContext(
@@ -1189,11 +1212,18 @@ describe('generic prepare build stages — slot-free / gas-bound boundary locks'
     );
 
     expect(mockSetSender).toHaveBeenCalledWith(input.senderAddress);
-    expect(mockSetGasOwner).toHaveBeenCalledWith(TEST_FINAL_SPONSOR);
-    expect(mockSetGasBudget).toHaveBeenCalledWith(2_750_000n);
+    expect(mockSetGasOwner).not.toHaveBeenCalled();
+    expect(mockSetGasBudget).not.toHaveBeenCalled();
     expect(mockBuild).toHaveBeenCalledTimes(1);
+    expect(mockBuild).toHaveBeenCalledWith(
+      ctx.sui,
+      expect.objectContaining({
+        sponsorAddress: TEST_FINAL_SPONSOR,
+        gasBudget: 2_750_000n,
+      }),
+    );
     expect(mockSimulateSuiTransaction).not.toHaveBeenCalled();
-    expect(result.txBytes).toEqual(new Uint8Array([1, 2, 3]));
+    expect(result.addressBalanceGasTransaction).toBe(await mockBuild.mock.results[0]!.value);
     expect(result.executionCostClaim).toBe(3_000_000n);
     expect(result.simGas).toBe(2_000_000n);
   });
@@ -1572,7 +1602,7 @@ describe('runGenericPrepareBuildPipeline — error classification', () => {
   it('INSUFFICIENT_SETTLE_INPUT from pass2 safeBuild (MoveAbort settle 102)', async () => {
     // pass1 build succeeds, then pass2 build fails with settle 102
     mockBuild
-      .mockResolvedValueOnce(new Uint8Array([1, 2, 3])) // pass1 ok
+      .mockImplementationOnce(mockBuildImplementation) // pass1 ok
       .mockRejectedValueOnce(
         buildMoveAbort({
           packageId: STELIS_PACKAGE_ID,
@@ -1658,7 +1688,7 @@ describe('runGenericPrepareBuildPipeline — error classification', () => {
 
   it('SPREAD_EXCEEDED from pass2 safeBuild (MoveAbort settle 110)', async () => {
     mockBuild
-      .mockResolvedValueOnce(new Uint8Array([1, 2, 3])) // pass1 ok
+      .mockImplementationOnce(mockBuildImplementation) // pass1 ok
       .mockRejectedValueOnce(
         buildMoveAbort({
           packageId: STELIS_PACKAGE_ID,
@@ -3249,7 +3279,7 @@ describe('runGenericPrepareBuildPipeline — lifecycle failure observability', (
     // The completed-stage emits (because simulate returned), then
     // extractSuccessfulDryRunGas throws DRY_RUN_FAILED.
     mockSimulateSuiTransaction.mockResolvedValueOnce(
-      suiSimulationFailure(TEST_SUI_TRANSACTION_DIGEST, unclassifiedSuiExecutionError()),
+      suiSimulationFailure(unclassifiedSuiExecutionError()),
     );
 
     const events = captureStageEvents();
@@ -3292,7 +3322,7 @@ describe('runGenericPrepareBuildPipeline — lifecycle failure observability', (
 
     // pass1 dry-run succeeds (default). The pass2 final build is the second
     // gateway call. The swap settlement follows SplitCoins at command 1.
-    mockBuild.mockResolvedValueOnce(new Uint8Array([1, 2, 3])).mockRejectedValueOnce(
+    mockBuild.mockImplementationOnce(mockBuildImplementation).mockRejectedValueOnce(
       buildMoveAbort({
         packageId: STELIS_PACKAGE_ID,
         module: 'settle',

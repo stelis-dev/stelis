@@ -52,6 +52,21 @@ function rawTransaction(includeDigest: boolean, events = false): GrpcTypes.Execu
   });
 }
 
+function rawSimulationTransaction(): GrpcTypes.ExecutedTransaction {
+  return GrpcTypes.ExecutedTransaction.create({
+    transaction: { digest: DIGEST },
+    effects: {
+      status: { success: true },
+      gasUsed: {
+        computationCost: 3n,
+        storageCost: 2n,
+        storageRebate: 1n,
+        nonRefundableStorageFee: 0n,
+      },
+    },
+  });
+}
+
 function simulationResponse(
   transaction: GrpcTypes.ExecutedTransaction,
   commandOutputs: readonly GrpcTypes.CommandResult[] = [],
@@ -193,7 +208,7 @@ describe('current Sui transaction gateways', () => {
   it('fails over a malformed simulation response without changing request identity', async () => {
     const firstSimulate = vi.fn(async () => ({ response: {} }));
     const secondSimulate = vi.fn(async (_request: unknown) => ({
-      response: simulationResponse(rawTransaction(false)),
+      response: simulationResponse(rawSimulationTransaction()),
     }));
     const snapshot = createSuiEndpointSnapshot([
       client({ transactionExecutionService: { simulateTransaction: firstSimulate } }),
@@ -201,13 +216,30 @@ describe('current Sui transaction gateways', () => {
     ]);
 
     const result = await simulateSuiTransaction(snapshot, { transaction: BYTES });
-    expect(result).toMatchObject({ outcome: 'success', digest: DIGEST });
+    expect(result).toEqual({
+      outcome: 'success',
+      effects: {
+        gasUsed: {
+          computationCost: '3',
+          storageCost: '2',
+          storageRebate: '1',
+          nonRefundableStorageFee: '0',
+        },
+      },
+    });
     expect('events' in result).toBe(false);
     expect(firstSimulate).toHaveBeenCalledTimes(1);
     expect(secondSimulate).toHaveBeenCalledTimes(1);
     expect(secondSimulate.mock.calls[0]![0]).toMatchObject({
       checks: GrpcTypes.SimulateTransactionRequest_TransactionChecks.ENABLED,
       doGasSelection: false,
+      readMask: {
+        paths: [
+          'transaction.transaction.digest',
+          'transaction.effects.status',
+          'transaction.effects.gas_used',
+        ],
+      },
     });
   });
 
@@ -237,7 +269,7 @@ describe('current Sui transaction gateways', () => {
   });
 
   it('ignores malformed fields outside the ordinary simulation result', async () => {
-    const response = simulationResponse(rawTransaction(false));
+    const response = simulationResponse(rawSimulationTransaction());
     delete (response.transaction as unknown as Record<string, unknown>).signatures;
     (response.transaction as unknown as Record<string, unknown>).balanceChanges = {};
     (response.transaction as unknown as Record<string, unknown>).checkpoint = 'malformed';
@@ -258,14 +290,14 @@ describe('current Sui transaction gateways', () => {
         ]),
         { transaction: BYTES },
       ),
-    ).resolves.toMatchObject({ outcome: 'success', digest: DIGEST });
+    ).resolves.toMatchObject({ outcome: 'success' });
     expect(accepted).toHaveBeenCalledTimes(1);
     expect(unused).not.toHaveBeenCalled();
   });
 
   it('accepts an omitted ordinary-simulation command-output array', async () => {
     const omitted = vi.fn(async () => ({
-      response: { transaction: rawTransaction(false) },
+      response: { transaction: rawSimulationTransaction() },
     }));
     const unused = vi.fn();
 
@@ -277,7 +309,7 @@ describe('current Sui transaction gateways', () => {
         ]),
         { transaction: BYTES },
       ),
-    ).resolves.toMatchObject({ outcome: 'success', digest: DIGEST });
+    ).resolves.toMatchObject({ outcome: 'success' });
     expect(omitted).toHaveBeenCalledTimes(1);
     expect(unused).not.toHaveBeenCalled();
   });
@@ -623,9 +655,11 @@ describe('current Sui transaction gateways', () => {
       expect.anything(),
     );
     const executeRequest = primaryExecute.mock.calls[0]![0] as {
+      transaction: { bcs?: { value?: Uint8Array } };
       readMask: { paths: string[] };
       signatures: Array<{ bcs?: { value?: Uint8Array } }>;
     };
+    expect(executeRequest.transaction.bcs?.value).toEqual(BYTES);
     expect(executeRequest.readMask.paths).not.toContain('transaction.effects.status');
     expect(executeRequest.signatures[0]?.bcs?.value).toEqual(fromBase64(validSerializedSignature));
   });

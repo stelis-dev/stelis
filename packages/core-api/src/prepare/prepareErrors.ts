@@ -32,15 +32,16 @@
 
 import { Transaction } from '@mysten/sui/transactions';
 import {
-  buildSuiTransaction,
   convertSdkCommands,
   suiExecutionErrorMessage,
-  type SuiEndpointSnapshot,
+  type ChainBoundSuiEndpointSnapshot,
   type SuiExecutionError,
 } from '@stelis/core-relay';
 import {
+  buildAddressBalanceGasTransaction,
   findUniqueSettleCommandIndex,
   getSuiRejectedExecutionError,
+  type AddressBalanceGasTransaction,
 } from '@stelis/core-relay/server';
 import {
   DEEPBOOK_MIN_OUT_ABORT,
@@ -518,20 +519,26 @@ export function classifyDryRunFailure(
  * pass the trusted Stelis package ID from the surrounding context. DeepBook's
  * abort identity is generated from compiled bytecode.
  */
-export async function safeBuild(
+export async function safeBuildAddressBalanceGasTransaction(
   tx: Transaction,
-  sui: SuiEndpointSnapshot,
+  sui: ChainBoundSuiEndpointSnapshot,
+  sponsorAddress: string,
+  gasBudget: bigint,
   stelisPackageId: string,
   meta?: PrepareErrorMeta,
-): Promise<Uint8Array> {
+): Promise<AddressBalanceGasTransaction> {
   const commands = convertSdkCommands(tx.getData().commands as unknown[]);
   const scope = { kind: 'settlement', commands } as const;
   try {
-    return await buildSuiTransaction(sui, { transaction: tx });
+    return await buildAddressBalanceGasTransaction(sui, {
+      transaction: tx,
+      sponsorAddress,
+      gasBudget,
+    });
   } catch (err) {
     const error = getSuiRejectedExecutionError(err);
     if (error) {
-      // Only buildSuiTransaction can bind a parsed current execution failure to
+      // Only the address-balance builder can bind a parsed current execution failure to
       // the server-only authority extractor. Caller-created errors cannot enter
       // this classification path.
       const known = classifyKnownPrepareFailure(error, stelisPackageId, scope, meta);

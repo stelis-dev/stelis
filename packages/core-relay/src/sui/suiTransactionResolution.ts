@@ -259,30 +259,39 @@ function rawOneof<const Variants extends readonly string[]>(
   return { kind, payload: union[kind] };
 }
 
-function validateRawResolverArgument(value: unknown, path: string): void {
+function projectRawResolverArgument(value: unknown, path: string): unknown {
   const argument = rawRecord(value, path);
   assertExactSuiShapeKeys(argument, path, ['kind', 'input', 'result', 'subresult']);
   switch (argument.kind) {
     case GrpcTypes.Argument_ArgumentKind.GAS:
       rejectPresent(argument, ['input', 'result', 'subresult'], path);
-      return;
-    case GrpcTypes.Argument_ArgumentKind.INPUT:
-      rawU32(argument.input, `${path}.input`);
+      return { kind: argument.kind };
+    case GrpcTypes.Argument_ArgumentKind.INPUT: {
+      const input = rawU32(argument.input, `${path}.input`);
       rejectPresent(argument, ['result', 'subresult'], path);
-      return;
-    case GrpcTypes.Argument_ArgumentKind.RESULT:
-      rawU32(argument.result, `${path}.result`);
-      if (argument.subresult !== undefined) rawU32(argument.subresult, `${path}.subresult`);
+      return { kind: argument.kind, input };
+    }
+    case GrpcTypes.Argument_ArgumentKind.RESULT: {
+      const result = rawU32(argument.result, `${path}.result`);
+      const subresult =
+        argument.subresult === undefined
+          ? undefined
+          : rawU32(argument.subresult, `${path}.subresult`);
       rejectPresent(argument, ['input'], path);
-      return;
+      return {
+        kind: argument.kind,
+        result,
+        ...(subresult === undefined ? {} : { subresult }),
+      };
+    }
     default:
       throw new SuiTransactionShapeError(`${path}.kind`, 'unsupported current argument kind');
   }
 }
 
-function validateRawResolverArguments(value: unknown, path: string): void {
-  rawArray(value, path).forEach((argument, index) =>
-    validateRawResolverArgument(argument, `${path}[${index}]`),
+function projectRawResolverArguments(value: unknown, path: string): readonly unknown[] {
+  return rawArray(value, path).map((argument, index) =>
+    projectRawResolverArgument(argument, `${path}[${index}]`),
   );
 }
 
@@ -296,7 +305,12 @@ const RAW_COMMAND_KINDS = [
   'upgrade',
 ] as const;
 
-function validateRawResolverCommand(value: unknown, path: string): void {
+/**
+ * Validate one raw gRPC command and project its transaction identity.
+ * The resolver may normalize address and type-tag spelling; every other
+ * command field remains exact in the projected comparison.
+ */
+function projectRawResolverCommand(value: unknown, path: string): unknown {
   const command = rawRecord(value, path);
   assertExactSuiShapeKeys(command, path, ['command']);
   const parsed = rawOneof(command.command, `${path}.command`, RAW_COMMAND_KINDS);
@@ -310,61 +324,94 @@ function validateRawResolverCommand(value: unknown, path: string): void {
         'typeArguments',
         'arguments',
       ]);
-      rawAddress(payload.package, `${path}.command.moveCall.package`);
-      rawString(payload.module, `${path}.command.moveCall.module`);
-      rawString(payload.function, `${path}.command.moveCall.function`);
-      rawArray(payload.typeArguments, `${path}.command.moveCall.typeArguments`).forEach(
-        (type, index) =>
+      return {
+        kind: parsed.kind,
+        package: rawAddress(payload.package, `${path}.command.moveCall.package`),
+        module: rawString(payload.module, `${path}.command.moveCall.module`),
+        function: rawString(payload.function, `${path}.command.moveCall.function`),
+        typeArguments: rawArray(
+          payload.typeArguments,
+          `${path}.command.moveCall.typeArguments`,
+        ).map((type, index) =>
           canonicalTypeTag(
             rawString(type, `${path}.command.moveCall.typeArguments[${index}]`),
             `${path}.command.moveCall.typeArguments[${index}]`,
           ),
-      );
-      validateRawResolverArguments(payload.arguments, `${path}.command.moveCall.arguments`);
-      return;
+        ),
+        arguments: projectRawResolverArguments(
+          payload.arguments,
+          `${path}.command.moveCall.arguments`,
+        ),
+      };
     case 'transferObjects':
       assertExactSuiShapeKeys(payload, `${path}.command.transferObjects`, ['objects', 'address']);
-      validateRawResolverArguments(payload.objects, `${path}.command.transferObjects.objects`);
-      validateRawResolverArgument(payload.address, `${path}.command.transferObjects.address`);
-      return;
+      return {
+        kind: parsed.kind,
+        objects: projectRawResolverArguments(
+          payload.objects,
+          `${path}.command.transferObjects.objects`,
+        ),
+        address: projectRawResolverArgument(
+          payload.address,
+          `${path}.command.transferObjects.address`,
+        ),
+      };
     case 'splitCoins':
       assertExactSuiShapeKeys(payload, `${path}.command.splitCoins`, ['coin', 'amounts']);
-      validateRawResolverArgument(payload.coin, `${path}.command.splitCoins.coin`);
-      validateRawResolverArguments(payload.amounts, `${path}.command.splitCoins.amounts`);
-      return;
+      return {
+        kind: parsed.kind,
+        coin: projectRawResolverArgument(payload.coin, `${path}.command.splitCoins.coin`),
+        amounts: projectRawResolverArguments(payload.amounts, `${path}.command.splitCoins.amounts`),
+      };
     case 'mergeCoins':
       assertExactSuiShapeKeys(payload, `${path}.command.mergeCoins`, ['coin', 'coinsToMerge']);
-      validateRawResolverArgument(payload.coin, `${path}.command.mergeCoins.coin`);
-      validateRawResolverArguments(payload.coinsToMerge, `${path}.command.mergeCoins.coinsToMerge`);
-      return;
+      return {
+        kind: parsed.kind,
+        coin: projectRawResolverArgument(payload.coin, `${path}.command.mergeCoins.coin`),
+        coinsToMerge: projectRawResolverArguments(
+          payload.coinsToMerge,
+          `${path}.command.mergeCoins.coinsToMerge`,
+        ),
+      };
     case 'publish':
       assertExactSuiShapeKeys(payload, `${path}.command.publish`, ['modules', 'dependencies']);
-      rawArray(payload.modules, `${path}.command.publish.modules`).forEach((module, index) => {
-        if (!(module instanceof Uint8Array)) {
-          throw new SuiTransactionShapeError(
-            `${path}.command.publish.modules[${index}]`,
-            'expected bytes',
-          );
-        }
-      });
-      rawArray(payload.dependencies, `${path}.command.publish.dependencies`).forEach(
-        (dependency, index) =>
-          rawAddress(dependency, `${path}.command.publish.dependencies[${index}]`),
-      );
-      return;
+      return {
+        kind: parsed.kind,
+        modules: rawArray(payload.modules, `${path}.command.publish.modules`).map(
+          (module, index) => {
+            if (!(module instanceof Uint8Array)) {
+              throw new SuiTransactionShapeError(
+                `${path}.command.publish.modules[${index}]`,
+                'expected bytes',
+              );
+            }
+            return module;
+          },
+        ),
+        dependencies: rawArray(payload.dependencies, `${path}.command.publish.dependencies`).map(
+          (dependency, index) =>
+            rawAddress(dependency, `${path}.command.publish.dependencies[${index}]`),
+        ),
+      };
     case 'makeMoveVector':
       assertExactSuiShapeKeys(payload, `${path}.command.makeMoveVector`, [
         'elementType',
         'elements',
       ]);
-      if (payload.elementType !== undefined) {
-        canonicalTypeTag(
-          rawString(payload.elementType, `${path}.command.makeMoveVector.elementType`),
-          `${path}.command.makeMoveVector.elementType`,
-        );
-      }
-      validateRawResolverArguments(payload.elements, `${path}.command.makeMoveVector.elements`);
-      return;
+      return {
+        kind: parsed.kind,
+        elementType:
+          payload.elementType === undefined
+            ? null
+            : canonicalTypeTag(
+                rawString(payload.elementType, `${path}.command.makeMoveVector.elementType`),
+                `${path}.command.makeMoveVector.elementType`,
+              ),
+        elements: projectRawResolverArguments(
+          payload.elements,
+          `${path}.command.makeMoveVector.elements`,
+        ),
+      };
     case 'upgrade':
       assertExactSuiShapeKeys(payload, `${path}.command.upgrade`, [
         'modules',
@@ -372,21 +419,26 @@ function validateRawResolverCommand(value: unknown, path: string): void {
         'package',
         'ticket',
       ]);
-      rawArray(payload.modules, `${path}.command.upgrade.modules`).forEach((module, index) => {
-        if (!(module instanceof Uint8Array)) {
-          throw new SuiTransactionShapeError(
-            `${path}.command.upgrade.modules[${index}]`,
-            'expected bytes',
-          );
-        }
-      });
-      rawArray(payload.dependencies, `${path}.command.upgrade.dependencies`).forEach(
-        (dependency, index) =>
-          rawAddress(dependency, `${path}.command.upgrade.dependencies[${index}]`),
-      );
-      rawAddress(payload.package, `${path}.command.upgrade.package`);
-      validateRawResolverArgument(payload.ticket, `${path}.command.upgrade.ticket`);
-      return;
+      return {
+        kind: parsed.kind,
+        modules: rawArray(payload.modules, `${path}.command.upgrade.modules`).map(
+          (module, index) => {
+            if (!(module instanceof Uint8Array)) {
+              throw new SuiTransactionShapeError(
+                `${path}.command.upgrade.modules[${index}]`,
+                'expected bytes',
+              );
+            }
+            return module;
+          },
+        ),
+        dependencies: rawArray(payload.dependencies, `${path}.command.upgrade.dependencies`).map(
+          (dependency, index) =>
+            rawAddress(dependency, `${path}.command.upgrade.dependencies[${index}]`),
+        ),
+        package: rawAddress(payload.package, `${path}.command.upgrade.package`),
+        ticket: projectRawResolverArgument(payload.ticket, `${path}.command.upgrade.ticket`),
+      };
     default:
       return rejectUnhandledSuiVariant(parsed.kind, `${path}.command.oneofKind`);
   }
@@ -490,7 +542,7 @@ function validateRawUnresolvedObjectInput(value: unknown, path: string): void {
   rejectPresent(input, ['pure', 'mutability', 'fundsWithdrawal'], path);
 }
 
-function validateRawResolverExpiration(value: unknown, path: string): void {
+function projectRawResolverExpiration(value: unknown, path: string): unknown {
   const expiration = rawRecord(value, path);
   assertExactSuiShapeKeys(expiration, path, [
     'kind',
@@ -508,40 +560,55 @@ function validateRawResolverExpiration(value: unknown, path: string): void {
         ['epoch', 'minEpoch', 'minTimestamp', 'maxTimestamp', 'chain', 'nonce'],
         path,
       );
-      return;
-    case GrpcTypes.TransactionExpiration_TransactionExpirationKind.EPOCH:
-      rawU64(expiration.epoch, `${path}.epoch`);
+      return { kind: expiration.kind };
+    case GrpcTypes.TransactionExpiration_TransactionExpirationKind.EPOCH: {
+      const epoch = rawU64(expiration.epoch, `${path}.epoch`);
       rejectPresent(
         expiration,
         ['minEpoch', 'minTimestamp', 'maxTimestamp', 'chain', 'nonce'],
         path,
       );
-      return;
-    case GrpcTypes.TransactionExpiration_TransactionExpirationKind.VALID_DURING:
-      if (expiration.minEpoch !== undefined) rawU64(expiration.minEpoch, `${path}.minEpoch`);
-      if (expiration.epoch !== undefined) rawU64(expiration.epoch, `${path}.epoch`);
+      return { kind: expiration.kind, epoch };
+    }
+    case GrpcTypes.TransactionExpiration_TransactionExpirationKind.VALID_DURING: {
+      const minEpoch =
+        expiration.minEpoch === undefined
+          ? undefined
+          : rawU64(expiration.minEpoch, `${path}.minEpoch`);
+      const maxEpoch =
+        expiration.epoch === undefined ? undefined : rawU64(expiration.epoch, `${path}.epoch`);
       if (expiration.minEpoch === undefined && expiration.epoch === undefined) {
         throw new SuiTransactionShapeError(path, 'current ValidDuring is missing epoch bounds');
       }
       rejectPresent(expiration, ['minTimestamp', 'maxTimestamp'], path);
-      rawDigest(expiration.chain, `${path}.chain`);
-      rawU32(expiration.nonce, `${path}.nonce`);
-      return;
+      return {
+        kind: expiration.kind,
+        ...(minEpoch === undefined ? {} : { minEpoch }),
+        ...(maxEpoch === undefined ? {} : { maxEpoch }),
+        chain: rawDigest(expiration.chain, `${path}.chain`),
+        nonce: rawU32(expiration.nonce, `${path}.nonce`),
+      };
+    }
     default:
       throw new SuiTransactionShapeError(`${path}.kind`, 'unsupported current expiration kind');
   }
 }
 
-function validateRawResolverGasPayment(
+function projectRawResolverGasPayment(
   value: unknown,
   path: string,
   onlyTransactionKind: boolean,
-): void {
+): {
+  readonly objects: readonly unknown[];
+  readonly owner?: string;
+  readonly price?: bigint;
+  readonly budget?: bigint;
+} {
   const gas = rawRecord(value, path);
   assertExactSuiShapeKeys(gas, path, RAW_GAS_PAYMENT_KEYS);
   const objects = rawArray(gas.objects, `${path}.objects`);
   const objectIds = new Set<string>();
-  for (const [index, value] of objects.entries()) {
+  const projectedObjects = objects.map((value, index) => {
     const object = rawRecord(value, `${path}.objects[${index}]`);
     assertExactSuiShapeKeys(object, `${path}.objects[${index}]`, ['objectId', 'version', 'digest']);
     const objectId = rawAddress(object.objectId, `${path}.objects[${index}].objectId`);
@@ -552,18 +619,31 @@ function validateRawResolverGasPayment(
       );
     }
     objectIds.add(objectId);
-    rawU64(object.version, `${path}.objects[${index}].version`);
-    rawDigest(object.digest, `${path}.objects[${index}].digest`);
-  }
-  if (gas.owner !== undefined) rawAddress(gas.owner, `${path}.owner`);
-  if (gas.price !== undefined) rawU64(gas.price, `${path}.price`, onlyTransactionKind);
-  if (gas.budget !== undefined) rawU64(gas.budget, `${path}.budget`, onlyTransactionKind);
+    return {
+      objectId,
+      version: rawU64(object.version, `${path}.objects[${index}].version`),
+      digest: rawDigest(object.digest, `${path}.objects[${index}].digest`),
+    };
+  });
+  const owner = gas.owner === undefined ? undefined : rawAddress(gas.owner, `${path}.owner`);
+  const price =
+    gas.price === undefined ? undefined : rawU64(gas.price, `${path}.price`, onlyTransactionKind);
+  const budget =
+    gas.budget === undefined
+      ? undefined
+      : rawU64(gas.budget, `${path}.budget`, onlyTransactionKind);
   if (
     !onlyTransactionKind &&
     (gas.owner === undefined || gas.price === undefined || gas.budget === undefined)
   ) {
     throw new SuiTransactionShapeError(path, 'full transaction resolution is missing gas data');
   }
+  return {
+    objects: projectedObjects,
+    ...(owner === undefined ? {} : { owner }),
+    ...(price === undefined ? {} : { price }),
+    ...(budget === undefined ? {} : { budget }),
+  };
 }
 
 function validateRawResolvedTransaction(value: unknown, onlyTransactionKind: boolean): void {
@@ -600,22 +680,18 @@ function validateRawResolvedTransaction(value: unknown, onlyTransactionKind: boo
   );
   rawArray(programmable.commands, `${path}.kind.data.programmableTransaction.commands`).forEach(
     (command, index) =>
-      validateRawResolverCommand(
+      projectRawResolverCommand(
         command,
         `${path}.kind.data.programmableTransaction.commands[${index}]`,
       ),
   );
   if (transaction.gasPayment !== undefined) {
-    validateRawResolverGasPayment(
-      transaction.gasPayment,
-      `${path}.gasPayment`,
-      onlyTransactionKind,
-    );
+    projectRawResolverGasPayment(transaction.gasPayment, `${path}.gasPayment`, onlyTransactionKind);
   } else if (!onlyTransactionKind) {
     throw new SuiTransactionShapeError(`${path}.gasPayment`, 'full resolution is missing gas data');
   }
   if (transaction.expiration !== undefined) {
-    validateRawResolverExpiration(transaction.expiration, `${path}.expiration`);
+    projectRawResolverExpiration(transaction.expiration, `${path}.expiration`);
   }
 }
 
@@ -668,8 +744,8 @@ export function assertRawSuiResolutionIdentity(
     requestedProgrammable.commands,
     'resolution.request.transaction.kind.data.programmableTransaction.commands',
   );
-  requestedCommands.forEach((command, index) =>
-    validateRawResolverCommand(
+  const requestedCommandIdentity = requestedCommands.map((command, index) =>
+    projectRawResolverCommand(
       command,
       `resolution.request.transaction.kind.data.programmableTransaction.commands[${index}]`,
     ),
@@ -678,7 +754,13 @@ export function assertRawSuiResolutionIdentity(
     resolvedProgrammable.commands,
     'resolution.transaction.transaction.kind.data.programmableTransaction.commands',
   );
-  if (!sameValue(requestedCommands, resolvedCommands)) {
+  const resolvedCommandIdentity = resolvedCommands.map((command, index) =>
+    projectRawResolverCommand(
+      command,
+      `resolution.transaction.transaction.kind.data.programmableTransaction.commands[${index}]`,
+    ),
+  );
+  if (!sameValue(requestedCommandIdentity, resolvedCommandIdentity)) {
     throw new SuiTransactionShapeError(
       'resolution.transaction.transaction.kind.data.programmableTransaction.commands',
       'changed the requested PTB commands',
@@ -729,26 +811,35 @@ export function assertRawSuiResolutionIdentity(
     }
   });
 
-  if (request.expiration !== undefined && !sameValue(request.expiration, resolved.expiration)) {
-    throw new SuiTransactionShapeError(
-      'resolution.transaction.transaction.expiration',
-      'changed the requested expiration',
-    );
-  }
   if (request.expiration !== undefined) {
-    validateRawResolverExpiration(request.expiration, 'resolution.request.transaction.expiration');
+    if (
+      !sameValue(
+        projectRawResolverExpiration(
+          request.expiration,
+          'resolution.request.transaction.expiration',
+        ),
+        projectRawResolverExpiration(
+          resolved.expiration,
+          'resolution.transaction.transaction.expiration',
+        ),
+      )
+    ) {
+      throw new SuiTransactionShapeError(
+        'resolution.transaction.transaction.expiration',
+        'changed the requested expiration',
+      );
+    }
   }
   if (request.gasPayment !== undefined) {
-    const requestedGas = rawRecord(request.gasPayment, 'resolution.request.transaction.gasPayment');
-    assertExactSuiShapeKeys(
-      requestedGas,
+    const requestedGas = projectRawResolverGasPayment(
+      request.gasPayment,
       'resolution.request.transaction.gasPayment',
-      RAW_GAS_PAYMENT_KEYS,
+      true,
     );
-    validateRawResolverGasPayment(requestedGas, 'resolution.request.transaction.gasPayment', true);
-    const resolvedGas = rawRecord(
+    const resolvedGas = projectRawResolverGasPayment(
       resolved.gasPayment,
       'resolution.transaction.transaction.gasPayment',
+      true,
     );
     for (const key of ['owner', 'price', 'budget'] as const) {
       if (requestedGas[key] !== undefined && !sameValue(requestedGas[key], resolvedGas[key])) {
@@ -758,11 +849,7 @@ export function assertRawSuiResolutionIdentity(
         );
       }
     }
-    const requestedObjects = rawArray(
-      requestedGas.objects,
-      'resolution.request.transaction.gasPayment.objects',
-    );
-    if (requestedObjects.length > 0 && !sameValue(requestedObjects, resolvedGas.objects)) {
+    if (requestedGas.objects.length > 0 && !sameValue(requestedGas.objects, resolvedGas.objects)) {
       throw new SuiTransactionShapeError(
         'resolution.transaction.transaction.gasPayment.objects',
         'changed the requested gas payment',
@@ -1087,12 +1174,14 @@ function validateResolvedTransaction(
   validateGasData(before.gasData, after.gasData, onlyTransactionKind);
 }
 
-interface EndpointResolution {
+export interface EndpointResolution {
   readonly data: TransactionData;
   readonly transaction: GrpcTypes.Transaction;
+  /** Exact validated BCS for full resolution; null for transaction-kind resolution. */
+  readonly transactionBytes: Uint8Array | null;
 }
 
-interface EndpointResolutionContext {
+export interface EndpointResolutionContext {
   readonly signal: AbortSignal;
   readonly timeoutMs: number;
 }
@@ -1107,7 +1196,8 @@ function rejectResidualUnresolvedPure(data: TransactionData): void {
   }
 }
 
-async function resolveTransactionOnEndpoint(
+/** @internal Resolve one transaction without selecting or retrying another endpoint. */
+export async function resolveSuiTransactionOnEndpoint(
   endpoint: SuiGrpcClient,
   transactionData: TransactionDataBuilder,
   options: BuildTransactionOptions,
@@ -1250,12 +1340,12 @@ async function resolveTransactionOnEndpoint(
     throw malformedSuiResponse('resolve_transaction');
   }
   const resolved = candidate.snapshot();
+  let transactionBytes: Uint8Array | null = null;
   try {
     validateResolvedTransaction(requested, resolved, options.onlyTransactionKind === true);
     if (options.onlyTransactionKind !== true) {
-      const resolvedDigest = TransactionDataBuilder.getDigestFromBytes(
-        TransactionDataBuilder.restore(resolved).build(),
-      );
+      transactionBytes = TransactionDataBuilder.restore(resolved).build();
+      const resolvedDigest = TransactionDataBuilder.getDigestFromBytes(transactionBytes);
       if (resolvedDigest !== evidence.transactionDigest) {
         throw new SuiTransactionShapeError(
           'resolution.transaction.effects.transactionDigest',
@@ -1272,7 +1362,7 @@ async function resolveTransactionOnEndpoint(
   if (options.onlyTransactionKind !== true && !evidence.status.success) {
     throw rejectedSuiOperation('resolve_transaction', evidence.status.error);
   }
-  return { data: resolved, transaction: evidence.transaction };
+  return { data: resolved, transaction: evidence.transaction, transactionBytes };
 }
 
 async function runEndpointResolver(
@@ -1282,7 +1372,7 @@ async function runEndpointResolver(
   signal: AbortSignal | undefined,
 ): Promise<TransactionData> {
   return runSuiReadOperation(snapshot, 'resolve_transaction', signal, async (endpoint, context) => {
-    const resolved = await resolveTransactionOnEndpoint(
+    const resolved = await resolveSuiTransactionOnEndpoint(
       endpoint,
       transactionData,
       options,
@@ -1320,7 +1410,7 @@ export async function resolveSuiMoveViewTransactionOnEndpoint(
   transaction.setSender(SUI_ZERO_ADDRESS);
   transaction.setExpiration(null);
 
-  const endpointResolution = await resolveTransactionOnEndpoint(
+  const endpointResolution = await resolveSuiTransactionOnEndpoint(
     endpoint,
     TransactionDataBuilder.restore(transaction.getData()),
     { onlyTransactionKind: true },
@@ -1328,8 +1418,7 @@ export async function resolveSuiMoveViewTransactionOnEndpoint(
   );
 
   const raw = endpointResolution.transaction;
-  const gas = rawRecord(raw.gasPayment, 'moveView.resolution.gasPayment');
-  validateRawResolverGasPayment(gas, 'moveView.resolution.gasPayment', true);
+  const gas = projectRawResolverGasPayment(raw.gasPayment, 'moveView.resolution.gasPayment', true);
   if (raw.expiration !== undefined) {
     const expiration = rawRecord(raw.expiration, 'moveView.resolution.expiration');
     if (expiration.kind !== GrpcTypes.TransactionExpiration_TransactionExpirationKind.NONE) {
@@ -1338,8 +1427,8 @@ export async function resolveSuiMoveViewTransactionOnEndpoint(
   }
   if (
     rawAddress(raw.sender, 'moveView.resolution.sender') !== SUI_ZERO_ADDRESS ||
-    rawArray(gas.objects, 'moveView.resolution.gasPayment.objects').length !== 0 ||
-    rawAddress(gas.owner, 'moveView.resolution.gasPayment.owner') !== SUI_ZERO_ADDRESS
+    gas.objects.length !== 0 ||
+    gas.owner !== SUI_ZERO_ADDRESS
   ) {
     throw malformedSuiResponse('simulate_move_view');
   }

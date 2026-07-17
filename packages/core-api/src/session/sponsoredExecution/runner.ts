@@ -26,6 +26,10 @@
  */
 
 import { toBase64, toHex } from '@mysten/sui/utils';
+import {
+  getAddressBalanceGasTransactionBytes,
+  getAddressBalanceGasTransactionTxBytesHash,
+} from '@stelis/core-relay/server';
 import type {
   GasBoundBuildResult,
   LedgerReservationHandle,
@@ -251,6 +255,12 @@ export async function runPrepareStateMachine<TResult>(
       nonce: nonceHandle,
     });
     buildResult = await policy.hooks.GasBoundBuild(hookContext, gasBoundInput);
+    const txBytes = getAddressBalanceGasTransactionBytes(
+      buildResult.addressBalanceGasTransaction,
+    );
+    const txBytesHash = getAddressBalanceGasTransactionTxBytesHash(
+      buildResult.addressBalanceGasTransaction,
+    );
 
     if (policy.handleRequirements.preparedCommit.ledgerReservation) {
       if (!host.executionLedger) {
@@ -292,7 +302,7 @@ export async function runPrepareStateMachine<TResult>(
       receiptId,
       senderAddress: hookContext.senderAddress,
       clientIp: hookContext.clientIp,
-      txBytesHash: buildResult.txBytesHash,
+      txBytesHash,
       sponsorAddress: sponsorSlotHandle.sponsorAddress,
       executionPathKey: policyDraftFields.executionPathKey,
       orderId: policyDraftFields.orderId,
@@ -325,13 +335,13 @@ export async function runPrepareStateMachine<TResult>(
       };
     }
     const response = await request.projectResponse({
-      txBytesBase64: toBase64(buildResult.txBytes),
+      txBytesBase64: toBase64(txBytes),
       // Keep the runner's store input private. A response projector cannot
       // mutate receipt/hash/resource identity after this boundary.
       draft: Object.freeze({ ...draft }) as Readonly<PreparedTxDraft>,
     });
 
-    await slotReservation.commitToTxBytesHash(buildResult.txBytesHash);
+    await slotReservation.commitToTxBytesHash(txBytesHash);
     await callHook(policy.hooks.SponsorLeaseCommitted, hookContext);
 
     await host.prepareStore.store(draft);

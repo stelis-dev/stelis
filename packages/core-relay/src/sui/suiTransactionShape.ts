@@ -759,6 +759,21 @@ export interface SuiTransactionEffects {
   readonly eventsDigest: string | null;
 }
 
+export interface SuiSimulationEffects {
+  readonly gasUsed: SuiGasUsed;
+}
+
+export type SuiSimulationResult =
+  | {
+      readonly outcome: 'success';
+      readonly effects: SuiSimulationEffects;
+    }
+  | {
+      readonly outcome: 'failure';
+      readonly error: SuiExecutionError;
+      readonly effects: SuiSimulationEffects;
+    };
+
 export interface SuiEvent {
   readonly packageId: string;
   readonly module: string;
@@ -1083,21 +1098,25 @@ function parseRawEffects(
     throw new SuiTransactionShapeError(`${path}.transactionDigest`, 'does not match the request');
   }
   const status = parseRawStatus(effects.status, `${path}.status`);
-  const gas = record(effects.gasUsed, `${path}.gasUsed`);
-  const gasUsed: SuiGasUsed = {
-    computationCost: rawBigInt(gas.computationCost, `${path}.gasUsed.computationCost`).toString(),
-    storageCost: rawBigInt(gas.storageCost, `${path}.gasUsed.storageCost`).toString(),
-    storageRebate: rawBigInt(gas.storageRebate, `${path}.gasUsed.storageRebate`).toString(),
-    nonRefundableStorageFee: rawBigInt(
-      gas.nonRefundableStorageFee,
-      `${path}.gasUsed.nonRefundableStorageFee`,
-    ).toString(),
-  };
+  const gasUsed = parseRawGasUsed(effects.gasUsed, `${path}.gasUsed`);
   const eventsDigest =
     effects.eventsDigest === undefined
       ? null
       : digest(effects.eventsDigest, `${path}.eventsDigest`);
   return { version: 2, transactionDigest, status, gasUsed, eventsDigest };
+}
+
+function parseRawGasUsed(value: unknown, path: string): SuiGasUsed {
+  const gas = record(value, path);
+  return {
+    computationCost: rawBigInt(gas.computationCost, `${path}.computationCost`).toString(),
+    storageCost: rawBigInt(gas.storageCost, `${path}.storageCost`).toString(),
+    storageRebate: rawBigInt(gas.storageRebate, `${path}.storageRebate`).toString(),
+    nonRefundableStorageFee: rawBigInt(
+      gas.nonRefundableStorageFee,
+      `${path}.nonRefundableStorageFee`,
+    ).toString(),
+  };
 }
 
 function parseRawEvents(
@@ -1179,12 +1198,26 @@ function parseRawTransaction(
 export function parseRawSuiSimulationTransaction(
   value: unknown,
   expectedDigest: string,
-): SuiTransactionResult {
-  return parseRawTransaction(
-    value,
-    { expectedDigest, allowMissingTopLevelDigest: true, includeEvents: false },
-    'simulation.transaction',
-  ) as SuiTransactionResult;
+): SuiSimulationResult {
+  const path = 'simulation.transaction';
+  const envelope = parseRawSuiExecutedTransactionEnvelope(value, path);
+  const transaction = envelope.transaction;
+  const resolved = record(transaction.transaction, `${path}.transaction`);
+  const returnedDigest = digest(resolved.digest, `${path}.transaction.digest`);
+  if (returnedDigest !== expectedDigest) {
+    throw new SuiTransactionShapeError(
+      `${path}.transaction.digest`,
+      'does not match the request',
+    );
+  }
+
+  const effects = record(transaction.effects, `${path}.effects`);
+  const status = parseRawStatus(effects.status, `${path}.effects.status`);
+  const simulationEffects = {
+    gasUsed: parseRawGasUsed(effects.gasUsed, `${path}.effects.gasUsed`),
+  } as const;
+  if (status.success) return { outcome: 'success', effects: simulationEffects };
+  return { outcome: 'failure', error: status.error, effects: simulationEffects };
 }
 
 function parseRawMoveViewEnvelope(value: unknown) {

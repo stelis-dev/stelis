@@ -694,6 +694,8 @@ async function runGenericGasBoundBuild(
   const buildResult = await d.runGenericPrepareBuildPipeline(
     {
       sui: options.hostContext.sui,
+      network: options.hostContext.network,
+      allowedSettlementSwapPaths: options.hostContext.allowedSettlementSwapPaths,
       packageId: config.packageId,
       configId: config.configId,
       vaultRegistryId: options.hostContext.vaultRegistryId,
@@ -736,8 +738,7 @@ async function runGenericGasBoundBuild(
   });
 
   return {
-    txBytes: buildResult.txBytes,
-    txBytesHash: buildResult.txBytesHash,
+    addressBalanceGasTransaction: buildResult.addressBalanceGasTransaction,
     measuredGasMist: buildResult.simGas,
   };
 }
@@ -754,21 +755,16 @@ async function runGenericSelfCheck(
   const orderIdHash = requireValue(state.orderIdHash, 'orderIdHash');
 
   try {
-    const builtTx = Transaction.from(buildResult.txBytes);
-    const builtTxData = builtTx.getData();
-    const builtCommands = convertSdkCommands(builtTxData.commands);
     const builtEnv: HostValidationEnv = {
       ...buildPrepareEnv(options.hostContext),
       allowedSettlementSwapPaths: [...prepare.config.allowedSettlementSwapPaths],
     };
-    const l1 = validateGenericSettlementTransaction(builtTx, builtEnv);
+    const l1 = buildResult.l1Validation;
     if (!l1.ok) {
       throw new PrepareValidationError(requireRelayPrepareErrorCode(l1.code), l1.message);
     }
 
-    const settleArgs = extractSettleArgsFromBuiltTx(builtCommands, builtTxData.inputs, builtEnv, {
-      requirePaymentInputTrace: true,
-    });
+    const settleArgs = requireValue(buildResult.settleArgs, 'validated settle arguments');
     const paymentIntegrity = validatePaymentInputIntegrity(settleArgs.paymentInputTrace, {
       source: buildResult.paymentInputSource,
       swapAmountSmallest: buildResult.swapAmountSmallest,
@@ -797,7 +793,7 @@ async function runGenericSelfCheck(
     if (err instanceof PrepareValidationError) throw err;
     throw new PrepareValidationError(
       'L1_PARSE_FAILED',
-      `Built TX deserialization failed: ${err instanceof Error ? err.message : String(err)}`,
+      `Built transaction self-check failed: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
 }

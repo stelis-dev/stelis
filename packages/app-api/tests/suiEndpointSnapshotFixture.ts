@@ -1,5 +1,9 @@
 import type { SuiGrpcClient } from '@mysten/sui/grpc';
-import { createSuiEndpointSnapshot, type SuiEndpointSnapshot } from '@stelis/core-relay';
+import { SUI_CHAIN_IDENTIFIERS } from '@stelis/contracts';
+import {
+  createChainBoundSuiEndpointSnapshot,
+  type ChainBoundSuiEndpointSnapshot,
+} from '@stelis/core-relay';
 
 /**
  * Create a real opaque endpoint snapshot for tests that mock the gateway
@@ -8,7 +12,7 @@ import { createSuiEndpointSnapshot, type SuiEndpointSnapshot } from '@stelis/cor
  */
 export function suiEndpointSnapshotFixture(
   network: 'testnet' | 'mainnet' = 'testnet',
-): SuiEndpointSnapshot {
+): ChainBoundSuiEndpointSnapshot {
   const client = Object.freeze({ network }) as unknown as SuiGrpcClient;
-  return createSuiEndpointSnapshot([client]);
+  return createChainBoundSuiEndpointSnapshot([client], SUI_CHAIN_IDENTIFIERS[network]);
 }

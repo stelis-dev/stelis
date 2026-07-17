@@ -14,7 +14,11 @@
  */
 import { Transaction } from '@mysten/sui/transactions';
 import { fromBase64 } from '@mysten/sui/utils';
-import type { ExecutionCostClaimEstimate, SimulationGasUsed } from '@stelis/core-relay';
+import type {
+  ExecutionCostClaimEstimate,
+  HostValidationEnv,
+  SimulationGasUsed,
+} from '@stelis/core-relay';
 import type { PtbCommand, SingleHopSettlementSwapPath, SettleProfile } from '@stelis/contracts';
 import type {
   ExecutableSwapQuote,
@@ -30,9 +34,9 @@ import {
   PrefixValueTraceError,
   SlippageQueryError,
   traceUserPrefixValue,
-  simulateSuiTransaction,
+  validateGenericSettlementTransaction,
   type PrefixValueTrace,
-  type SuiTransactionResult,
+  type SuiSimulationResult,
 } from '@stelis/core-relay';
 import {
   createDeepbookQuotePort,
@@ -44,6 +48,7 @@ import {
   createRequestQuoteCache,
   ExecutionGapExceededError,
   MarketQuoteUnavailableError,
+  simulateAddressBalanceGasTransaction,
   SwapUnviableUnderPolicyError,
 } from '@stelis/core-relay/server';
 import type { QuoteRpcStats, QuoteCache } from '@stelis/core-relay/server';
@@ -55,9 +60,10 @@ import {
 import { PrepareValidationError, type PrepareErrorMeta } from './replay.js';
 import {
   classifyDryRunFailure,
-  safeBuild,
+  safeBuildAddressBalanceGasTransaction,
   buildSettleMeta as _buildSettleMeta,
 } from './prepareErrors.js';
+import { extractSettleArgsFromBuiltTx } from './extractSettleArgs.js';
 import {
   checkCreditOnlyEligibility,
   calculateRequiredSwapOutput,
@@ -70,7 +76,6 @@ import { compileCreditSettlement, compileSwapSettlement } from './ptbCompiler.js
 import type { SettlePlanAuditFields } from './settlePlanTypes.js';
 import { logStructuredEvent } from '../structuredEventLog.js';
 import { PREPARE_BUILD_STAGE } from '../observability/events.js';
-import { createHash } from 'crypto';
 import { mist, unBps, type Mist } from '../internal/brand.js';
 import type {
   BuildContext,
@@ -194,7 +199,7 @@ type CreditProbeMeasurement =
   | { outcome: 'skipped' };
 
 function extractSuccessfulDryRunGas(
-  result: SuiTransactionResult,
+  result: SuiSimulationResult,
   stelisPackageId: string,
   commands: readonly PtbCommand[],
   meta: PrepareErrorMeta,
@@ -208,6 +213,8 @@ function extractSuccessfulDryRunGas(
 async function dryRunForGas(
   ctx: BuildContext,
   tx: Transaction,
+  sponsorAddress: string,
+  gasBudget: bigint,
   meta: PrepareErrorMeta,
   completedStage: string,
   pass: 'credit_preswap' | 'pass1',
@@ -228,9 +235,16 @@ async function dryRunForGas(
   const settlementTokenSymbol = failureContext.settlementTokenSymbol;
   const commands = convertSdkCommands(tx.getData().commands as unknown[]);
 
-  let dryRunBytes: Uint8Array;
+  let gasTransaction;
   try {
-    dryRunBytes = await safeBuild(tx, ctx.sui, ctx.packageId, meta);
+    gasTransaction = await safeBuildAddressBalanceGasTransaction(
+      tx,
+      ctx.sui,
+      sponsorAddress,
+      gasBudget,
+      ctx.packageId,
+      meta,
+    );
   } catch (err) {
     logPrepareBuildStage('dryrun_safebuild_failed', {
       pass,
@@ -243,11 +257,9 @@ async function dryRunForGas(
     throw err;
   }
 
-  let simResult: SuiTransactionResult;
+  let simResult: SuiSimulationResult;
   try {
-    simResult = await simulateSuiTransaction(ctx.sui, {
-      transaction: dryRunBytes,
-    });
+    simResult = await simulateAddressBalanceGasTransaction(gasTransaction);
   } catch (err) {
     logPrepareBuildStage('dryrun_simulate_failed', {
       pass,
@@ -560,13 +572,13 @@ async function dryRunPreSwapCreditPathCosts(
   }
 
   tx.setSender(input.senderAddress);
-  tx.setGasOwner(input.sponsorAddress);
-  tx.setGasBudget(ctx.maxClaimMist);
 
   const meta = buildSettleMeta(ctx, seedClaim, false);
   const gasUsed = await dryRunForGas(
     ctx,
     tx,
+    input.sponsorAddress,
+    ctx.maxClaimMist,
     meta,
     'credit_preswap_dryrun_simulated',
     'credit_preswap',
@@ -754,7 +766,6 @@ async function buildFinalGenericPrepareResult(
   }
 
   pass2Tx.setSender(input.senderAddress);
-  pass2Tx.setGasOwner(input.sponsorAddress);
 
   // gasBudget = grossGas × (1 + gasMarginBps / 10000), capped at maxClaimMist.
   // `unBps()` marks the explicit drop of the Bps brand at the
@@ -762,12 +773,40 @@ async function buildFinalGenericPrepareResult(
   // is not persisted on the store entry; it is read back from the PTB.
   const rawGasBudget = (grossGas * BigInt(10000 + unBps(input.gasMarginBps))) / 10000n;
   const gasBudget = rawGasBudget > ctx.maxClaimMist ? ctx.maxClaimMist : rawGasBudget;
-  pass2Tx.setGasBudget(gasBudget);
+
+  // Validate the exact PTB meaning before the server-only gas builder seals it.
+  // The resolver authority independently proves that commands, sender, and
+  // resolved input identities are unchanged in the sealed transaction.
+  assertFinalPaymentInputIntegrity(pass2Tx, ctx.packageId, paymentInputIntegrityExpectation);
+  const validationEnv: HostValidationEnv = {
+    network: ctx.network,
+    settlementPayoutRecipientAddress: ctx.settlementPayoutRecipientAddress,
+    configId: ctx.configId,
+    vaultRegistryId: ctx.vaultRegistryId,
+    packageId: ctx.packageId,
+    allowedSettlementSwapPaths: ctx.allowedSettlementSwapPaths,
+  };
+  const l1Validation = validateGenericSettlementTransaction(pass2Tx, validationEnv);
+  const settleArgs = l1Validation.ok
+    ? extractSettleArgsFromBuiltTx(
+        convertSdkCommands(pass2Tx.getData().commands),
+        pass2Tx.getData().inputs,
+        validationEnv,
+        { requirePaymentInputTrace: true },
+      )
+    : null;
 
   const settleMeta = buildSettleMeta(ctx, executionCostClaim, false);
-  let txBytes: Uint8Array;
+  let addressBalanceGasTransaction;
   try {
-    txBytes = await safeBuild(pass2Tx, ctx.sui, ctx.packageId, settleMeta);
+    addressBalanceGasTransaction = await safeBuildAddressBalanceGasTransaction(
+      pass2Tx,
+      ctx.sui,
+      input.sponsorAddress,
+      gasBudget,
+      ctx.packageId,
+      settleMeta,
+    );
   } catch (err) {
     // Final-build failure is the last gap before `two_pass_complete`. Without
     // this emit the request loses phase-local context for the failure (the
@@ -788,17 +827,8 @@ async function buildFinalGenericPrepareResult(
     throw err;
   }
 
-  // ── Tamper-proof hash ───────────────────────────────────────────────────
-
-  // `safeBuild` has accepted the final PTB. Before hashing it, confirm that
-  // the suffix still contains the exact objects and amounts selected by the
-  // funding resolver.
-  assertFinalPaymentInputIntegrity(pass2Tx, ctx.packageId, paymentInputIntegrityExpectation);
-
-  const txBytesHash = sha256Hex(txBytes);
   const rpcSummary = summarizeRpcStats(rpcAcc);
   logPrepareBuildStage('two_pass_complete', {
-    tx_bytes_hash: txBytesHash,
     execution_cost_claim_mist: executionCostClaim.toString(),
     sim_gas_mist: simGas.toString(),
     slippage_buffer_mist: slippageBufferMist.toString(),
@@ -810,8 +840,9 @@ async function buildFinalGenericPrepareResult(
   });
 
   return {
-    txBytes,
-    txBytesHash,
+    addressBalanceGasTransaction,
+    l1Validation,
+    settleArgs,
     executionCostClaim,
     simGas,
     gasVarianceFixedMist,
@@ -944,11 +975,6 @@ async function runMaxClaimGasProbe(
     pass1_quantity_in_rpc_calls: runContext.rpcAcc.pass1Quote.quantityInCalls,
   });
   pass1Tx.setSender(input.senderAddress);
-  pass1Tx.setGasOwner(input.sponsorAddress);
-  // Set explicit gasBudget so the SDK's core-resolver skips its internal
-  // setGasBudget simulation (which can fail with fragmented sponsor gas coins).
-  // Our own simulateTransaction below measures actual gas usage.
-  pass1Tx.setGasBudget(ctx.maxClaimMist);
 
   const pass1Meta = buildSettleMeta(ctx, pass1Claim, true);
 
@@ -957,6 +983,8 @@ async function runMaxClaimGasProbe(
   const gasUsed = await dryRunForGas(
     ctx,
     pass1Tx,
+    input.sponsorAddress,
+    ctx.maxClaimMist,
     pass1Meta,
     'pass1_dryrun_simulated',
     'pass1',
@@ -1394,12 +1422,4 @@ async function runPreparePass(
     });
     throw err;
   }
-}
-
-/**
- * SHA-256 hex digest of raw bytes.
- * Uses Node.js crypto module.
- */
-function sha256Hex(data: Uint8Array): string {
-  return createHash('sha256').update(data).digest('hex');
 }

@@ -45,6 +45,7 @@ import { MemoryPromotionStore } from '../src/studio/promotionStore.js';
 import { SponsorPool } from '../src/context.js';
 import { SponsorPostSignatureUncertaintyError } from '../src/session/sessionPrimitives.js';
 import { suiExecutionErrorMessage, type SuiExecutionError } from '@stelis/core-relay';
+import type { AddressBalanceGasTransaction } from '@stelis/core-relay/server';
 import {
   runSponsorConsumePhase,
   type SponsorConsumePolicyAdapter,
@@ -70,6 +71,7 @@ const TEST_USER = 'pr-1-2b-user-1';
 const TEST_TX_BYTES = new Uint8Array([0x01, 0x02, 0x03, 0x04, 0x05]);
 const TEST_TX_BYTES_HASH = createHash('sha256').update(TEST_TX_BYTES).digest('hex');
 const TEST_USER_SIGNATURE = 'mock-user-sig';
+const TEST_GAS_TRANSACTION = Object.freeze({}) as AddressBalanceGasTransaction;
 
 const SUCCESS_EXEC: Extract<ExecResult, { success: true }> = {
   success: true,
@@ -170,8 +172,7 @@ function makeMockHooks(opts: MakePolicyOptions = {}): {
     SponsorSlotReservationAcquired: () => {},
     RouteReservationBeforeBuild: () => {},
     GasBoundBuild: () => ({
-      txBytes: new Uint8Array(),
-      txBytesHash: '',
+      addressBalanceGasTransaction: TEST_GAS_TRANSACTION,
       measuredGasMist: 0n,
     }),
     RouteReservationAfterBuild: () => {},
@@ -520,7 +521,7 @@ describe('runSponsorStateMachine — generic happy path', () => {
     }
   });
 
-  test('host.signAndSubmit is called with (sponsorAddress, receiptId, txBytes, userSignature) from the consumed entry', async () => {
+  test('host.signAndSubmit uses consumed sponsor identity and the unchanged request bytes and signature', async () => {
     const host = makeHost();
     const sponsorAddress = await pinGenericEntry(host);
     const { policy } = makeGenericPolicy({ emitNonce: true });

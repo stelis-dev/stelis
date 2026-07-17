@@ -192,12 +192,13 @@ export async function validatePromotionPreconsumePolicy(
     );
   }
 
-  // Parse the stored-hash-verified `txBytes` into a Transaction. `decodeTxBytes` at the
+  // Parse the submitted `txBytes` into a Transaction. `decodeTxBytes` at the
   // route boundary already validated base64; BCS deserialization can still
-  // fail on malformed TransactionKind payloads. Classify that as `BAD_REQUEST`
-  // / 400 so route-level 500 `SPONSOR_FAILED` cannot mask a client-visible
-  // input error. The rejection happens before `consume()`, so the prepared
-  // entry remains unconsumed.
+  // fail on malformed TransactionData. The later atomic `consume()` binds
+  // these bytes to the prepared-entry hash. Classify this parse failure as
+  // `BAD_REQUEST` / 400 so route-level 500 `SPONSOR_FAILED` cannot mask a
+  // client-visible input error. The rejection happens before `consume()`, so
+  // the prepared entry remains unconsumed.
   let builtTx: Transaction;
   try {
     builtTx = Transaction.from(txBytes);
@@ -209,8 +210,9 @@ export async function validatePromotionPreconsumePolicy(
   }
   const normalizedCommands = convertSdkCommands(builtTx.getData().commands as unknown[]);
 
-  // S1 — PTB structure. Sponsor path does NOT check sponsor withdrawal
-  // (txBytesHash binding proves TX integrity against prepare-time commit).
+  // S1 — PTB structure. Sponsor path does NOT repeat the sponsor-withdrawal
+  // check; the later consume hash gate must prove these bytes are the exact
+  // prepare-time transaction before signing can occur.
   const ptbFailure = validatePromotionPtbStructure(normalizedCommands);
   if (ptbFailure) {
     await recordSponsorAbuseForPtbStructure(ctx, input, peeked, ptbFailure);

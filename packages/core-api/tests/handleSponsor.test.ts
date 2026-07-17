@@ -26,10 +26,10 @@ import {
   convertSdkCommands,
   sha256Bytes,
   type CreditResult,
-  type SuiEndpointSnapshot,
-  type SuiTransactionResult,
+  type SuiSimulationResult,
   type SuiTransactionWithEventsResult,
 } from '@stelis/core-relay';
+import type { ChainBoundSuiEndpointSnapshot } from '@stelis/core-relay';
 import {
   DEEPBOOK_MIN_OUT_ABORT,
   SETTLEMENT_SWAP_DIRECTION_FUNCTIONS,
@@ -538,7 +538,7 @@ function makeMockSponsorPool(): SponsorPoolAdapter {
 
 interface MockSuiGateways {
   readonly simulateGateway: ReturnType<
-    typeof vi.fn<(transaction: Uint8Array) => Promise<SuiTransactionResult>>
+    typeof vi.fn<(transaction: Uint8Array) => Promise<SuiSimulationResult>>
   >;
   readonly executeGateway: ReturnType<
     typeof vi.fn<(transaction: Uint8Array) => Promise<SuiTransactionWithEventsResult>>
@@ -555,27 +555,27 @@ interface MockSuiGateways {
   >;
 }
 
-type MockSuiSnapshot = SuiEndpointSnapshot;
+type MockSuiSnapshot = ChainBoundSuiEndpointSnapshot;
 
-const mockSuiGatewaysBySnapshot = new WeakMap<SuiEndpointSnapshot, MockSuiGateways>();
+const mockSuiGatewaysBySnapshot = new WeakMap<ChainBoundSuiEndpointSnapshot, MockSuiGateways>();
 
-function mockSuiGatewaysFor(snapshot: SuiEndpointSnapshot): MockSuiGateways {
+function mockSuiGatewaysFor(snapshot: ChainBoundSuiEndpointSnapshot): MockSuiGateways {
   const gateways = mockSuiGatewaysBySnapshot.get(snapshot);
   if (!gateways) throw new Error('Missing Sui gateway fixture');
   return gateways;
 }
 
 suiGateways.simulateSuiTransaction.mockImplementation(
-  (snapshot: SuiEndpointSnapshot, input: { readonly transaction: Uint8Array }) =>
+  (snapshot: ChainBoundSuiEndpointSnapshot, input: { readonly transaction: Uint8Array }) =>
     mockSuiGatewaysFor(snapshot).simulateGateway(input.transaction),
 );
 suiGateways.executeSuiTransaction.mockImplementation(
-  (snapshot: SuiEndpointSnapshot, input: { readonly transaction: Uint8Array }) =>
+  (snapshot: ChainBoundSuiEndpointSnapshot, input: { readonly transaction: Uint8Array }) =>
     mockSuiGatewaysFor(snapshot).executeGateway(input.transaction),
 );
 suiGateways.queryUserCredit.mockImplementation(
   (
-    snapshot: SuiEndpointSnapshot,
+    snapshot: ChainBoundSuiEndpointSnapshot,
     packageId: string,
     vaultRegistryId: string,
     userAddress: string,
@@ -590,7 +590,7 @@ suiGateways.queryUserCredit.mockImplementation(
 );
 
 function makeMockSui(
-  simResult?: SuiTransactionResult,
+  simResult?: SuiSimulationResult,
   execResult?: SuiTransactionWithEventsResult,
 ): MockSuiSnapshot {
   const gasUsed = {
@@ -600,11 +600,8 @@ function makeMockSui(
   };
   const snapshot = suiEndpointSnapshotFixture();
   mockSuiGatewaysBySnapshot.set(snapshot, {
-    simulateGateway: vi.fn(async (transaction: Uint8Array) =>
-      bindSuiResultToTransactionBytes(
-        simResult ?? suiSimulationSuccess(TEST_SUI_TRANSACTION_DIGEST, gasUsed),
-        transaction,
-      ),
+    simulateGateway: vi.fn(async (_transaction: Uint8Array) =>
+      simResult ?? suiSimulationSuccess(gasUsed),
     ),
     executeGateway: vi.fn(async (transaction: Uint8Array) =>
       bindSuiResultToTransactionBytes(
@@ -1179,10 +1176,7 @@ describe('handleSponsor', () => {
     const userSig = await buildValidSignature(txBytes);
     const abuseBlocker = makeMockAbuseBlocker();
     const sponsorPool = makeMockSponsorPool();
-    const failedSim = suiSimulationFailure(
-      TEST_SUI_TRANSACTION_DIGEST,
-      unclassifiedSuiExecutionError(),
-    );
+    const failedSim = suiSimulationFailure(unclassifiedSuiExecutionError());
     const ctx = makeMockContext({
       prepareStore: makeMockPrepareStore(prepared, prepared),
       abuseBlocker,
@@ -1230,10 +1224,7 @@ describe('handleSponsor', () => {
       new Error('redis unreachable'),
     );
     const sponsorPool = makeMockSponsorPool();
-    const failedSim = suiSimulationFailure(
-      TEST_SUI_TRANSACTION_DIGEST,
-      unclassifiedSuiExecutionError(),
-    );
+    const failedSim = suiSimulationFailure(unclassifiedSuiExecutionError());
     const ctx = makeMockContext({
       prepareStore: makeMockPrepareStore(prepared, prepared),
       abuseBlocker,
@@ -1285,10 +1276,7 @@ describe('handleSponsor', () => {
     const prepared = makePreparedEntry(txHash);
     const userSig = await buildValidSignature(txBytes);
     const abuseBlocker = makeMockAbuseBlocker();
-    const failedSim = suiSimulationFailure(
-      TEST_SUI_TRANSACTION_DIGEST,
-      moveAbortSuiExecutionError({ abortCode: '999' }),
-    );
+    const failedSim = suiSimulationFailure(moveAbortSuiExecutionError({ abortCode: '999' }));
     const ctx = makeMockContext({
       prepareStore: makeMockPrepareStore(prepared, prepared),
       abuseBlocker,
@@ -1326,7 +1314,6 @@ describe('handleSponsor', () => {
     const sponsorPool = makeMockSponsorPool();
     const abuseBlocker = makeMockAbuseBlocker();
     const staleNonceSim = suiSimulationFailure(
-      TEST_SUI_TRANSACTION_DIGEST,
       moveAbortSuiExecutionError({
         command: settlementCommandIndex(txBytes),
         packageId: MOCK_CONFIG.packageId,
@@ -1518,10 +1505,7 @@ describe('handleSponsor', () => {
     const prepared = makePreparedEntry(txHash);
     const userSig = await buildValidSignature(txBytes);
     const sponsorPool = makeMockSponsorPool();
-    const failedSim = suiSimulationFailure(
-      TEST_SUI_TRANSACTION_DIGEST,
-      unclassifiedSuiExecutionError(),
-    );
+    const failedSim = suiSimulationFailure(unclassifiedSuiExecutionError());
     const ctx = makeMockContext({
       prepareStore: makeMockPrepareStore(prepared, prepared),
       sponsorPool,
@@ -1990,7 +1974,7 @@ describe('handleSponsor', () => {
       storageCost: '500000',
       storageRebate: '3000000', // 3M > 1M + 0.5M = 1.5M → raw = -1.5M → clamp to 0
     };
-    const negativeGasSimResult = suiSimulationSuccess(TEST_SUI_TRANSACTION_DIGEST, negativeGas);
+    const negativeGasSimResult = suiSimulationSuccess(negativeGas);
     const negativeGasExecResult = suiExecutionSuccess(TEST_SUI_TRANSACTION_DIGEST, negativeGas);
     const sponsorPool = makeMockSponsorPool();
     const ctx = makeMockContext({
@@ -2152,7 +2136,6 @@ describe('handleSponsor', () => {
     const abuseBlocker = makeMockAbuseBlocker();
     const sponsorPool = makeMockSponsorPool();
     const failedSim = suiSimulationFailure(
-      TEST_SUI_TRANSACTION_DIGEST,
       moveAbortSuiExecutionError({
         command: settlementCommandIndex(txBytes),
         packageId: MOCK_CONFIG.packageId,
@@ -2237,7 +2220,6 @@ describe('handleSponsor', () => {
     const abuseBlocker = makeMockAbuseBlocker();
     const sponsorPool = makeMockSponsorPool();
     const failedSim = suiSimulationFailure(
-      TEST_SUI_TRANSACTION_DIGEST,
       moveAbortSuiExecutionError({
         command: settlementCommandIndex(txBytes),
         packageId: MOCK_CONFIG.packageId,
@@ -2332,7 +2314,6 @@ describe('handleSponsor', () => {
     const deepbookModule = DEEPBOOK_MIN_OUT_ABORT.modulePath.split('::')[0]!;
     const deepbookFunction = DEEPBOOK_MIN_OUT_ABORT.modulePath.split('::')[1]!;
     const failedSim = suiSimulationFailure(
-      TEST_SUI_TRANSACTION_DIGEST,
       moveAbortSuiExecutionError({
         command: settlementCommandIndex(txBytes),
         packageId: DEEPBOOK_MIN_OUT_ABORT.runtimePackageId,
@@ -3301,7 +3282,6 @@ describe('handleSponsor', () => {
       // never invoked, so this stub value would be observed only if the
       // ordering regressed.
       const vaultAlreadyRegisteredSim = suiSimulationFailure(
-        TEST_SUI_TRANSACTION_DIGEST,
         moveAbortSuiExecutionError({
           command: settlementCommandIndex(txBytes),
           packageId: MOCK_CONFIG.packageId,

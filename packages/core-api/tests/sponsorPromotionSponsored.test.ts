@@ -33,6 +33,7 @@ import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Transaction, TransactionDataBuilder } from '@mysten/sui/transactions';
 import { toBase64, toHex, toBase58 } from '@mysten/sui/utils';
 import type { SuiEndpointSnapshot, SuiExecutionError } from '@stelis/core-relay';
+import type { ChainBoundSuiEndpointSnapshot } from '@stelis/core-relay';
 import type {
   PromotionPreparedTxDraft,
   PromotionPreparedTxEntry,
@@ -159,9 +160,9 @@ simulateSuiTransactionMock.mockImplementation(
   async (snapshot: SuiEndpointSnapshot, input: { transaction: Uint8Array }) => {
     const opts = mockSuiOptions.get(snapshot) ?? {};
     const result = opts.simulationError
-      ? suiSimulationFailure(TEST_SUI_TRANSACTION_DIGEST, opts.simulationError, gasUsedFor(opts))
-      : suiSimulationSuccess(TEST_SUI_TRANSACTION_DIGEST, gasUsedFor(opts));
-    return bindSuiResultToTransactionBytes(result, input.transaction);
+      ? suiSimulationFailure(opts.simulationError, gasUsedFor(opts))
+      : suiSimulationSuccess(gasUsedFor(opts));
+    return result;
   },
 );
 
@@ -178,7 +179,7 @@ executeSuiTransactionMock.mockImplementation(
   },
 );
 
-function createMockSui(opts: MockSuiOptions = {}): SuiEndpointSnapshot {
+function createMockSui(opts: MockSuiOptions = {}): ChainBoundSuiEndpointSnapshot {
   const snapshot = suiEndpointSnapshotFixture();
   mockSuiOptions.set(snapshot, opts);
   return snapshot;

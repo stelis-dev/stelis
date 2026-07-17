@@ -182,11 +182,10 @@ function exactEffects(digest = MOCK_BUILD_DIGEST, success = true) {
   };
 }
 
-function makeSimSuccess(digest = MOCK_BUILD_DIGEST): SuiTransactionResult {
+function makeSimSuccess(): SuiTransactionResult {
   return {
     outcome: 'success',
-    digest,
-    effects: exactEffects(digest),
+    effects: { gasUsed: { ...MOCK_SIM_GAS_USED, nonRefundableStorageFee: '0' } },
   };
 }
 
@@ -203,17 +202,23 @@ function makeFailure(): SuiTransactionResult {
   const error = { kind: 'MoveAbortRaw' as const };
   return {
     outcome: 'failure',
+    effects: { gasUsed: { ...MOCK_SIM_GAS_USED, nonRefundableStorageFee: '0' } },
+    error,
+  };
+}
+
+function makeExecutionFailure(): SuiTransactionWithEventsResult {
+  const error = { kind: 'MoveAbortRaw' as const };
+  return {
+    outcome: 'failure',
     digest: MOCK_BUILD_DIGEST,
     effects: {
       ...exactEffects(MOCK_BUILD_DIGEST, false),
       status: { success: false, error },
     },
     error,
+    events: [],
   };
-}
-
-function makeExecutionFailure(): SuiTransactionWithEventsResult {
-  return { ...makeFailure(), events: [] } as SuiTransactionWithEventsResult;
 }
 
 function transportUnavailable(operation: 'get_balance' | 'simulate_transaction') {

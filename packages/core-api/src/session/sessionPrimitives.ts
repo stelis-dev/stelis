@@ -232,7 +232,7 @@ export async function runPreflight(
  * The pool `sign(sponsorAddress, receiptId, txBytes)` signature pins lease
  * verification to `HMAC(secret, receiptId || sponsorAddress || hash(txBytes))`,
  * compared against the committed proof the prepare runner installed at
- * `sponsorPool.commit(sponsorAddress, receiptId, buildResult.txBytesHash)`.
+ * `sponsorPool.commit(sponsorAddress, receiptId, txBytesHash)`.
  * `sponsorAddress` is the lease identity; `receiptId` and the committed hash
  * bind that lease to one prepared transaction. A
  * Redis-only attacker cannot produce a matching proof for any other

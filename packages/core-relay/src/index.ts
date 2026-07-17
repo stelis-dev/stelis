@@ -14,6 +14,8 @@ export * from './browser.js';
 // Host-only PTB materialization consumed by core-api's settlement compiler.
 export { buildSwapAndSettlePtb, buildSettleWithCreditPtb } from './ptb/builders.js';
 export { SUI_OPERATION_ATTEMPT_TIMEOUT_MS } from './sui/suiOperation.js';
+export { createChainBoundSuiEndpointSnapshot } from './sui/suiOperation.js';
+export type { ChainBoundSuiEndpointSnapshot } from './sui/suiOperation.js';
 export {
   getSuiTransactionBalanceChanges,
   getSuiTransactionEffects,
@@ -41,6 +43,7 @@ export type {
   OnchainConfig,
   HostValidationEnv,
   SettleArgs,
+  ValidationResult,
 } from './types.js';
 export { validateSettleArgs } from './validate/static.js';
 export { validateNonlossSponsor } from './validate/nonloss.js';

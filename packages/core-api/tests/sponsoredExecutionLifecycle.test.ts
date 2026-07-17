@@ -21,6 +21,7 @@
  * `__testingReservationHandleInternals` direct owner export.
  */
 import { describe, test, expect } from 'vitest';
+import type { AddressBalanceGasTransaction } from '@stelis/core-relay/server';
 import {
   ReservationHandleClosedError,
   ReservationHandleConstructionError,
@@ -355,8 +356,7 @@ describe('SponsoredExecution — SponsoredExecutionPolicy registry', () => {
     const sharedPostconsumeChecks: PolicyHooks<D>['SharedPostconsumeChecks'] = () => ({});
     const policyPostconsumeChecks: PolicyHooks<D>['PolicyPostconsumeChecks'] = () => ({});
     const gasBoundBuild: PolicyHooks<D>['GasBoundBuild'] = () => ({
-      txBytes: new Uint8Array(),
-      txBytesHash: '',
+      addressBalanceGasTransaction: Object.freeze({}) as AddressBalanceGasTransaction,
       measuredGasMist: 0n,
     });
     return {

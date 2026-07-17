@@ -4,8 +4,10 @@ import { redactEndpointUrl } from '@stelis/core-api/observability';
 import {
   SUI_OPERATION_ATTEMPT_TIMEOUT_MS,
   SuiOperationError,
+  createChainBoundSuiEndpointSnapshot,
   createSuiEndpointSnapshot,
   getSuiChainIdentifier,
+  type ChainBoundSuiEndpointSnapshot,
   type SuiEndpointSnapshot,
 } from '@stelis/core-relay';
 import {
@@ -55,7 +57,7 @@ export interface QualifySuiRpcEndpointsOptions<T> {
 
 export interface QualifiedSuiRpcBoundary<T> {
   /** Ordered, immutable core-relay operation authority. */
-  readonly snapshot: SuiEndpointSnapshot;
+  readonly snapshot: ChainBoundSuiEndpointSnapshot;
   /** Exact read-only qualification result from the accepted primary endpoint. */
   readonly primaryQualification: T;
   /** Redacted diagnostics for endpoints excluded from the accepted snapshot. */
@@ -227,6 +229,7 @@ export async function qualifySuiRpcEndpoints<T>(
           accepted: Object.freeze({
             endpoint: candidate.endpoint,
             client: candidate.client,
+            chainIdentifier,
             qualification,
           }),
           rejected: null,
@@ -253,7 +256,10 @@ export async function qualifySuiRpcEndpoints<T>(
   );
   if (accepted.length === 0) throw new NoQualifiedSuiRpcEndpointsError(rejected);
 
-  const snapshot = createSuiEndpointSnapshot(accepted.map((endpoint) => endpoint.client));
+  const snapshot = createChainBoundSuiEndpointSnapshot(
+    accepted.map((endpoint) => endpoint.client),
+    accepted[0]!.chainIdentifier,
+  );
   return Object.freeze({
     snapshot,
     primaryQualification: accepted[0]!.qualification,

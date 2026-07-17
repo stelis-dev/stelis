@@ -16,6 +16,7 @@ import {
   SuiOperationError,
   suiExecutionErrorMessage,
   type SuiEndpointSnapshot,
+  type SuiSimulationResult,
   type SuiTransactionResult,
 } from '@stelis/core-relay';
 import type {
@@ -208,7 +209,7 @@ function parseCurrentTransactionResult(
   };
 }
 
-function parseSimulationResult(transaction: SuiTransactionResult): {
+function parseSimulationResult(transaction: SuiSimulationResult): {
   success: boolean;
   error: string | null;
 } {

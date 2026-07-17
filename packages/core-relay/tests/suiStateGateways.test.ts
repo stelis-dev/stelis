@@ -685,20 +685,77 @@ describe('current Sui state gateways', () => {
     ).resolves.toEqual({ chainIdentifier: DIGEST });
   });
 
-  it('rejects incomplete balance evidence instead of manufacturing zero', async () => {
+  it.each([
+    {
+      label: 'coin balance',
+      raw: { coinType: COIN_TYPE, balance: 7n, addressBalance: 7n },
+      expected: { balance: '7', coinBalance: '0', addressBalance: '7' },
+    },
+    {
+      label: 'address balance',
+      raw: { coinType: COIN_TYPE, balance: 7n, coinBalance: 7n },
+      expected: { balance: '7', coinBalance: '7', addressBalance: '0' },
+    },
+    {
+      label: 'both zero components',
+      raw: { coinType: COIN_TYPE, balance: 0n },
+      expected: { balance: '0', coinBalance: '0', addressBalance: '0' },
+    },
+  ])('restores an omitted protobuf $label as exact zero', async ({ raw, expected }) => {
+    const getBalance = vi.fn(async () => ({ response: { balance: raw } }));
+
+    await expect(
+      getSuiBalance(createSuiEndpointSnapshot([client({ stateService: { getBalance } })]), {
+        owner: OWNER,
+        coinType: COIN_TYPE,
+      }),
+    ).resolves.toEqual({ coinType: COIN_TYPE, ...expected });
+  });
+
+  it('rejects a missing total instead of deriving it from balance components', async () => {
     const getBalance = vi.fn(async () => ({
       response: {
-        balance: { coinType: COIN_TYPE, balance: 0n, coinBalance: 0n },
+        balance: { coinType: COIN_TYPE, coinBalance: 1n, addressBalance: 2n },
       },
     }));
-    const promise = getSuiBalance(
-      createSuiEndpointSnapshot([client({ stateService: { getBalance } })]),
-      { owner: OWNER, coinType: COIN_TYPE },
-    );
 
-    await expect(promise).rejects.toBeInstanceOf(SuiOperationError);
-    await expect(promise).rejects.toMatchObject({ kind: 'malformed_response' });
+    await expect(
+      getSuiBalance(createSuiEndpointSnapshot([client({ stateService: { getBalance } })]), {
+        owner: OWNER,
+        coinType: COIN_TYPE,
+      }),
+    ).rejects.toBeInstanceOf(SuiOperationError);
   });
+
+  it.each([
+    { label: 'null coin balance', field: 'coinBalance', value: null },
+    { label: 'null address balance', field: 'addressBalance', value: null },
+    { label: 'a JavaScript number', field: 'coinBalance', value: 1 },
+    { label: 'a negative bigint', field: 'coinBalance', value: -1n },
+    { label: 'a bigint wider than u64', field: 'coinBalance', value: 1n << 64n },
+  ] as const)(
+    'rejects $label instead of treating it as an omitted zero component',
+    async ({ field, value }) => {
+      const getBalance = vi.fn(async () => ({
+        response: {
+          balance: {
+            coinType: COIN_TYPE,
+            balance: 0n,
+            coinBalance: 0n,
+            addressBalance: 0n,
+            [field]: value,
+          },
+        },
+      }));
+
+      await expect(
+        getSuiBalance(createSuiEndpointSnapshot([client({ stateService: { getBalance } })]), {
+          owner: OWNER,
+          coinType: COIN_TYPE,
+        }),
+      ).rejects.toMatchObject({ kind: 'malformed_response' });
+    },
+  );
 
   it('rejects a consumed balance total that disagrees with its components', async () => {
     const getBalance = vi.fn(async () => ({

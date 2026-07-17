@@ -670,7 +670,7 @@ export function getSuiCoinMetadata(
   );
 }
 
-/** Read a balance without accepting SDK-synthesized zero placeholders. */
+/** Read one exact Sui balance, restoring protobuf-omitted zero components. */
 export function getSuiBalance(
   snapshot: SuiEndpointSnapshot,
   options: SuiBalanceOptions,
@@ -687,22 +687,24 @@ export function getSuiBalance(
     );
     record(response, 'get_balance');
     const balance = response.balance;
+    const coinBalance = balance?.coinBalance === undefined ? 0n : balance.coinBalance;
+    const addressBalance = balance?.addressBalance === undefined ? 0n : balance.addressBalance;
     if (
       !balance ||
       typeof balance.coinType !== 'string' ||
       requireResponseCoinType(balance.coinType, 'get_balance') !== coinType ||
       !isSuiU64(balance.balance) ||
-      !isSuiU64(balance.coinBalance) ||
-      !isSuiU64(balance.addressBalance) ||
-      balance.balance !== balance.coinBalance + balance.addressBalance
+      !isSuiU64(coinBalance) ||
+      !isSuiU64(addressBalance) ||
+      balance.balance !== coinBalance + addressBalance
     ) {
       return fail('get_balance');
     }
     return Object.freeze({
       coinType,
       balance: balance.balance.toString(),
-      coinBalance: balance.coinBalance.toString(),
-      addressBalance: balance.addressBalance.toString(),
+      coinBalance: coinBalance.toString(),
+      addressBalance: addressBalance.toString(),
     });
   });
 }

@@ -4,6 +4,13 @@ export {
   validatePaymentInputIntegrity,
 } from '../paymentInputIntegrity.js';
 export { findUniqueSettleCommandIndex } from '../settleCommand.js';
+export {
+  buildAddressBalanceGasTransaction,
+  getAddressBalanceGasTransactionBytes,
+  getAddressBalanceGasTransactionTxBytesHash,
+  simulateAddressBalanceGasTransaction,
+} from '../sui/suiAddressBalanceGas.js';
+export type { AddressBalanceGasTransaction } from '../sui/suiAddressBalanceGas.js';
 // Host prepare classification may inspect only authority-created resolution
 // failures; browser/public errors never expose the retained structured value.
 export { getSuiRejectedExecutionError } from '../sui/suiOperation.js';

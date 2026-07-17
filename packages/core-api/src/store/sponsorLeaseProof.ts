@@ -14,8 +14,8 @@
  * against a forged prepare entry under the same `receiptId`.
  *
  * The current proof binds sponsor admission to the prepare commit itself.
- * The commit digest is the prepare-time SHA-256 of the built PTB
- * (`GenericPrepareBuildOutput.txBytesHash`), so a Redis-only attacker cannot
+ * The commit digest is the SHA-256 of the validated transaction bytes that the
+ * prepare runner stores as `PreparedTxEntry.txBytesHash`, so a Redis-only attacker cannot
  * forge a proof that matches an attacker-chosen `txBytes` unless they also
  * know the process-env secret.
  *
@@ -86,7 +86,7 @@ export class SponsorLeaseCommitError extends Error {
  * characters, which is safe to store in Redis as a normal string value.
  *
  * Callers pass `COMMIT_DIGEST_RESERVED` during the checkout window and
- * the prepare commit hash (`buildResult.txBytesHash`) during the
+ * the prepare commit hash (`txBytesHash`) during the
  * committed window. A `sign()` call computes its expected proof from
  * `hash(txBytes)` and so will only match the stored value when the
  * submitted transaction matches the commit.

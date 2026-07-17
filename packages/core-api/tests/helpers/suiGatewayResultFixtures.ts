@@ -1,13 +1,15 @@
-import { TransactionDataBuilder } from '@mysten/sui/transactions';
+import { Transaction, TransactionDataBuilder } from '@mysten/sui/transactions';
 import type { SuiGrpcClient } from '@mysten/sui/grpc';
 import { fromBase58, normalizeSuiAddress, toBase58 } from '@mysten/sui/utils';
 import {
-  createSuiEndpointSnapshot,
-  type SuiEndpointSnapshot,
+  createChainBoundSuiEndpointSnapshot,
+  type ChainBoundSuiEndpointSnapshot,
   type SuiExecutionError,
+  type SuiSimulationResult,
   type SuiTransactionResult,
   type SuiTransactionWithEventsResult,
 } from '@stelis/core-relay';
+import { SUI_CHAIN_IDENTIFIERS } from '@stelis/contracts';
 
 /**
  * Create a real opaque endpoint snapshot for tests that mock the gateway
@@ -17,9 +19,9 @@ import {
  */
 export function suiEndpointSnapshotFixture(
   network: 'testnet' | 'mainnet' = 'testnet',
-): SuiEndpointSnapshot {
+): ChainBoundSuiEndpointSnapshot {
   const client = Object.freeze({ network }) as unknown as SuiGrpcClient;
-  return createSuiEndpointSnapshot([client]);
+  return createChainBoundSuiEndpointSnapshot([client], SUI_CHAIN_IDENTIFIERS[network]);
 }
 
 export interface TestGasUsed {
@@ -44,6 +46,32 @@ export function suiTransactionDigestFixture(fill = 1): string {
 }
 
 export const TEST_SUI_TRANSACTION_DIGEST = suiTransactionDigestFixture();
+
+/** Build the one current full-transaction shape used by address-balance gas mocks. */
+export async function addressBalanceGasTransactionBytesFixture(options: {
+  readonly transaction: Transaction;
+  readonly sponsorAddress: string;
+  readonly gasBudget: bigint;
+  readonly gasPrice?: bigint;
+  readonly chainIdentifier?: string;
+}): Promise<Uint8Array> {
+  const transaction = Transaction.from(options.transaction);
+  transaction.setGasOwner(options.sponsorAddress);
+  transaction.setGasBudget(options.gasBudget);
+  transaction.setGasPrice(options.gasPrice ?? 1_000n);
+  transaction.setGasPayment([]);
+  transaction.setExpiration({
+    ValidDuring: {
+      minEpoch: '1',
+      maxEpoch: '2',
+      minTimestamp: null,
+      maxTimestamp: null,
+      chain: options.chainIdentifier ?? SUI_CHAIN_IDENTIFIERS.testnet,
+      nonce: 0,
+    },
+  });
+  return transaction.build();
+}
 
 function requireCurrentSuiTransactionDigest(digest: string): string {
   let bytes: Uint8Array;
@@ -76,6 +104,10 @@ function successEffects(digest: string, value: TestGasUsed) {
     gasUsed: gasUsed(value),
     eventsDigest: null,
   });
+}
+
+function simulationEffects(value: TestGasUsed) {
+  return Object.freeze({ gasUsed: gasUsed(value) });
 }
 
 function failureEffects(digest: string, value: TestGasUsed, error: SuiExecutionError) {
@@ -136,26 +168,20 @@ export function congestedSuiExecutionError(): SuiExecutionError {
   return Object.freeze({ kind: 'CongestedObjects' });
 }
 
-export function suiSimulationSuccess(
-  digest = TEST_SUI_TRANSACTION_DIGEST,
-  value: TestGasUsed = DEFAULT_GAS_USED,
-): SuiTransactionResult {
+export function suiSimulationSuccess(value: TestGasUsed = DEFAULT_GAS_USED): SuiSimulationResult {
   return Object.freeze({
     outcome: 'success' as const,
-    digest,
-    effects: successEffects(digest, value),
+    effects: simulationEffects(value),
   });
 }
 
 export function suiSimulationFailure(
-  digest: string,
   error: SuiExecutionError,
   value: TestGasUsed = DEFAULT_GAS_USED,
-): SuiTransactionResult {
+): SuiSimulationResult {
   return Object.freeze({
     outcome: 'failure' as const,
-    digest,
-    effects: failureEffects(digest, value, error),
+    effects: simulationEffects(value),
     error,
   });
 }
